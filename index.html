@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXTLIFE - Arma 3 Community</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <ul>
+                <li><a href="http://nextlife.site/index.html">ГЛАВНЫЙ САЙТ</a></li>
+                <li><a href="http://nextlife.site/modules.html">МОДУЛИ</a></li>
+                <li><a href="https://vk.com/nextlifecom">ВКОНТАКТЕ</a></li>
+                <li><a href="https://i.ibb.co/Q6b96LS/2.jpg">КУРАТОР NL:A3</a></li>
+            </ul>
+        </nav>
+    </header>
+    
+    <section id="banner">
+        <h1>NEXTLIFE</h1>
+        <p>Arma 3 Community</p>
+        <a href="https://discord.gg/m8FfduWUJV">Подключиться</a>
+    </section>
+    
+    <section id="features">
+        <h2>👋Добро пожаловать,что мы предлагаем?</h2>
+        <div class="centered">
+            <ul>
+                <li>Игры с различными модами и режимами игры</li>
+                <li>Дружеская и отзывчивая администрация</li>
+				<li>Активное сообщество игроков</li>
+                <li>Регулярные игры</li>
+            </ul>
+        </div>
+    </section>
+    
+    <section id="video">
+        <h2>Одно из наших видео</h2>
+        <div class="video-container">
+            <iframe width="560" height="315" src="https://www.youtube.com/embed/bSjgAk4D9fc" frameborder="0" allowfullscreen></iframe>
+        </div>
+    </section>
+    
+    <section id="footer">
+        <p>&copy; 2017-2023 NEXTLIFE - Все права защищены</p>
+    </section>
+    
+    <script>
+        const discordLink = document.querySelector('nav ul li:nth-child(3) a');
+        discordLink.addEventListener('click', () => {
+            window.location.href = discordLink.href;
+        });
+    </script>
+</body>
+</html>

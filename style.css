@@ -1,0 +1,127 @@
+/* Общие стили */
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+a {
+    text-decoration: none;
+    color: inherit;
+}
+
+ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Шапка */
+header {
+    background-color: #222;
+    color: #fff;
+    padding: 20px;
+}
+
+nav ul {
+    display: flex;
+    justify-content: flex-end;
+}
+
+nav li {
+    margin: 0 10px;
+}
+
+nav a {
+    font-size: 18px;
+}
+
+/* Баннер */
+#banner {
+    background-image: url("https://media.discordapp.net/attachments/1047938889224028251/1047939388224585800/unknown.png?width=1246&height=701");
+    background-size: cover;
+    background-position: center;
+    height: 500px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+#banner h1 {
+    font-size: 72px;
+    margin: 0;
+}
+
+#banner p {
+    font-size: 36px;
+    margin: 0;
+}
+
+#banner a {
+    background-color: #fff;
+    color: #222;
+    font-size: 24px;
+    padding: 10px 20px;
+    border-radius: 5px;
+    margin-top: 20px;
+}
+
+/* Особенности */
+#features {
+    background-color: #eee;
+    padding: 50px;
+}
+
+#features h2 {
+    font-size: 36px;
+    margin: 0 0 20px 0;
+    text-align: center;
+}
+
+#features li {
+    font-size: 24px;
+    margin: 10px 0;
+}
+
+/* Видео */
+#video {
+    background-color: #222;
+    color: #fff;
+    padding: 50px;
+}
+
+#video h2 {
+    font-size: 36px;
+    margin: 0 0 20px 0;
+    text-align: center;
+}
+
+.video-container {
+    position: relative;
+    padding-bottom: 56.25%;
+    height: 0;
+}
+
+.video-container iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.centered {
+    display: flex;
+    justify-content: center;
+}
+
+
+/* Подвал */
+#footer {
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    padding: 20px;
+    font-size: 18px;
+}
