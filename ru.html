@@ -12,7 +12,7 @@
       <ul>
         <li><a href="http://nextlife.site/index.html">ГЛАВНЫЙ САЙТ</a></li>
         <li><a href="http://nextlife.site/modules.html">МОДУЛИ</a></li>
-        <li><a href="https://vk.com/nextlifecom">ВКОНТАКТЕ</a></li>
+        <li><a href="https://vk.com/nextlifecom">ВК</a></li>
         <li><a href="https://arma3nextlife.netlify.app/kon.html">КОНТАКТЫ</a></li>
         <li>
           <div id="lang-selector">
@@ -20,6 +20,7 @@
               <ul>
                 <li><a id="ru-link" href="ru.html">Русский</a></li>
                 <li><a id="uk-link" href="uk.html">Українська</a></li>
+				<li><a id="bl-link" href="bl.html">Беларускі</a></li>
               </ul>
             </div>
           </div>
@@ -54,7 +55,7 @@
   </section>
   
   <section id="footer">
-    <p>&copy; 2017-2023 NEXTLIFE - Все права защищены</p>
+    <p>&copy; 2017-2023 NEXTLIFE - Все права защищены  version-site 0.1</p>
   </section>
   
   <script>
@@ -62,6 +63,7 @@
     const langToggle = document.querySelector('#lang-toggle');
     const langLinkRU = document.querySelector('#ru-link');
     const langLinkUA = document.querySelector('#ua-link');
+	const langLinkUA = document.querySelector('#by-link');
 const langText = document.querySelector('#lang-text');
 
 langToggle.addEventListener('click', () => {
@@ -77,6 +79,12 @@ langDropdown.classList.remove('show');
 langLinkUA.addEventListener('click', (event) => {
 event.preventDefault();
 langText.textContent = 'Українська';
+langDropdown.classList.remove('show');
+});
+
+langLinkBL.addEventListener('click', (event) => {
+event.preventDefault();
+langText.textContent = 'Беларускі';
 langDropdown.classList.remove('show');
 });
 </script>
