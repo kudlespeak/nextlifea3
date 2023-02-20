@@ -18,9 +18,9 @@
           <div id="lang-selector">
             <div id="lang-dropdown">
               <ul>
-                <li><a id="ru-link" href="ru.html">Русский</a></li>
-                <li><a id="uk-link" href="uk.html">Українська</a></li>
-				<li><a id="bl-link" href="bl.html">Беларускі</a></li>
+                <li><a id="ru-link" href="ru.html">Руска</a></li>
+                <li><a id="uk-link" href="uk.html">Украінска</a></li>
+				<li><a id="bl-link" href="bl.html">Беларуска</a></li>
               </ul>
             </div>
           </div>
@@ -72,19 +72,19 @@ langDropdown.classList.toggle('show');
 
 langLinkRU.addEventListener('click', (event) => {
 event.preventDefault();
-langText.textContent = 'Русский';
+langText.textContent = 'Руска';
 langDropdown.classList.remove('show');
 });
 
 langLinkUA.addEventListener('click', (event) => {
 event.preventDefault();
-langText.textContent = 'Українська';
+langText.textContent = 'Украінска';
 langDropdown.classList.remove('show');
 });
 
 langLinkBL.addEventListener('click', (event) => {
 event.preventDefault();
-langText.textContent = 'Беларускі';
+langText.textContent = 'Беларуска';
 langDropdown.classList.remove('show');
 });
 </script>
