@@ -13,7 +13,10 @@ const DIFF = {
   hard: { think: 15, aggr: 0.85, artyRounds: 5, react: 2 },
 };
 
-const ARMOR = ['tank', 'ifv', 'apc'];
+const ARMOR = ['tank', 'ifv', 'apc', 'armcar'];
+// Порядок закупки из резерва
+const PLAN_ATT = ['inf', 'inf', 'ifv', 'inf', 'tank', 'mortar', 'truck', 'inf', 'apc', 'uav', 'inf', 'arty', 'tank', 'medevac', 'inf', 'ifv', 'atgm', 'inf', 'tank', 'mlrs', 'spg', 'armcar', 'inf', 'fuel', 'sam', 'inf', 'ifv', 'inf'];
+const PLAN_DEF = ['inf', 'inf', 'inf', 'mortar', 'atgm', 'truck', 'inf', 'eng', 'uav', 'ifv', 'inf', 'arty', 'medevac', 'tank', 'inf', 'atgm', 'mortar', 'inf', 'spg', 'sam', 'inf', 'fuel', 'mlrs', 'inf', 'inf'];
 
 export class AI {
   constructor(sim, side, mode, difficulty = 'normal') {
@@ -29,7 +32,9 @@ export class AI {
     this.dir = side === 'blue' ? 1 : -1; // направление на противника по x
     const gm = sim.game;
     this.posture = gm.mode === 'assault' ? (gm.cfg.attacker === side ? 'attack' : 'defend') : 'attack';
-    this.prepDone = false;
+    this.nextBuy = sim.time + 2;
+    this.plan = this.posture === 'defend' ? PLAN_DEF : PLAN_ATT;
+    this.planIdx = 0;
   }
 
   own() {
@@ -38,22 +43,35 @@ export class AI {
 
   update() {
     const sim = this.sim;
-    if (sim.game?.prep) {
-      if (!this.prepDone) { this.prepDone = true; this.prepare(); }
-      return;
-    }
+    if (sim.time >= this.nextBuy) { this.nextBuy = sim.time + (sim.game?.prep ? 3 : 15); this.buy(); if (sim.game?.prep) this.prepare(); }
+    if (sim.game?.prep) return;
     if (sim.time >= this.nextReact) { this.nextReact = sim.time + this.d.react; this.react(); }
     if (sim.time >= this.nextThink) { this.nextThink = sim.time + this.d.think; this.think(); }
     if (sim.time >= this.nextArty) { this.nextArty = sim.time + 35; this.artillery(); }
     if (sim.time >= this.nextDrone) { this.nextDrone = sim.time + 45; this.dronesAI(); }
   }
 
+  // Закупка по плану: следующее доступное; если не хватает очков — ждём
+  buy() {
+    const res = this.sim.game?.reserve?.[this.side];
+    if (!res) return;
+    for (let tries = 0; tries < this.plan.length; tries++) {
+      const t = this.plan[this.planIdx % this.plan.length];
+      if (!this.sim.unitTypes[t] || (res.avail[t] ?? 0) <= 0) { this.planIdx++; continue; }
+      if (res.points < 0 || !res.canOrder(t)) return;
+      res.order(t, this.sim.unitTypes[t].move);
+      this.planIdx++;
+      return;
+    }
+  }
+
   // ---------- Подготовка ----------
   // Оборона: занять траншеи у своих опорных пунктов. Наступление: выйти на рубеж атаки.
   prepare() {
     const sim = this.sim, gm = sim.game;
-    const own = this.own();
-    const squads = own.filter((u) => u.soldiers && ['inf', 'eng'].includes(u.type) && !u.duty && u.mode === 'field');
+    const own = this.own().filter((u) => !u.aiPlaced && u.state === 'idle' && !u.pending);
+    for (const u of own) u.aiPlaced = true;
+    const squads = own.filter((u) => u.soldiers && ['inf', 'eng', 'atgm'].includes(u.type) && u.mode === 'field');
     if (this.posture === 'defend') {
       const pts = this.holdPoints();
       squads.forEach((u, i) => {
@@ -68,17 +86,22 @@ export class AI {
     } else {
       // Рубеж атаки у линии разграничения: пехота с техникой вместе
       const L = gm.prepLimit(this.side) - this.dir * 150;
-      const all = own.filter((u) => (u.soldiers && u.type === 'inf' && !u.duty) || ARMOR.includes(u.type));
+      const all = own.filter((u) => (u.soldiers && ['inf', 'atgm'].includes(u.type)) || ARMOR.includes(u.type));
       const ys = all.map((u) => u.y).sort((a, b) => a - b);
       const cy = ys[ys.length >> 1] || sim.world.H / 2;
-      all.forEach((u, i) => sim.orderMove([u], L - this.dir * (u.soldiers ? 0 : 120), cy + (i - all.length / 2) * 70));
+      all.forEach((u, i) => sim.orderMove([u], L - this.dir * (u.soldiers ? 0 : 120), cy + (sim.rng.next() - 0.5) * 900));
     }
   }
 
   // Точки обороны: свои опорные пункты или ближние к фронту траншеи
   holdPoints() {
     const sim = this.sim, gm = sim.game;
-    const mine = gm.zones.filter((z) => z.owner === this.side || (gm.mode === 'assault' && this.posture === 'defend'));
+    // Эшелоны: сектора текущей линии обороны (пока держим её — там; потеряли — следующая)
+    if (gm.lines) {
+      const line = gm.lines[gm.linesTaken] || gm.lines[gm.lines.length - 1];
+      return line.sectors;
+    }
+    const mine = gm.zones.filter((z) => z.owner === this.side);
     if (mine.length) return mine;
     const fx = sim.world.frontX;
     return sim.world.forts.items.filter((f) => f.kind === 'trench' && f.sub === 'fire' && f.side === this.side && f.line.length > 3)
@@ -145,7 +168,7 @@ export class AI {
   objective(from) {
     const sim = this.sim, gm = sim.game;
     if (gm.mode === 'zones' || gm.mode === 'assault') {
-      const z = gm.zones.filter((q) => q.owner !== this.side).sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y))[0];
+      const z = gm.zones.filter((q) => q.owner !== this.side && !q.locked).sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y))[0];
       if (z) return { x: z.x, y: z.y, zone: z };
       return null;
     }
@@ -164,10 +187,10 @@ export class AI {
   thinkDefend() {
     const sim = this.sim, gm = sim.game;
     const own = this.own();
-    const lost = gm.zones.filter((z) => z.owner !== this.side || z.contested);
+    const lost = gm.zones.filter((z) => !z.locked && (z.owner !== this.side || z.contested));
     for (const u of own) {
       if (u.embarked || u.task || u.state !== 'idle') continue;
-      if (u.soldiers && u.type === 'inf' && !u.duty && u.mode === 'field' && u.strength >= 0.45) {
+      if (u.soldiers && u.type === 'inf' && u.mode === 'field' && u.strength >= 0.45) {
         const z = lost.sort((a, b) => Math.hypot(a.x - u.x, a.y - u.y) - Math.hypot(b.x - u.x, b.y - u.y))[0];
         if (z && Math.hypot(z.x - u.x, z.y - u.y) < 1200 && sim.rng.chance(this.d.aggr)) { this.occupyNear(u, z.x, z.y, 200); continue; }
         // Иначе — в ближайшую свою траншею у опорного пункта
@@ -198,7 +221,7 @@ export class AI {
       const k = Math.min(1, (d - 600) / d);
       sim.orderMove([v], v.x + (obj.x - v.x) * k, v.y + (obj.y - v.y) * k);
     }
-    const attackers = own.filter((u) => (u.soldiers && u.type === 'inf' && !u.duty && !u.embarked) || (ARMOR.includes(u.type) && !u.passengers.length));
+    const attackers = own.filter((u) => (u.soldiers && u.type === 'inf' && !u.embarked) || (ARMOR.includes(u.type) && !u.passengers.length));
     for (const u of attackers) {
       if (u.task || u.state !== 'idle' || u.mode !== 'field' || u.pending) continue;
       if (u.soldiers && u.strength < 0.45) continue; // потрёпанные не наступают

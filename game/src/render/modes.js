@@ -68,13 +68,87 @@ export function drawFront(ctx, game, view) {
   }
 }
 
+// Эшелоны обороны: полосы через всю карту, сектора окрашены по владельцу, прогресс захвата
+function drawLines(ctx, game, view) {
+  const { cam, canvas, dpr } = view;
+  const z = cam.zoom;
+  const toS = (x, y) => [(x - cam.x) * z + canvas.width / 2, (y - cam.y) * z + canvas.height / 2];
+  const now = performance.now();
+  const att = game.cfg.attacker;
+  game.lines.forEach((line, k) => {
+    const active = k === (game.linesTaken || 0);
+    for (const sec of line.sectors) {
+      const col = sec.owner === att ? FACTIONS[att].fill : FACTIONS[sec.owner].fill;
+      for (const pass of [0, 1]) {
+        ctx.beginPath();
+        sec.seg.forEach(([x, y], i) => { const [sx, sy] = toS(x, y); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+        ctx.lineCap = 'butt';
+        if (pass === 0) { ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = (active ? 9 : 6) * dpr; ctx.setLineDash([]); }
+        else {
+          ctx.strokeStyle = sec.contested ? `rgba(255,170,60,${0.6 + 0.4 * Math.sin(now / 200)})` : col;
+          ctx.globalAlpha = sec.locked && !active ? 0.45 : 0.95;
+          ctx.lineWidth = (active ? 5 : 3) * dpr;
+          ctx.setLineDash(active ? [] : [10 * dpr, 7 * dpr]);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.setLineDash([]);
+      // Прогресс захвата сектора: полоска над серединой
+      if (active && Math.abs(sec.prog) < 0.999 && Math.abs(sec.prog) > 0.01) {
+        const [cx, cy] = toS(sec.x, sec.y);
+        const w = 44 * dpr;
+        const k2 = sec.owner === att ? 1 : (1 - Math.abs(sec.prog)) ;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(cx - w / 2, cy - 18 * dpr, w, 5 * dpr);
+        ctx.fillStyle = FACTIONS[att].fill; ctx.fillRect(cx - w / 2, cy - 18 * dpr, w * Math.max(0, Math.min(1, k2)), 5 * dpr);
+      }
+    }
+    // Подпись линии — у верхнего края видимой области
+    const top = line.pts.find((p) => (p[1] - cam.y) * z + canvas.height / 2 > 90 * dpr) || line.pts[0];
+    const [lx, ly] = toS(top[0], top[1]);
+    ctx.font = `700 ${13 * dpr}px "PT Sans Narrow", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const label = line.name + (k < (game.linesTaken || 0) ? ' · прорвана' : active ? ' · бой за рубеж' : '');
+    ctx.lineWidth = 4 * dpr;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.strokeText(label, lx, ly - 6 * dpr);
+    ctx.fillStyle = k < (game.linesTaken || 0) ? FACTIONS[att].fill : '#f3e9c9';
+    ctx.fillText(label, lx, ly - 6 * dpr);
+  });
+}
+
+// Пункты сбора: флаг стороны
+export function drawSpawns(ctx, game, view, side) {
+  const { cam, canvas, dpr } = view;
+  const z = cam.zoom;
+  for (const [s, r] of Object.entries(game?.reserve || {})) {
+    if (side && s !== side) continue;
+    const x = (r.spawn.x - cam.x) * z + canvas.width / 2, y = (r.spawn.y - cam.y) * z + canvas.height / 2;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 2 * dpr;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 30 * dpr); ctx.stroke();
+    ctx.fillStyle = FACTIONS[s].flag[0];
+    ctx.fillRect(x, y - 30 * dpr, 20 * dpr, 7 * dpr);
+    ctx.fillStyle = FACTIONS[s].flag[1];
+    ctx.fillRect(x, y - 23 * dpr, 20 * dpr, 7 * dpr);
+    ctx.font = `700 ${12 * dpr}px "PT Sans", sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const t = `Пункт сбора${r.queue.length ? ` · в пути ${r.queue.length}` : ''}`;
+    ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.strokeText(t, x + 24 * dpr, y - 22 * dpr);
+    ctx.fillStyle = '#fff'; ctx.fillText(t, x + 24 * dpr, y - 22 * dpr);
+  }
+}
+
 export function drawZones(ctx, game, view) {
   if (!game?.zones.length) return;
   const { cam, canvas, dpr } = view;
   const z = cam.zoom;
   const now = performance.now();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (game.lines) drawLines(ctx, game, view);
   for (const zn of game.zones) {
+    if (zn.line !== undefined) continue; // сектора эшелонов рисуются линиями
     const x = (zn.x - cam.x) * z + canvas.width / 2, y = (zn.y - cam.y) * z + canvas.height / 2;
     const R = Math.max(14 * dpr, zn.r * z);
     const col = zn.owner ? FACTIONS[zn.owner].fill : '#e8e2cc';

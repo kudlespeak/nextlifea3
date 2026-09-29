@@ -1,7 +1,8 @@
 import { generateWorld } from './mapgen.js';
 import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
-import { Sim, SIDES, POSES } from './sim/units.js';
+import { Sim, SIDES, POSES, UNIT_TYPES, unitDef } from './sim/units.js';
+import { COST, INCOME } from './sim/reserve.js';
 import { T_NAMES } from './sim/nav.js';
 import { CALIBERS } from './sim/artillery.js';
 import { FACTIONS } from './sim/factions.js';
@@ -11,7 +12,7 @@ import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js'
 import { digTrench } from './forts.js';
 import { drawInteriors, buildingAtScreen } from './render/interiors.js';
 import { drawNight, drawFog } from './render/night.js';
-import { drawFront, drawZones, drawPrep, drawDepots } from './render/modes.js';
+import { drawFront, drawZones, drawPrep, drawDepots, drawSpawns } from './render/modes.js';
 import { RES, RES_NAMES } from './sim/logistics.js';
 import { daylight } from './power.js';
 import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, applyWorldEvent } from './net.js';
@@ -184,10 +185,9 @@ function startGame(c) {
     b.className = controlSide;
     resize();
     // Камера — у своих позиций
-    const own = sim.units.filter((u) => u.side === controlSide);
-    const front = own.find((u) => u.duty) || own[0];
-    cam.x = front.x; cam.y = front.y;
-    cam.zoom = 0.9 * dpr;
+    const sp = sim.game.reserve[controlSide].spawn;
+    cam.x = (sp.x + sim.game.prepLimit(controlSide)) / 2; cam.y = sp.y;
+    cam.zoom = 0.35 * dpr;
     mini.width = 540;
     mini.height = Math.round(540 * world.H / world.W);
     for (let cy = 0; cy * chunks.worldSize(0) < world.H; cy++)
@@ -195,7 +195,9 @@ function startGame(c) {
     buildRoster();
     const enemy = controlSide === 'blue' ? 'red' : 'blue';
     log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
-    if (c.mode === 'assault') log(c.attacker === controlSide ? 'Ваша задача: взять все опорные пункты противника.' : 'Ваша задача: удержать опорные пункты до конца времени.');
+    if (c.mode === 'assault') log(c.attacker === controlSide ? 'Ваша задача: прорвать четыре линии обороны противника по очереди.' : 'Ваша задача: удержать хотя бы одну из четырёх линий обороны до конца времени. За отход на следующую линию дают подкрепления.');
+    log('Войска заказываются во вкладке «Резерв» слева и прибывают на пункт сбора.');
+    showTab('reserve');
     $('loading').style.opacity = 0;
     $('loading').textContent = 'Прорисовка местности…';
     lastNow = performance.now();
@@ -250,6 +252,12 @@ const COMMANDS_IMPL = {
   unload: (ids) => { for (const u of unitsById(ids)) { if (u.passengers?.length) sim.orderUnload(u); else if (u.embarked) sim.disembark(u); } },
   supply: (ids, on) => { for (const u of unitsById(ids)) if (u.cargoRes) { u.autoSupply = on; if (!on) u.supplyTask = null; } },
   ready: (side) => sim.game?.setReady(side),
+  spawn: (side, type) => {
+    const r = sim.game?.reserve?.[side];
+    if (!r) return;
+    const err = r.order(type, UNIT_TYPES[type].move);
+    sim.msg(err || `Заказано: ${unitDef(type, side).name} — прибудет на пункт сбора`, side);
+  },
   occupy: (id, x, y) => { const u = dis(unitsById([id])[0]); if (u && !sim.orderOccupy(u, x, y)) sim.orderMove([u], x, y); },
   garrison: (id, bi) => { const u = dis(unitsById([id])[0]); if (u) sim.orderGarrison(u, building(bi)); },
   basement: (id, bi) => { const u = dis(unitsById([id])[0]); if (u) sim.orderBasement(u, building(bi)); },
@@ -811,6 +819,78 @@ function updateSupply(units, one) {
   pass.innerHTML = p;
 }
 
+// ================= Резерв =================
+let rosterTab = 'units';
+function showTab(t) {
+  rosterTab = t;
+  $('tab-units').classList.toggle('active', t === 'units');
+  $('tab-reserve').classList.toggle('active', t === 'reserve');
+  $('roster-list').style.display = t === 'units' ? '' : 'none';
+  $('reserve-list').style.display = t === 'reserve' ? '' : 'none';
+  if (t === 'reserve') buildReserve();
+}
+$('tab-units').onclick = () => showTab('units');
+$('tab-reserve').onclick = () => showTab('reserve');
+const RES_GROUPS = [['Пехота', ['inf', 'eng', 'atgm']], ['Бронетехника', ['tank', 'ifv', 'apc', 'armcar', 'btm']], ['Огневая поддержка', ['mortar', 'arty', 'spg', 'mlrs', 'sam', 'uav']], ['Тыл', ['truck', 'fuel', 'medevac']]];
+function buildReserve() {
+  const r = sim?.game?.reserve?.[controlSide];
+  const box = $('reserve-list');
+  if (!r) return;
+  box.innerHTML = '';
+  const info = document.createElement('div');
+  info.className = 'res-info';
+  info.id = 'res-info';
+  box.appendChild(info);
+  for (const [name, types] of RES_GROUPS) {
+    const ts = types.filter((t) => UNIT_TYPES[t] && r.avail[t] !== undefined);
+    if (!ts.length) continue;
+    const h = document.createElement('div');
+    h.className = 'group-title';
+    h.textContent = name;
+    box.appendChild(h);
+    for (const t of ts) {
+      const d = unitDef(t, controlSide);
+      const row = document.createElement('div');
+      row.className = 'res-row';
+      row.dataset.type = t;
+      const c = document.createElement('canvas');
+      c.width = 68; c.height = 48;
+      drawSymbol(c.getContext('2d'), 34, 24, 26, controlSide, d.symbol);
+      row.appendChild(c);
+      const mid = document.createElement('div');
+      mid.innerHTML = `<div class="nm">${d.name}</div><div class="ds"></div>`;
+      row.appendChild(mid);
+      const cs = document.createElement('div');
+      cs.className = 'cs';
+      cs.textContent = COST[t];
+      row.appendChild(cs);
+      row.title = 'Заказать: прибудет на пункт сбора';
+      row.onclick = () => { issue('spawn', controlSide, t); setTimeout(updateReserve, 50); };
+      box.appendChild(row);
+    }
+  }
+  const q = document.createElement('div');
+  q.id = 'res-queue';
+  box.appendChild(q);
+  updateReserve();
+}
+function updateReserve() {
+  const r = sim?.game?.reserve?.[controlSide];
+  if (!r) return;
+  $('res-pts').textContent = Math.floor(r.points);
+  if (rosterTab !== 'reserve') return;
+  const info = $('res-info');
+  if (info) info.innerHTML = `Очки подкрепления: <b>${Math.floor(r.points)}</b> (+${INCOME}/мин). Нажмите на подразделение — оно прибудет на <b>пункт сбора</b> (флаг на карте)${sim.game.prep ? ', во время подготовки — почти сразу' : ''}.`;
+  for (const row of document.querySelectorAll('#reserve-list .res-row')) {
+    const t = row.dataset.type;
+    const n = r.avail[t] ?? 0;
+    row.classList.toggle('off', !r.canOrder(t));
+    row.querySelector('.ds').textContent = n > 0 ? `осталось ${n}${r.points < COST[t] ? ' · не хватает очков' : ''}` : 'исчерпано';
+  }
+  const q = $('res-queue');
+  if (q) q.innerHTML = r.queue.length ? '<div class="group-title">В пути</div>' + r.queue.map((it) => `<div class="res-q">${unitDef(it.type, controlSide).name} · ${Math.max(0, Math.ceil(it.at - sim.time))} с</div>`).join('') : '';
+}
+
 // ================= Список подразделений =================
 const GROUPS = [
   ['Пехота', ['inf']], ['Инженеры', ['eng', 'btm']], ['Бронетехника', ['tank', 'ifv', 'apc']],
@@ -1000,7 +1080,7 @@ function updateScoreboard() {
   const sun = light > 0.6 ? '☀' : light > 0.1 ? '◐' : '☾';
   let mid = '';
   if (g.mode === 'zones') mid = `<span class="b">${Math.floor(g.score.blue)}</span> : <span class="r">${Math.floor(g.score.red)}</span> <span class="m">/ 500</span>`;
-  else if (g.mode === 'assault') { const att = g.cfg.attacker; mid = `<span class="m">взято</span> <span class="${att === 'blue' ? 'b' : 'r'}">${g.zones.filter((z) => z.owner === att).length}/${g.zones.length}</span>`; }
+  else if (g.mode === 'assault') { const att = g.cfg.attacker; mid = `<span class="m">прорвано линий</span> <span class="${att === 'blue' ? 'b' : 'r'}">${g.linesTaken || 0}/4</span>`; }
   else {
     const t = g.territory(), i = g.initTerr || t;
     const d = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
@@ -1054,7 +1134,19 @@ function drawMinimap() {
     }
   const dark = 1 - daylight(sim.time);
   if (dark > 0.05) { mctx.fillStyle = `rgba(6,10,26,${0.6 * dark})`; mctx.fillRect(0, 0, mini.width, mini.height); }
+  for (const line of sim.game?.lines || []) {
+    for (const sec of line.sectors) {
+      mctx.strokeStyle = SIDES[sec.owner].fill;
+      mctx.globalAlpha = sec.locked && line.k !== (sim.game.linesTaken || 0) ? 0.4 : 1;
+      mctx.lineWidth = 2;
+      mctx.beginPath();
+      sec.seg.forEach(([x, y], i) => (i ? mctx.lineTo(x * miniScale, y * miniScale) : mctx.moveTo(x * miniScale, y * miniScale)));
+      mctx.stroke();
+      mctx.globalAlpha = 1;
+    }
+  }
   for (const z of sim.game?.zones || []) {
+    if (z.line !== undefined) continue;
     mctx.strokeStyle = z.owner ? FACTIONS[z.owner].fill : '#ddd';
     mctx.lineWidth = 2;
     mctx.beginPath(); mctx.arc(z.x * miniScale, z.y * miniScale, Math.max(4, z.r * miniScale), 0, Math.PI * 2); mctx.stroke();
@@ -1238,6 +1330,13 @@ function frame(now) {
     ctx.fillRect(0, 0, x0, canvas.height);
     ctx.fillRect(x1, 0, canvas.width - x1, canvas.height);
   }
+  // Миникарте нужны все обзорные чанки, даже вне экрана
+  const s0 = chunks.worldSize(0);
+  for (let cy = 0; cy * s0 < world.H; cy++)
+    for (let cx = 0; cx * s0 < world.W; cx++) {
+      const e = chunks.get(0, cx, cy);
+      if ((!e || e.stale) && !need.some((n) => n.level === 0 && n.cx === cx && n.cy === cy)) need.push({ level: 0, cx, cy, d: 1e12 });
+    }
   // Сначала — текущий масштаб у центра экрана, затем обзорная подложка
   const pri = (n) => (n.level === L ? 0 : n.level === 0 ? 1 : 2);
   need.sort((a, b) => pri(a) - pri(b) || a.d - b.d);
@@ -1260,6 +1359,7 @@ function frame(now) {
   drawZones(ctx, sim.game, view);
   drawPrep(ctx, sim.game, view, controlSide);
   drawDepots(ctx, sim, view, fog);
+  drawSpawns(ctx, sim.game, view, fog ? controlSide : null);
   drawArtyOverlay();
   drawUnits(ctx, sim, view, ui, fog);
   drawCombatFx(ctx, sim, view, fog);
@@ -1273,6 +1373,7 @@ function frame(now) {
     if (sim.units.some((u) => u.dead && ui.selected.has(u.id))) { for (const u of sim.units) if (u.dead) ui.selected.delete(u.id); buildCard(); }
     updateCard();
     updateRoster();
+    updateReserve();
     drawMinimap();
     updateScale();
     updateScoreboard();

@@ -151,7 +151,8 @@ export class Sim {
     this.log = new Logistics(this);
     this.medpoints = { blue: null, red: null };
     this.stats = { blue: { kia: 0, wia: 0, evac: 0, lostVeh: 0 }, red: { kia: 0, wia: 0, evac: 0, lostVeh: 0 } };
-    this.puppet = false; // в сетевой игре у гостя симуляция только отображает присланное состояние
+    this.puppet = false;
+    this.unitTypes = UNIT_TYPES; // в сетевой игре у гостя симуляция только отображает присланное состояние
   }
 
   // Начало партии: время суток, расстановка, режим, ИИ

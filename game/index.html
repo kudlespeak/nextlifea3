@@ -57,7 +57,21 @@
     #roster { top: 70px; left: 10px; width: 250px; max-height: calc(100vh - 300px); display: flex; flex-direction: column; overflow: hidden; }
     #roster .head { display: flex; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--line); font: 700 13px "PT Sans Narrow", sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
     #roster .head button { padding: 2px 8px; margin-left: auto; }
-    #roster.collapsed #roster-list { display: none; }
+    #roster.collapsed #roster-list, #roster.collapsed #reserve-list { display: none !important; }
+    .rtab { cursor: pointer; padding: 2px 6px; border-radius: 5px; margin-right: 4px; }
+    .rtab.active { color: var(--accent-2); background: rgba(242,193,78,0.12); }
+    .rtab b { color: var(--ok); font-weight: 700; }
+    #reserve-list { overflow-y: auto; padding: 6px 8px 10px; }
+    .res-info { font-size: 12px; color: var(--muted); margin: 2px 2px 8px; line-height: 1.4; }
+    .res-info b { color: var(--accent-2); }
+    .res-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 7px; cursor: pointer; border: 1px solid var(--line); margin-bottom: 4px; background: rgba(255,255,255,0.03); }
+    .res-row:hover { border-color: var(--accent); background: rgba(242,193,78,0.08); }
+    .res-row.off { opacity: 0.4; cursor: default; }
+    .res-row canvas { width: 34px; height: 24px; }
+    .res-row .nm { font-weight: 700; font-size: 12.5px; line-height: 1.15; }
+    .res-row .ds { font-size: 11px; color: var(--muted); }
+    .res-row .cs { font: 700 13px "PT Sans Narrow", sans-serif; color: var(--accent-2); text-align: right; }
+    .res-q { font-size: 12px; color: var(--text); padding: 3px 4px; border-left: 2px solid var(--accent); margin: 3px 0; }
     #roster-list { overflow-y: auto; padding: 4px 6px 8px; }
     .group-title { font: 700 11px "PT Sans Narrow", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 8px 6px 3px; }
     .r-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
@@ -233,8 +247,9 @@
   </header>
 
   <aside id="roster" class="panel">
-    <div class="head">Подразделения <button id="roster-toggle" title="Свернуть">–</button></div>
+    <div class="head"><span class="rtab active" id="tab-units">Войска</span><span class="rtab" id="tab-reserve">Резерв <b id="res-pts"></b></span><button id="roster-toggle" title="Свернуть">–</button></div>
     <div id="roster-list"></div>
+    <div id="reserve-list" style="display:none"></div>
   </aside>
 
   <section id="card" class="panel">

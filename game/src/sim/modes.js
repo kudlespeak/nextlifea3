@@ -5,23 +5,19 @@
 // Линия фронта строится по «полю контроля» (сетка 60 м), которое смещается там, где стоят войска.
 
 import { FACTIONS } from './factions.js';
+import { Reserve } from './reserve.js';
 
 export const MODES = {
   zones: { name: 'Захват зон интереса', desc: 'Удерживайте ключевые точки: город, сёла, перекрёстки. Удержание даёт очки; побеждает набравший 500 очков или лидер по окончании времени.' },
   front: { name: 'Активный фронт', desc: 'Обе стороны наступают. Линия фронта движется вместе с войсками. Побеждает тот, кто к концу времени контролирует больше территории.' },
-  assault: { name: 'Наступление и оборона', desc: 'Одна сторона штурмует укреплённую линию, другая удерживает. Атакующему нужно взять все опорные пункты до конца времени.' },
+  assault: { name: 'Наступление и оборона', desc: 'Оборона эшелонирована: четыре линии через всю карту. Атакующий прорывает их по очереди (большинство секторов линии), за каждую получает очки и время; обороняющийся за отход получает подкрепления. Оборона побеждает, если удержит хотя бы одну линию до конца.' },
 };
 
-const FORCES = {
-  // [тип, число]
-  blue: [['inf', 4], ['eng', 1], ['btm', 1], ['tank', 2], ['ifv', 2], ['apc', 1], ['mortar', 2], ['arty', 1], ['uav', 2], ['medevac', 1], ['truck', 1]],
-  red: [['inf', 5], ['eng', 1], ['btm', 1], ['tank', 3], ['ifv', 2], ['apc', 2], ['mortar', 2], ['arty', 2], ['uav', 1], ['medevac', 1], ['truck', 1]],
-};
-const LABEL = {
-  inf: (i, s) => `${i}-е отд.`, eng: (i) => `Сапёры-${i}`, btm: (i, s) => `${FACTIONS[s].units.btm.short}-${i}`,
-  tank: (i, s) => `${FACTIONS[s].units.tank.short} №${i}`, ifv: (i, s) => `${FACTIONS[s].units.ifv.short} №${i}`, apc: (i, s) => `${FACTIONS[s].units.apc.short} №${i}`,
-  mortar: (i) => `Миномёт-${i}`, arty: (i) => `Батарея-${i}`, uav: (i) => `БПЛА-${i}`, medevac: (i) => `Санитарка-${i}`, truck: (i) => `Снабжение-${i}`,
-};
+// Плавный изгиб линии обороны по y (без внешних зависимостей)
+function fbmLine(y, k, seed) {
+  const t = y / 900 + k * 3.1 + (seed % 97);
+  return 0.5 + 0.28 * Math.sin(t * 1.3) + 0.15 * Math.sin(t * 2.9 + 1.7) + 0.07 * Math.sin(t * 6.1 + 0.4);
+}
 
 export class GameMode {
   constructor(sim, cfg) {
@@ -44,8 +40,9 @@ export class GameMode {
 
   // Граница своей половины на время подготовки (x), с запасом от серой зоны
   prepLimit(side) {
+    if (this.limits) return this.limits[side];
     const fx = this.sim.world.frontX;
-    return side === 'blue' ? fx - 250 : fx + 250;
+    return side === 'blue' ? fx - 400 : fx + 400;
   }
   clampPrep(side, x) {
     if (!this.prep) return x;
@@ -69,65 +66,37 @@ export class GameMode {
   }
 
   // ---------- Расстановка ----------
+  // На карте с начала только тылы: пункт сбора, склад, медпункт. Войска — из резерва.
   deploy(rng) {
     const sim = this.sim, world = sim.world;
+    this.setupObjectives(rng);
     const fx = world.frontX;
     const city = world.settlements.find((s) => s.type === 'city');
-    const H = world.H;
-    const base = {
-      blue: { x: fx - 1300, y: city.y },
-      red: { x: Math.min(world.W - 400, fx + 1300), y: city.y + rng.float(-500, 500) },
-    };
-    sim.medpoints.blue = { x: base.blue.x - 500, y: base.blue.y + 150 };
-    sim.medpoints.red = { x: Math.min(world.W - 200, base.red.x + 500), y: base.red.y - 150 };
-    // Склады — в тылу, у дороги (туда ездят грузовики)
+    // Рубежи на время подготовки. В обороне — перед первой линией; наступающий — далеко (≈1.5 км),
+    // чтобы не подъехать вплотную до начала боя
+    const e = { blue: 1, red: -1 }; // направление на противника
+    if (this.mode === 'assault') {
+      const att = this.cfg.attacker, def = att === 'blue' ? 'red' : 'blue';
+      const line1 = this.lines?.[0];
+      const front = line1 ? (e[def] > 0 ? Math.max(...line1.pts.map((p) => p[0])) : Math.min(...line1.pts.map((p) => p[0]))) : fx;
+      this.limits = { [def]: front + e[def] * 120 };
+      this.limits[att] = this.limits[def] + e[def] * 1500;
+    } else this.limits = { blue: fx - 400, red: fx + 400 };
+    this.reserve = {};
     for (const side of ['blue', 'red']) {
-      const dir = side === 'blue' ? -1 : 1;
-      const want = [Math.max(150, Math.min(world.W - 150, base[side].x + dir * 700)), base[side].y - dir * 250];
-      const node = sim.roads.near(want[0], want[1], 600).sort((a, c) => sim.roads.dist(a, want[0], want[1]) - sim.roads.dist(c, want[0], want[1]))[0];
-      let p = node !== undefined ? [sim.roads.x[node] + 25, sim.roads.y[node] + 25] : want;
+      const dir = e[side];
+      // Пункт сбора — у дороги, ~0.9 км за рубежом подготовки
+      const want = [Math.max(200, Math.min(world.W - 200, this.limits[side] - dir * 900)), city.y + (side === 'blue' ? 250 : -250)];
+      const node = sim.roads.near(want[0], want[1], 900).sort((a, c) => sim.roads.dist(a, want[0], want[1]) - sim.roads.dist(c, want[0], want[1]))[0];
+      let p = node !== undefined ? [sim.roads.x[node], sim.roads.y[node]] : want;
       p = sim.nav.nearestPassable(p[0], p[1], 'wheeled') || p;
-      sim.log.addDepot(side, p[0], p[1], side === 'blue' ? 'Склад «Тыл-1»' : 'Склад «Базис»');
+      const spawn = { x: p[0], y: p[1], dir };
+      this.reserve[side] = new Reserve(sim, side, spawn);
+      // Склад и медпункт — рядом с пунктом сбора, чуть в тылу
+      const d = sim.nav.nearestPassable(p[0] - dir * 160, p[1] + 90, 'wheeled') || [p[0] - dir * 160, p[1] + 90];
+      sim.log.addDepot(side, d[0], d[1], side === 'blue' ? 'Склад «Тыл-1»' : 'Склад «Базис»');
+      sim.medpoints[side] = { x: p[0] - dir * 120, y: p[1] - 110 };
     }
-    for (const side of ['blue', 'red']) {
-      const list = FORCES[side].map((x) => x.slice());
-      // В режиме штурма: атакующему больше техники, обороне — пехоты
-      if (this.mode === 'assault') {
-        if (side === this.cfg.attacker) list.push(['tank', 1], ['ifv', 1], ['inf', 1]);
-        else list.push(['inf', 2], ['eng', 1]);
-      }
-      const b = base[side];
-      let n = 0;
-      const counters = {};
-      for (const [type, count] of list)
-        for (let k = 0; k < count; k++) {
-          counters[type] = (counters[type] || 0) + 1;
-          const row = Math.floor(n / 6), col = n % 6;
-          const dir = side === 'blue' ? -1 : 1;
-          const x = b.x + dir * row * 90 + rng.float(-20, 20);
-          const y = b.y + (col - 2.5) * 120 + rng.float(-20, 20);
-          sim.spawn(side, type, Math.max(50, Math.min(world.W - 50, x)), Math.max(50, Math.min(H - 50, y)), LABEL[type](counters[type], side));
-          n++;
-        }
-      // Дежурные отделения — в траншеях первой линии
-      const duty = this.mode === 'assault' && side !== this.cfg.attacker ? 3 : 1;
-      const squads = sim.units.filter((u) => u.side === side && u.type === 'inf').slice(-duty);
-      const fire = world.forts.items.filter((f) => f.kind === 'trench' && f.sub === 'fire' && f.side === side && f.line.length > 4)
-        .sort((a, c) => Math.abs(a.line[0][0] - fx) - Math.abs(c.line[0][0] - fx));
-      squads.forEach((sq, i) => {
-        const f = fire[Math.min(fire.length - 1, i * 3)];
-        if (!f) return;
-        const p = f.line[Math.floor(f.line.length / 2)];
-        sq.x = p[0]; sq.y = p[1];
-        for (const s of sq.soldiers) { s.x = p[0] + rng.float(-3, 3); s.y = p[1] + rng.float(-3, 3); }
-        sim.trenches.ensure();
-        const node = sim.trenches.nearest(p[0], p[1], 10, true);
-        if (node >= 0) sim.doOccupy(sq, node);
-        sq.label += ' (позиция)';
-        sq.duty = true;
-      });
-    }
-    this.setupObjectives(rng);
   }
 
   setupObjectives(rng) {
@@ -144,18 +113,33 @@ export class GameMode {
       }
       this.zones = cands.map((z) => ({ ...z, owner: null, prog: 0 }));
     } else if (this.mode === 'assault') {
-      // Опорные пункты обороняющегося: по центрам траншей первой линии
+      // Четыре эшелона обороны: линии поперёк всей карты, каждая делится на сектора.
+      // Линия взята, когда атакующий занял большинство её секторов; следующая открывается после этого.
       const def = this.cfg.attacker === 'blue' ? 'red' : 'blue';
-      const fire = world.forts.items.filter((f) => f.kind === 'trench' && f.sub === 'fire' && f.side === def)
-        .sort((a, b) => Math.abs(a.line[0][0] - fx) - Math.abs(b.line[0][0] - fx));
-      const picked = [];
-      for (const f of fire) {
-        const p = f.line[Math.floor(f.line.length / 2)];
-        if (picked.every((q) => Math.hypot(q.x - p[0], q.y - p[1]) > 500)) picked.push({ name: `Опорный пункт «${['Берёза', 'Высота', 'Ручей', 'Лесная'][picked.length]}»`, x: p[0], y: p[1], r: 150 });
-        if (picked.length >= 3) break;
+      const e = def === 'blue' ? 1 : -1; // направление обороны на противника
+      const room = e > 0 ? fx - 400 : world.W - 400 - fx;
+      const step = Math.max(350, Math.min(650, (room - 200) / 3));
+      const NAMES = ['1-я линия обороны', '2-я линия обороны', '3-я линия обороны', '4-я линия обороны'];
+      const SECT = 5;
+      this.lines = [];
+      this.zones = [];
+      for (let k = 0; k < 4; k++) {
+        const base = fx - e * (200 + k * step);
+        const pts = [];
+        for (let y = 250; y <= world.H - 250; y += 120) pts.push([base + (fbmLine(y, k, world.seed) - 0.5) * 260, y]);
+        const line = { k, name: NAMES[k], pts, owner: def, sectors: [] };
+        const segLen = Math.ceil(pts.length / SECT);
+        for (let j = 0; j < SECT; j++) {
+          const seg = pts.slice(j * segLen, Math.min(pts.length, (j + 1) * segLen + 1));
+          if (seg.length < 2) continue;
+          const c = seg[seg.length >> 1];
+          const z = { name: `${NAMES[k]}, сектор ${j + 1}`, x: c[0], y: c[1], r: 220, owner: def, prog: def === 'blue' ? -1 : 1, line: k, seg, locked: k > 0 };
+          line.sectors.push(z);
+          this.zones.push(z);
+        }
+        this.lines.push(line);
       }
-      const sign = def === 'blue' ? -1 : 1;
-      this.zones = picked.map((z) => ({ ...z, owner: def, prog: sign }));
+      this.linesTaken = 0;
     }
     if (this.mode !== 'zones') this.initGrid();
   }
@@ -218,6 +202,7 @@ export class GameMode {
   update(dt) {
     const sim = this.sim;
     if (this.winner) return;
+    for (const r of Object.values(this.reserve || {})) { r.income(dt); r.update(); }
     if (this.prep && sim.time >= this.prepEnd) this.startBattle('время вышло');
     if (this.prep) return;
     if (sim.time < this.nextTick) return;
@@ -225,6 +210,7 @@ export class GameMode {
     this.nextTick = sim.time + step;
     // Зоны
     for (const z of this.zones) {
+      if (z.locked) continue;
       let b = 0, r = 0;
       for (const u of sim.units) {
         if (u.dead || u.embarked) continue;
@@ -248,20 +234,42 @@ export class GameMode {
       }
       if (this.mode === 'zones' && z.owner) this.score[z.owner] += step / 10;
     }
+    if (this.lines) this.checkLines();
     this.updateGrid(step);
     this.checkVictory();
   }
 
+  // Эшелоны: большинство секторов у атакующего — линия взята; бонусы обеим сторонам
+  checkLines() {
+    const att = this.cfg.attacker, def = att === 'blue' ? 'red' : 'blue';
+    const line = this.lines[this.linesTaken];
+    if (!line) return;
+    const own = line.sectors.filter((z) => z.owner === att).length;
+    if (own * 2 <= line.sectors.length) return;
+    line.owner = att;
+    for (const z of line.sectors) { z.owner = att; z.prog = att === 'blue' ? -1 : 1; z.locked = true; }
+    this.linesTaken++;
+    const next = this.lines[this.linesTaken];
+    if (next) for (const z of next.sectors) z.locked = false;
+    // Бонусы: атакующему — очки и время на развитие успеха; обороне — очки за отход на новый рубеж
+    this.reserve?.[att] && (this.reserve[att].points += 300);
+    this.reserve?.[def] && (this.reserve[def].points += 250);
+    if (next) this.endAt += 480;
+    this.sim.msg(`${line.name} прорвана! ${FACTIONS[att].short}: +300 очков${next ? ', +8 мин' : ''}. ${FACTIONS[def].short}: отход на ${next ? next.name.toLowerCase() : 'последний рубеж'}, +250 очков`);
+  }
+
   checkVictory() {
     const sim = this.sim;
-    const alive = (side) => sim.units.some((u) => u.side === side && !u.dead && u.soldiers);
+    // Разгром: нет пехоты на карте, в пути и нечем её заказать
+    const alive = (side) => sim.units.some((u) => u.side === side && !u.dead && u.soldiers) ||
+      this.reserve?.[side]?.queue.some((q) => ['inf', 'eng'].includes(q.type)) || (this.reserve?.[side] && this.reserve[side].avail.inf > 0 && this.reserve[side].points >= 60);
     for (const side of ['blue', 'red']) if (!alive(side)) return this.finish(side === 'blue' ? 'red' : 'blue', 'у противника не осталось пехоты');
     if (this.mode === 'zones') {
       for (const side of ['blue', 'red']) if (this.score[side] >= 500) return this.finish(side, 'набрано 500 очков');
       if (sim.time >= this.endAt) return this.finish(this.score.blue === this.score.red ? null : this.score.blue > this.score.red ? 'blue' : 'red', 'время вышло');
     } else if (this.mode === 'assault') {
       const att = this.cfg.attacker, def = att === 'blue' ? 'red' : 'blue';
-      if (this.zones.length && this.zones.every((z) => z.owner === att)) return this.finish(att, 'все опорные пункты взяты');
+      if (this.lines && this.linesTaken >= this.lines.length) return this.finish(att, 'прорваны все четыре линии обороны');
       if (sim.time >= this.endAt) return this.finish(def, 'оборона выстояла до конца времени');
     } else if (sim.time >= this.endAt) {
       // Побеждает тот, кто больше продвинулся относительно начала

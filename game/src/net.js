@@ -44,7 +44,10 @@ export function makeSnapshot(sim) {
   snap.depots = sim.log.depots.map((d) => [Math.round(d.stock.ammo), Math.round(d.stock.shells), Math.round(d.stock.fuel), d.alive ? 1 : 0, d.spotted ? 1 : 0]);
   if (g) {
     snap.prep = g.prep ? 1 : 0; snap.prepEnd = g.prepEnd; snap.ready = g.ready;
-    snap.zones = g.zones.map((z) => [z.owner, r2(z.prog), z.blue || 0, z.red || 0, z.contested ? 1 : 0]);
+    snap.zones = g.zones.map((z) => [z.owner, r2(z.prog), z.blue || 0, z.red || 0, z.contested ? 1 : 0, z.locked ? 1 : 0]);
+    snap.lt = g.linesTaken || 0;
+    snap.res = {};
+    for (const [side, r] of Object.entries(g.reserve || {})) snap.res[side] = [Math.floor(r.points), r.avail, r.queue.map((q) => [q.type, r1(q.at)])];
     snap.score = g.score;
     snap.winner = g.winner;
     snap.reason = g.reason;
@@ -111,7 +114,9 @@ export function applySnapshot(sim, snap) {
   for (const t of snap.tracers || []) sim.combat.tracers.push({ x0: t[0], y0: t[1], x1: t[2], y1: t[3], side: t[4] ? 'red' : 'blue', heavy: !!t[5], t: sim.time });
   const g = sim.game;
   if (g && snap.zones) {
-    snap.zones.forEach((z, i) => { const zn = g.zones[i]; if (!zn) return; zn.owner = z[0]; zn.prog = z[1]; zn.blue = z[2]; zn.red = z[3]; zn.contested = !!z[4]; });
+    snap.zones.forEach((z, i) => { const zn = g.zones[i]; if (!zn) return; zn.owner = z[0]; zn.prog = z[1]; zn.blue = z[2]; zn.red = z[3]; zn.contested = !!z[4]; zn.locked = !!z[5]; });
+    if (g.lines) { g.linesTaken = snap.lt; g.lines.forEach((l, i) => { l.owner = i < snap.lt ? g.cfg.attacker : l.owner; }); }
+    for (const [side, q] of Object.entries(snap.res || {})) { const r = g.reserve?.[side]; if (!r) continue; r.points = q[0]; r.avail = q[1]; r.queue = q[2].map(([type, at]) => ({ type, at })); }
     g.score = snap.score;
     g.winner = snap.winner;
     g.reason = snap.reason;
