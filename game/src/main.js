@@ -880,9 +880,9 @@ $('help').onclick = (e) => { if (e.target.id === 'help') toggleHelp(false); };
 $('btn-menu').onclick = (e) => { e.stopPropagation(); $('menu').classList.toggle('open'); };
 $('btn-strike').onclick = () => { closeMenu(); if (!cfg?.multiplayer) setOrderMode('strike'); };
 $('btn-dig-test').onclick = () => { closeMenu(); if (cfg?.multiplayer) return; setOrderMode('dig'); dig.test = true; };
-$('btn-new').onclick = () => { location.href = location.pathname; };
+$('btn-new').onclick = () => { location.reload(); };
 $('side-badge').onclick = () => {};
-$('end-menu').onclick = () => { location.href = location.pathname; };
+$('end-menu').onclick = () => { location.reload(); };
 
 // Табло: режим, очки/территория, оставшееся время, время суток
 function updateScoreboard() {
