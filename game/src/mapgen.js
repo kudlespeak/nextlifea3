@@ -28,6 +28,10 @@ export const CROPS = {
   corn:      { color: '#56703a', furrow: 'rgba(25,40,15,0.35)', tram: true },
   fallow:    { color: '#858550', furrow: null, tram: false },
   meadow:    { color: '#707c46', furrow: null, tram: false },
+  // пятна степи (без границ): залежь, выгоревшая трава, сырые понижения
+  dry:       { color: '#958f5e', furrow: null, tram: false, soft: 0.45 },
+  green:     { color: '#66744a', furrow: null, tram: false, soft: 0.4 },
+  bare:      { color: '#8b7a5c', furrow: null, tram: false, soft: 0.3 },
 };
 
 function newWorld(seed, W, H, res = 4) {
@@ -302,6 +306,7 @@ function infraLayout(kind, L = 0) {
     case 'mall': return { w: 150, h: 110, comps: [c('mall', 0, -15, 110, 60, { n: 'Торговый центр' })] };
     case 'market': return { w: 70, h: 50, comps: [c('mall', 0, -5, 40, 26, { n: 'Супермаркет' })] };
     case 'store': return { w: 34, h: 26, comps: [c('kiosk', 0, 0, 16, 10, { n: 'Магазин' })] };
+    case 'fuel': return { w: 76, h: 48, comps: [c('fcanopy', -8, -4, 34, 18, { n: 'Навес с колонками' }), c('kiosk', 24, 12, 16, 10, { n: 'Магазин АЗС' })] };
     case 'firest': return { w: 90, h: 60, comps: [c('garage', 0, -5, 60, 26, { n: 'Пожарное депо' }), c('ctrl', 32, 18, 16, 10, { n: 'Пункт связи' })] };
     case 'rembase': return { w: 170, h: 110, comps: [c('garage', -35, -15, 80, 34, { n: 'Гараж техники' }), c('hall', 50, 10, 50, 40, { n: 'Склад оборудования' }), c('ctrl', -60, 35, 26, 14, { n: 'Диспетчерская' })] };
     case 'bridge': {
@@ -370,7 +375,8 @@ function generateDroneWarWorld(seed) {
   addRoad(world, highway, 'highway');
   const hw2 = [];
   for (let i = 0; i <= 24; i++) hw2.push([-200 + (i / 24) * (W + 400), H * 0.5 + 2300 + rng.float(-250, 250)]);
-  addRoad(world, resample(catmullRom(hw2, 10), 12), 'local');
+  const hwLocal = resample(catmullRom(hw2, 10), 12);
+  addRoad(world, hwLocal, 'local');
 
   // Железные дороги: из тыла через столицу к городам
   for (const [side, S] of Object.entries(sides)) {
@@ -448,27 +454,36 @@ function generateDroneWarWorld(seed) {
   // ---------- Объекты инфраструктуры ----------
   const FORBID = M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY | M.SETTLE | M.BALKA | M.VILLAGE | M.CITYZONE;
   let nextId = 1;
+  // Площадка объекта с прилегающей территорией (выкошенная полоса, подъезд, забор): не в посадке,
+  // не на дороге и не впритык к другим объектам
   const place = (side, kind, name, x, y, opts = {}) => {
     const lay = infraLayout(kind, opts.L);
     const angle = opts.angle ?? rng.float(-0.4, 0.4);
     const forbid = opts.forbid ?? FORBID;
+    const pad = opts.pad ?? (lay.w >= 140 ? 45 : lay.w >= 60 ? 22 : 12);
     let at = null;
-    for (let a = 0; a < 200 && !at; a++) {
+    for (let a = 0; a < 260 && !at; a++) {
       const r = a * (opts.step || 45), t = a * 2.4;
       const px = x + Math.cos(t) * r, py = y + Math.sin(t) * r;
       if (px < 250 || py < 250 || px > W - 250 || py > H - 250) continue;
-      const poly = rectCorners(px, py, lay.w + 30, lay.h + 30, angle);
-      if (mask.polyFree(poly, forbid, 12)) at = [px, py];
+      const poly = rectCorners(px, py, lay.w + pad * 2, lay.h + pad * 2, angle);
+      if (mask.polyFree(poly, forbid, 10)) at = [px, py];
     }
     if (!at) at = [x, y];
     const o = { id: nextId++, side, kind, name, x: at[0], y: at[1], angle, w: lay.w, h: lay.h, comps: lay.comps, ...opts.extra };
     const poly = rectCorners(o.x, o.y, lay.w + 16, lay.h + 16, angle);
-    mask.stampPoly(poly, M.BUILD);
-    addItem(world.areas, { kind: 'dwsite', poly, site: kind, x: o.x, y: o.y, angle, w: lay.w + 16, h: lay.h + 16 });
+    const apron = rectCorners(o.x, o.y, lay.w + pad * 2, lay.h + pad * 2, angle);
+    mask.stampPoly(apron, M.BUILD);
+    addItem(world.areas, { kind: 'dwsite', poly, apron, site: kind, x: o.x, y: o.y, angle, w: lay.w + 16, h: lay.h + 16, pad });
     // подъездная дорога к ближайшей дороге
-    const road = world.roadList.filter((r) => r.type !== 'street').map((r) => ({ r, p: nearestPoint(r.line, at) })).sort((a, b) => Math.hypot(a.p[0] - at[0], a.p[1] - at[1]) - Math.hypot(b.p[0] - at[0], b.p[1] - at[1]))[0];
-    if (road && Math.hypot(road.p[0] - at[0], road.p[1] - at[1]) < 4000) {
-      const edge = [at[0] + Math.cos(angle + Math.PI / 2) * (lay.h / 2 + 8), at[1] + Math.sin(angle + Math.PI / 2) * (lay.h / 2 + 8)];
+    const road = world.roadList.filter((r) => r.type !== 'street' && r.type !== 'dirt').map((r) => ({ r, p: nearestPoint(r.line, at) })).sort((a, b) => Math.hypot(a.p[0] - at[0], a.p[1] - at[1]) - Math.hypot(b.p[0] - at[0], b.p[1] - at[1]))[0];
+    if (road && Math.hypot(road.p[0] - at[0], road.p[1] - at[1]) < 5000) {
+      // ворота — на стороне, обращённой к дороге
+      const sides4 = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((q) => {
+        const ext = q === 0 || q === Math.PI ? lay.w / 2 + 8 : lay.h / 2 + 8;
+        return [at[0] + Math.cos(angle + q) * ext, at[1] + Math.sin(angle + q) * ext];
+      });
+      const edge = sides4.sort((a, b) => Math.hypot(road.p[0] - a[0], road.p[1] - a[1]) - Math.hypot(road.p[0] - b[0], road.p[1] - b[1]))[0];
       if (Math.hypot(road.p[0] - edge[0], road.p[1] - edge[1]) > 12) addRoad(world, wobblyRoad(rng, edge, road.p, 3), opts.paved ? 'local' : 'dirt');
       o.gate = edge;
     }
@@ -500,27 +515,47 @@ function generateDroneWarWorld(seed) {
     const pN = place(side, 'ps110', `ПС 110 кВ «${nm[1]}»`, cN[0] + S.dir * 900, cN[1] - 300);
     const pS = place(side, 'ps110', `ПС 110 кВ «${nm[2]}»`, cS[0] + S.dir * 900, cS[1] + 300);
     cp1.city = 0; cp2.city = 0; pN.city = 1; pS.city = 2;
-    place(side, 'oil', `Нефтебаза «${nm[0]}»`, cap[0] + S.dir * 2000, cap[1] + 2300);
+    // Объекты разнесены по территории, а не собраны у столицы: нефтебаза — у ж/д ветки на юге,
+    // завод — в промзоне северного города, распредцентр — на трассе между городами,
+    // ремонтная база — у центральной подстанции, арсенал — в глубоком тылу
+    const lerp2 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const oilAt = S.branch[Math.floor(S.branch.length * rng.float(0.55, 0.75))];
+    place(side, 'oil', `Нефтебаза «${nm[2]}»`, oilAt[0] + rng.float(-300, 300), oilAt[1] + (rng.chance(0.5) ? 450 : -450));
     place(side, 'ammo', 'Арсенал', (cap[0] + rearX) / 2, H * 0.8 + rng.float(-600, 600));
-    place(side, 'factory', `Завод БПЛА «${side === 'blue' ? 'Сокол' : 'Беркут'}»`, cap[0] + S.dir * 1500, cap[1] - 2600);
-    place(side, 'launch', 'Стартовая позиция «Север»', rearX - S.dir * 900, H * 0.15 + rng.float(-500, 500));
-    place(side, 'launch', 'Стартовая позиция «Юг»', rearX - S.dir * 900, H * 0.85 + rng.float(-500, 500));
-    // Логистика: погранпереход на трассе у тылового края, распредцентр у столицы (тыловой берег),
-    // ремонтная база, пожарные части, магазины и ТЦ в городах и сёлах
+    place(side, 'factory', `Завод БПЛА «${side === 'blue' ? 'Сокол' : 'Беркут'}»`, cN[0] + S.dir * 1500, cN[1] - 900);
+    place(side, 'launch', 'Стартовая позиция «Север»', W / 2 + S.dir * 9000 + rng.float(-800, 800), H * 0.1 + rng.float(-300, 500));
+    place(side, 'launch', 'Стартовая позиция «Юг»', W / 2 + S.dir * 9000 + rng.float(-800, 800), H * 0.9 + rng.float(-500, 300));
+    // Логистика: погранпереход на трассе у тылового края
     const hwp = highway.reduce((a, p) => (Math.abs(p[0] - (rearX - S.dir * 700)) < Math.abs(a[0] - (rearX - S.dir * 700)) ? p : a));
-    place(side, 'border', 'Погранпереход «Запад»'.replace('Запад', side === 'blue' ? 'Запад' : 'Восток'), hwp[0], hwp[1] + 150, { angle: 0, paved: true });
-    place(side, 'hub', `Распределительный центр «${nm[0]}»`, cap[0] + S.dir * 1700, cap[1] - 700, { paved: true });
-    place(side, 'rembase', 'Ремонтная база энергетиков', cap[0] + S.dir * 1300, cap[1] + 800, { paved: true });
+    place(side, 'border', side === 'blue' ? 'Погранпереход «Запад»' : 'Погранпереход «Восток»', hwp[0], hwp[1] + 150, { angle: 0, paved: true });
+    const hubX = lerp2(cap, cN, 0.45);
+    const hubP = nearestPoint(highway, hubX);
+    place(side, 'hub', `Распределительный центр «${nm[0]}»`, hubP[0], hubP[1] + (hubP[1] > hubX[1] ? -200 : 200), { paved: true, angle: rng.float(-0.15, 0.15) });
+    place(side, 'rembase', 'Ремонтная база энергетиков (центральная)', psB.x + S.dir * 700, psB.y + rng.float(-500, 500), { paved: true });
+    // Районные электросети (РЭС) у каждого города — свои бригады ближе к объектам
+    S.cities.forEach((ct, i) => place(side, 'rembase', `РЭС «${ct.name}»`, ct.c[0] + S.dir * (i ? 900 : 1500) * ct.sc, ct.c[1] + (i === 1 ? 700 : i === 2 ? -700 : 900), { paved: true, extra: { small: true } }));
+    const cityForbid = M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY;
     S.cities.forEach((ct, i) => {
-      place(side, 'firest', `Пожарная часть «${ct.name}»`, ct.c[0] + S.dir * (i ? 600 : 1000), ct.c[1] + (i ? 500 : 400), { forbid: M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY, step: 30, paved: true, extra: { city: i } });
+      place(side, 'firest', `Пожарная часть «${ct.name}»`, ct.c[0] + S.dir * (i ? 600 : 1000), ct.c[1] + (i ? 500 : 400), { forbid: cityForbid, step: 30, paved: true, extra: { city: i } });
       const nMall = i === 0 ? 2 : 1;
       for (let k = 0; k < nMall; k++) {
         const a = rng.float(0, Math.PI * 2);
         place(side, i === 0 ? 'mall' : 'market', i === 0 ? `ТЦ «${['Галерея', 'Меридиан', 'Центральный'][k]}», ${ct.name}` : `Супермаркет, ${ct.name}`, ct.c[0] + Math.cos(a) * 900 * ct.sc, ct.c[1] + Math.sin(a) * 700 * ct.sc,
-          { forbid: M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY, step: 30, paved: true, extra: { city: i, settlement: ct.name } });
+          { forbid: cityForbid, step: 30, paved: true, extra: { city: i, settlement: ct.name } });
       }
+      // АЗС на въезде в город
+      const a = rng.float(0, Math.PI * 2);
+      place(side, 'fuel', `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${ct.name}`, ct.c[0] + Math.cos(a) * 1100 * ct.sc, ct.c[1] + Math.sin(a) * 900 * ct.sc,
+        { forbid: cityForbid, step: 20, paved: true, extra: { city: i, settlement: ct.name } });
     });
-    for (const v of villages) if (v.side === side) place(side, 'store', `Магазин, ${v.name}`, v.c[0], v.c[1], { forbid: M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY, step: 20, extra: { settlement: v.name, village: true } });
+    for (const v of villages) if (v.side === side) place(side, 'store', `Магазин, ${v.name}`, v.c[0], v.c[1], { forbid: cityForbid, step: 20, extra: { settlement: v.name, village: true } });
+    // АЗС вдоль трасс
+    let nFuel = 1;
+    for (const [road, fr] of [[highway, 0.1], [highway, 0.24], [highway, 0.38], [hwLocal, 0.16], [hwLocal, 0.33]]) {
+      const tx = side === 'blue' ? fr * W : W - fr * W;
+      const p = road.reduce((a, q) => (Math.abs(q[0] - tx) < Math.abs(a[0] - tx) ? q : a));
+      place(side, 'fuel', `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}» №${nFuel++} (трасса)`, p[0], p[1] + (rng.chance(0.5) ? 50 : -50), { step: 15, paved: true, angle: rng.float(-0.1, 0.1) });
+    }
     // ЛЭП
     line(tpp, psA, 330); line(tpp, psB, 330); line(psA, psB, 330);
     const imp = { x: rearX + S.dir * 60, y: psA.y + rng.float(-1200, 1200), id: 'import', side };
@@ -555,10 +590,14 @@ function generateDroneWarWorld(seed) {
     world.infra.push({ id: nextId++, side, kind: 'bridge', btype: b.type, name: `Мост через р. ${DW_NAMES[side].river} — ${TYPE_NAME[b.type]}`, x: b.x, y: b.y, angle: b.angle, w: lay.w, h: lay.h, comps: lay.comps, L: b.L });
   }
 
-  // ---------- Поля — только вокруг жилья и вдоль трасс; остальное — степь ----------
-  const near = [...allC.map((ct) => [ct.c[0], ct.c[1], 3000 * ct.sc]), ...villages.map((v) => [v.c[0], v.c[1], 1300])];
-  const keep = (x, y, belt) => near.some(([cx, cy, r]) => Math.hypot(x - cx, y - cy) < r * (belt ? 0.55 : 1));
-  buildFields(world, rng, keep);
+  // ---------- Поля: массивы вокруг жилья (свой разворот, поля разной длины вразбежку) + пятна степи ----------
+  const massifs = [
+    ...allC.map((ct) => ({ x: ct.c[0], y: ct.c[1], r: 3300 * ct.sc })),
+    ...allC.map((ct) => { const a = rng.float(0, 6.28); return { x: ct.c[0] + Math.cos(a) * 2600 * ct.sc, y: ct.c[1] + Math.sin(a) * 2600 * ct.sc, r: 1900 * ct.sc }; }),
+    ...villages.map((v) => ({ x: v.c[0], y: v.c[1], r: rng.float(1100, 2000) })),
+  ];
+  for (let i = 0; i < 10; i++) massifs.push({ x: rng.float(1500, W - 1500), y: rng.float(1500, H - 1500), r: rng.float(700, 1300) }); // хутора и агрофирмы в степи
+  buildFieldsDW(world, rng, massifs);
   // Редкие рощи и одиночные деревья в степи
   for (let i = 0; i < 260; i++) {
     const x = rng.float(0, W), y = rng.float(0, H);
@@ -577,6 +616,12 @@ function generateDroneWarWorld(seed) {
         world.trees.add(x, y, rng.float(3, 6), rng.int(0, 3));
       }
     }
+  // Деревья садов, попавшие на площадку объекта, убираем (радиус 0 — не рисуется)
+  for (const o of world.infra) {
+    if (o.kind === 'bridge' || o.kind === 'import') continue;
+    const poly = rectCorners(o.x, o.y, o.w + 16, o.h + 16, o.angle);
+    world.trees.forEach(bboxOf(poly, 4), (arr, i) => { if (pointInPoly(arr[i], arr[i + 1], poly)) arr[i + 2] = 0; });
+  }
   const frontX = seedWarScars(world, rng, W * 0.5 + rng.float(-200, 200));
   world.frontX = frontX;
   finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0), false);
@@ -806,7 +851,7 @@ function buildFields(world, rng, keep = null) {
         [b[0] - dy * off + dx * 20, b[1] + dx * off + dy * 20],
       ], 10);
       // не тянем грунтовку через город и воду
-      const ok = line.every(([x, y]) => !mask.has(x, y, M.CITYZONE | M.WATER | M.BALKA | M.SETTLE | M.VILLAGE));
+      const ok = line.every(([x, y]) => !mask.has(x, y, M.CITYZONE | M.WATER | M.BALKA | M.SETTLE | M.VILLAGE | M.BUILD));
       if (ok) dirtLines.push(line);
     }
     if (rng.chance(0.85)) beltSegs.push([a, b, bw]);
@@ -814,6 +859,107 @@ function buildFields(world, rng, keep = null) {
   // Сначала дороги (чтобы в полосах остались проезды), потом деревья
   for (const line of dirtLines) addRoad(world, line, 'dirt');
   for (const [a, b, bw] of beltSegs) segsBelt(world, rng, a, b, avoid, bw);
+}
+
+// ---------- Поля «Войны дронов» ----------
+// Массив полей вокруг села/города: у каждого свой разворот; полосы разной ширины, в полосе — поля
+// разной длины вразбежку (как нарезаны паи), краевые поля подрезаны по неровному контуру массива.
+// Лесополосы — только по части длинных границ. Между массивами — степь с пятнами залежи.
+function buildFieldsDW(world, rng, massifs) {
+  const { mask, W, H } = world;
+  const avoid = M.SETTLE | M.CITY | M.CITYZONE | M.WATER | M.BALKA | M.VILLAGE | M.BUILD | M.RAIL;
+  const G = 40, gw = Math.ceil(W / G), gh = Math.ceil(H / G);
+  const taken = new Uint8Array(gw * gh);
+  const cell = (x, y) => { const i = Math.floor(x / G), j = Math.floor(y / G); return i < 0 || j < 0 || i >= gw || j >= gh ? -1 : j * gw + i; };
+  const busy = (x, y) => { const k = cell(x, y); return k < 0 || taken[k] === 1; };
+  const take = (poly) => {
+    const bb = bboxOf(poly, 0);
+    for (let y = Math.floor(bb.y0 / G) * G + G / 2; y < bb.y1; y += G)
+      for (let x = Math.floor(bb.x0 / G) * G + G / 2; x < bb.x1; x += G) if (pointInPoly(x, y, poly)) { const k = cell(x, y); if (k >= 0) taken[k] = 1; }
+  };
+  const crops = [['wheat', 4], ['stubble', 4], ['sunflower', 3], ['plowed', 1.6], ['harrowed', 1.4], ['corn', 1.5], ['fallow', 1.2], ['meadow', 0.6]];
+  let nFields = 0;
+  for (const m of massifs) {
+    const th = rng.float(-0.7, 0.7) + (rng.chance(0.5) ? Math.PI / 2 : 0);
+    const c = Math.cos(th), s = Math.sin(th);
+    const toW = (u, v) => [m.x + u * c - v * s, m.y + u * s + v * c];
+    const ph = [rng.float(0, 6.28), rng.float(0, 6.28), rng.float(0, 6.28)];
+    const rad = (a) => m.r * (0.8 + 0.14 * Math.sin(a * 2 + ph[0]) + 0.1 * Math.sin(a * 3 + ph[1]) + 0.06 * Math.sin(a * 5 + ph[2]));
+    const inside = (x, y) => Math.hypot(x - m.x, y - m.y) < rad(Math.atan2(y - m.y, x - m.x));
+    const R = m.r * 1.15;
+    let v = -R + rng.float(0, 200);
+    let prevCrop = null;
+    while (v < R) {
+      const sw = rng.float(260, 720);
+      let u = -R - rng.float(0, 700);
+      while (u < R) {
+        const fl = rng.float(420, 1500);
+        const u0 = u + 9, u1 = u + fl - 9, v0 = v + 9, v1 = v + sw - 9;
+        u += fl + (rng.chance(0.2) ? rng.float(15, 50) : 0);
+        const cen = toW((u0 + u1) / 2, (v0 + v1) / 2);
+        if (!inside(cen[0], cen[1]) || busy(cen[0], cen[1])) continue;
+        // Поле, возможно, разрезанное пополам, если частично заходит на запретное
+        const tryPart = (a0, a1, b0, b1, depth) => {
+          // края массива — неровные: поле укорачивается вдоль длинной стороны до контура
+          const ok2 = (a) => { const p = toW(a, b0), q = toW(a, b1); return inside(p[0], p[1]) && inside(q[0], q[1]); };
+          const along = a1 - a0 >= b1 - b0;
+          if (along) {
+            if (!ok2(a0)) { let lo = a0, hi = (a0 + a1) / 2; if (!ok2(hi)) return; for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (ok2(m)) hi = m; else lo = m; } a0 = hi; }
+            if (!ok2(a1)) { let lo = (a0 + a1) / 2, hi = a1; if (!ok2(lo)) return; for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (ok2(m)) lo = m; else hi = m; } a1 = lo; }
+            if (a1 - a0 < 220) return;
+          }
+          const poly = [toW(a0, b0), toW(a1, b0), toW(a1, b1), toW(a0, b1)];
+          if (!along && poly.some((p) => !inside(p[0], p[1]))) return;
+          let bad = false;
+          for (let i = 0; i <= 4 && !bad; i++) for (let j = 0; j <= 4 && !bad; j++) {
+            const x = poly[0][0] + (poly[1][0] - poly[0][0]) * (i / 4) + (poly[3][0] - poly[0][0]) * (j / 4);
+            const y = poly[0][1] + (poly[1][1] - poly[0][1]) * (i / 4) + (poly[3][1] - poly[0][1]) * (j / 4);
+            if (mask.has(x, y, avoid) || busy(x, y)) bad = true;
+          }
+          if (bad) {
+            if (depth > 1) return;
+            if (a1 - a0 > b1 - b0) { const mid = (a0 + a1) / 2; tryPart(a0, mid - 6, b0, b1, depth + 1); tryPart(mid + 6, a1, b0, b1, depth + 1); }
+            else { const mid = (b0 + b1) / 2; tryPart(a0, a1, b0, mid - 6, depth + 1); tryPart(a0, a1, mid + 6, b1, depth + 1); }
+            return;
+          }
+          let area = 0;
+          for (let i = 0; i < 4; i++) { const p = poly[i], q = poly[(i + 1) % 4]; area += p[0] * q[1] - q[0] * p[1]; }
+          if (Math.abs(area) / 2 < 40000) return;
+          const crop = prevCrop && rng.chance(0.3) ? prevCrop : rng.weighted(crops);
+          prevCrop = crop;
+          const field = { kind: 'field', poly, crop, angle: (a1 - a0 > b1 - b0 ? th : th + Math.PI / 2) + (rng.chance(0.12) ? Math.PI / 2 : 0), seed: rng.int(0, 1e9), patches: [] };
+          for (let k = rng.int(0, 3); k > 0; k--) {
+            const q = toW(rng.float(a0, a1), rng.float(b0, b1));
+            field.patches.push({ x: q[0], y: q[1], rx: rng.float(30, 120), ry: rng.float(20, 70), a: rng.float(0, 3.14), dark: rng.chance(0.6) });
+          }
+          addItem(world.fields, field, 0);
+          take(poly);
+          nFields++;
+        };
+        tryPart(u0, u1, v0, v1, 0);
+      }
+      // Лесополоса по длинной границе полосы — не везде
+      if (rng.chance(0.38)) {
+        const bw = rng.float(12, 20);
+        let run = [];
+        const flush = () => { if (run.length >= 3) segsBelt(world, rng, run[0], run[run.length - 1], avoid, bw); run = []; };
+        for (let uu = -R; uu <= R; uu += 90) {
+          const p = toW(uu, v);
+          if (inside(p[0], p[1]) && !mask.has(p[0], p[1], avoid)) run.push(p); else flush();
+        }
+        flush();
+      }
+      v += sw;
+    }
+  }
+  // Степь: пятна залежи, выгоревшей травы и сырых понижений (мягкие края)
+  for (let i = 0; i < 160; i++) {
+    const x = rng.float(0, W), y = rng.float(0, H);
+    if (busy(x, y) || mask.has(x, y, M.CITY | M.CITYZONE | M.VILLAGE)) continue;
+    const r = rng.float(250, 1100);
+    addItem(world.fields, { kind: 'field', poly: blob(x, y, r, r * rng.float(0.4, 0.9), rng.float(0, 3.14), rng, 28, 0.3), crop: rng.weighted([['dry', 3], ['green', 2], ['bare', 1]]), angle: 0, seed: rng.int(0, 1e9), patches: [] }, 0);
+  }
+  world.fieldCount = nFields;
 }
 
 // Лесополоса: 16–30 м шириной, несколько рядов деревьев и опушка из кустарника.
@@ -834,7 +980,7 @@ function segsBelt(world, rng, a, b, avoid, bw) {
     gaps.push([g0, g0 + rng.float(15, 60)]);
   }
   const plant = (x, y, rad, shade) => {
-    if (mask.has(x, y, avoid | M.ROAD | M.RAIL)) return;
+    if (mask.has(x, y, avoid | M.ROAD | M.RAIL | M.BUILD)) return;
     if (mask.near(x, y, 6, M.ROAD)) return;
     world.trees.add(x, y, rad, shade);
     pts.push([x, y]);

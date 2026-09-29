@@ -91,18 +91,31 @@ function buildDistribution(world, rng, mains, cities, sameSide = null) {
     });
     b.tp = best;
   }
-  // Уличные фонари вдоль городских и сельских улиц
+  // Уличные фонари — на обочине (не на оси дороги), через одну опору по разные стороны; на проспектах —
+  // с обеих сторон. У фонаря — направление к проезжей части (световое пятно смещено на дорогу)
   const lamps = [];
   for (const r of world.roadList) {
     if (!['street', 'avenue', 'village'].includes(r.type)) continue;
-    const pts = resample(r.line, r.type === 'village' ? 60 : 38);
-    for (const [x, y] of pts) {
+    const pts = resample(r.line, r.type === 'village' ? 55 : r.type === 'avenue' ? 30 : 36);
+    for (let k = 0; k < pts.length; k++) {
+      const [x, y] = pts[k];
+      const a = pts[Math.max(0, k - 1)], b = pts[Math.min(pts.length - 1, k + 1)];
+      let tx = b[0] - a[0], ty = b[1] - a[1];
+      const L = Math.hypot(tx, ty) || 1; tx /= L; ty /= L;
       let best = -1, bd = 900;
       tps.forEach((tp, i) => {
         const d = Math.hypot(tp.x - x, tp.y - y);
         if (d < bd) { bd = d; best = i; }
       });
-      if (best >= 0) lamps.push({ x, y, tp: best, on: rng.chance(r.type === 'village' ? 0.6 : 0.85) });
+      if (best < 0) continue;
+      const sides = r.type === 'avenue' ? [1, -1] : [k % 2 ? 1 : -1];
+      for (const sd of sides) {
+        const off = (r.width || 8) / 2 + 1.6;
+        const nx = -ty * sd, ny = tx * sd; // от оси дороги к фонарю
+        const lx = x + nx * off, ly = y + ny * off;
+        if (world.mask.has(lx, ly, M.BUILD | M.WATER)) continue;
+        lamps.push({ x: lx, y: ly, nx: -nx, ny: -ny, tp: best, on: rng.chance(r.type === 'village' ? 0.6 : 0.85) });
+      }
     }
   }
   return { tps, lamps };

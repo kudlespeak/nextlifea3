@@ -244,6 +244,20 @@ function canopy(M, w, h, st) {
   M.box(-w / 2, w / 2, -h / 2, h / 2, 6.5, 7.4, mat('#e0e2de'), mat('#d8dcd6', { fn(o, x) { if ((x * 0.2) % 1 < 0.1) mix(o, [40, 90, 160], 0.6); } }));
   for (const y of [-h / 4, h / 4]) M.box(-w / 2 + 4, w / 2 - 4, y - 0.6, y + 0.6, 0, 0.9, CONC_DK); // островки
 }
+// Навес АЗС: плоская кровля с фирменным фризом, колонки на островках
+function fuelCanopy(M, w, h, st, side) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.8, SOOT); for (let i = 0; i < 3; i++) M.seg([-w / 3 + i * w / 3, 0, 0], [-w / 3 + i * w / 3 + 3, 2, 3], 0.4, 0.4, SOOT); return; }
+  const brand = side === 'red' ? [200, 40, 36] : [30, 120, 70];
+  const post = mat('#d8dad6');
+  for (const x of [-w / 2 + 3, w / 2 - 3]) for (const y of [-h / 4, h / 4]) M.seg([x, y, 0], [x, y, 5.4], 0.35, 0.35, post);
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 5.4, 6.4, mat('#e4e4e0', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5) set(o, brand); } }), mat('#eceae4', { fn(o, x, y) { if (Math.abs(y) < 0.6) set(o, brand); } }));
+  for (let i = 0; i < 3; i++) {
+    const x = -w / 2 + 6 + i * ((w - 12) / 2);
+    M.box(x - 3, x + 3, -0.8, 0.8, 0, 0.25, CONC_DK); // островок
+    M.box(x - 0.5, x + 0.5, -0.45, 0.45, 0.25, 1.9, mat('#f2f2ee', { fn(o, xx, y, z) { if (z > 1.5) set(o, brand); } })); // колонка
+  }
+  if (st === 'damaged') M.box(-w / 2, -w / 2 + w * 0.4, -h / 2, h / 2, 5.4, 6.4, SOOT);
+}
 function mall(M, w, h, st) {
   const wall = mat('#b9b2a4', { fn(o, x, y, z, n) {
     if (Math.abs(n[2]) < 0.5 && z > 7 && z < 9) set(o, [170, 40, 40]); // вывеска
@@ -293,6 +307,24 @@ export function buildVehicle(kind, side, variant = 0) {
     M.cylZ(-2.8, 0, 0.4, 0.35, 1.8, 2.3, mat('#6d6d6d'), 8);
     M.seg([-2.8, 0, 2.3], [1.0, 0.3, 3.2], 0.35, 0.35, mat('#e8e6e0'));
     M.box(0.9, 1.6, -0.2, 0.8, 2.9, 3.6, mat('#e0782a')); // люлька
+  } else if (kind === 'tanker') {
+    // Бензовоз: кабина + цистерна
+    wheelsRow(M, [2.9, -1.6, -2.9], 1.15, 0.5);
+    cab(M, 1.9, 3.9, 1.15, ['#e8e8e4', '#d9a13a', '#3a3a3a'][variant % 3], 3.0);
+    M.cylX(0, 2.0, 1.1, 1.1, -3.9, 1.7, mat('#d6d6d0', { fn(o, x, y, z) { if (z > 1.8 && z < 2.2) set(o, side === 'red' ? [200, 40, 36] : [30, 120, 70]); } }), 14);
+    M.box(-3.9, 1.8, -0.9, 0.9, 0.7, 1.0, mat('#2b2b2b'));
+  } else if (kind === 'car') {
+    // Легковой: седан/хэтчбек/кроссовер разных цветов
+    const col = ['#d9d9d4', '#1d1f22', '#8a8f94', '#5c1f1f', '#26406b', '#e8e6de', '#3f4a3d', '#b1462c'][variant % 8];
+    const cm = mat(col, { spec: 0.35 });
+    const suv = variant % 5 === 3;
+    for (const x of [1.35, -1.35]) for (const sg of [1, -1]) M.cylY(x, 0.33, 0.33, sg > 0 ? 0.62 : -0.85, sg > 0 ? 0.85 : -0.62, mat('#161616'), 8);
+    M.box(-2.2, 2.2, -0.86, 0.86, 0.3, suv ? 1.05 : 0.85, cm);
+    M.loft([[suv ? 1.05 : 0.85, rect(-1.5, 1.0, -0.82, 0.82)], [suv ? 1.7 : 1.42, rect(-1.2, 0.55, -0.72, 0.72)]], mat('#2a3440', { spec: 0.6 }), cm);
+  } else if (kind === 'bus') {
+    const cm = mat(['#e3c23a', '#d9d9d4', '#3a6fb0'][variant % 3], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && z > 1.5 && z < 2.5) set(o, [40, 52, 62]); } });
+    wheelsRow(M, [3.2, -3.0], 1.2, 0.5);
+    M.box(-5.5, 5.5, -1.25, 1.25, 0.4, 3.0, cm, mat('#cfd1cc'));
   } else if (kind === 'fire') {
     const red = mat('#b8231e', { fn(o, x, y, z, n) { if (Math.abs(n[1]) > 0.5 && z > 1.3 && z < 1.6) set(o, [235, 235, 225]); } });
     wheelsRow(M, [2.6, -1.4, -2.7], 1.2, 0.5);
@@ -416,6 +448,7 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'shop': workshop(M, w, h, st); break;
     case 'hall': warehouse(M, w, h, st); break;
     case 'canopy': canopy(M, w, h, st); break;
+    case 'fcanopy': fuelCanopy(M, w, h, st, side); break;
     case 'mall': mall(M, w, h, st); break;
     case 'kiosk': kiosk(M, w, h, st); break;
     case 'garage': garage(M, w, h, st); break;

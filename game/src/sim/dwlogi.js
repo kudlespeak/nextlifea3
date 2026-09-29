@@ -4,11 +4,16 @@
 //   • развозные грузовики: распредцентр → ТЦ, супермаркеты, сельские магазины;
 //   • военные грузовики: арсенал → позиции ПВО (патроны, снаряды, ракеты, перехватчики);
 //   • ремонтные бригады: ремонтная база → повреждённый узел → работа → обратно;
-//   • пожарные машины: пожарная часть → горящий узел → тушение → обратно.
+//   • пожарные машины: пожарная часть → горящий узел → тушение → обратно;
+//   • бензовозы: нефтебаза → АЗС (топливо продаётся на заправках).
+// Доход: пошлина за ввоз (фура дошла до распредцентра), экспорт (обратный рейс дошёл до границы),
+// продажи в магазинах и на АЗС (нужны товар/топливо и свет).
 // Машины — цели: их сжигают разрывы рядом и барражирующие боеприпасы.
 
 import { M } from '../spatial.js';
 import { resample } from '../geom.js';
+
+const PACE_V = 1.5; // тот же темп, что у дронов (см. PACE в dronewar.js)
 
 const STEP = 60;
 export const VEH = {
@@ -17,7 +22,10 @@ export const VEH = {
   supply: { name: 'Грузовик снабжения ПВО', speed: 16, cls: 'mil' },
   crew: { name: 'Ремонтная бригада', speed: 16, cls: 'crew' },
   fire: { name: 'Пожарная машина', speed: 19, cls: 'fire' },
+  tanker: { name: 'Бензовоз', speed: 18, cls: 'civil' },
 };
+// Доход с фуры: пошлина при ввозе и выручка за экспорт на обратном рейсе
+export const TRANSIT = { import: 2, export: 2 };
 
 export class DWRoads {
   constructor(world, bridges) {
@@ -180,8 +188,8 @@ class Heap {
 }
 
 // ---------------------------------------------------------------- Логистика стороны
-const SALE = { mall: { value: 5, every: 60, load: 3, cap: 9 }, market: { value: 4, every: 90, load: 3, cap: 7 }, store: { value: 2, every: 180, load: 2, cap: 4 } };
-const FLEET = { supply: 4, fire: 2 };
+export const SALE = { mall: { value: 5, every: 60, load: 3, cap: 9 }, market: { value: 4, every: 90, load: 3, cap: 7 }, store: { value: 2, every: 180, load: 2, cap: 4 }, fuel: { value: 2.5, every: 60, load: 4, cap: 10 } };
+const FLEET = { supply: 4, fire: 3 };
 let nextVeh = 1;
 
 export class DWLogistics {
@@ -195,23 +203,46 @@ export class DWLogistics {
     this.side = {};
     for (const side of ['blue', 'red']) {
       const markets = game.objects.filter((o) => o.side === side && ['mall', 'market', 'store'].includes(o.kind));
-      for (const m of markets) { m.stock = m.kind === 'store' ? 2 : 4; m.saleT = this.sim.rng.float(0, SALE[m.kind].every); m.cut = false; }
+      const fuels = game.objects.filter((o) => o.side === side && o.kind === 'fuel');
+      for (const m of [...markets, ...fuels]) { m.stock = SALE[m.kind].cap; m.saleT = this.sim.rng.float(0, SALE[m.kind].every); m.cut = false; }
       const hub = game.objects.find((o) => o.side === side && o.kind === 'hub');
-      hub.stock = 18;
+      hub.stock = 30;
       this.side[side] = {
         hub, border: game.objects.find((o) => o.side === side && o.kind === 'border'),
         arsenal: game.objects.find((o) => o.side === side && o.kind === 'ammo'),
-        base: game.objects.find((o) => o.side === side && o.kind === 'rembase'),
+        bases: game.objects.filter((o) => o.side === side && o.kind === 'rembase'),
         stations: game.objects.filter((o) => o.side === side && o.kind === 'firest'),
-        markets, importT: 5, deliverT: 3, stats: { imports: 0, deliveries: 0, sold: 0, lostTrucks: 0, trade: 0 },
+        oilDepot: game.objects.find((o) => o.side === side && o.kind === 'oil'),
+        markets, fuels, importT: 5, deliverT: 3, fuelT: 4, stats: { imports: 0, deliveries: 0, sold: 0, lostTrucks: 0, trade: 0, transit: 0, fuel: 0, exports: 0 },
       };
       for (const st of this.side[side].stations) st.engines = FLEET.fire;
       this.side[side].trucksFree = FLEET.supply;
     }
   }
   gate(o) { return o.gate || [o.x, o.y]; }
+  // Ближайшая действующая ремонтная база (РЭС) к точке
+  baseNear(side, x, y) {
+    let best = null, bd = Infinity;
+    for (const b of this.side[side].bases) {
+      if (!b.comps.some((c) => c.state !== 'destroyed')) continue;
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
   bridgeVer() { let v = 0; for (const o of this.g.objects) if (o.kind === 'bridge') v = v * 3 + (this.g.bridgeCap(o) === 0 ? 0 : this.g.bridgeCap(o) < 1 ? 1 : 2), v %= 1e9; return v; }
-  route(a, b) {
+  // Служебные машины (бригады, пожарные, снабжение ПВО) при слишком длинном объезде едут
+  // напрямик по полям (медленнее), но не через реку
+  route(a, b, offroad = false) {
+    const r = this.roadRoute(a, b);
+    if (!offroad) return r;
+    const D = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (r && r.len < D * 1.8 + 1500) return r;
+    const mask = this.g.world.mask;
+    for (let t = 120; t <= D - 120; t += 10) if (mask.has(a[0] + ((b[0] - a[0]) * t) / D, a[1] + ((b[1] - a[1]) * t) / D, M.WATER)) return r;
+    return { path: [[a[0], a[1]], [b[0], b[1]]], len: D, bridges: [], offroad: true };
+  }
+  roadRoute(a, b) {
     const ver = this.bridgeVer();
     if (ver !== this.cacheVer) { this.routeCache.clear(); this.cacheVer = ver; }
     const key = `${Math.round(a[0] / 50)},${Math.round(a[1] / 50)}>${Math.round(b[0] / 50)},${Math.round(b[1] / 50)}`;
@@ -222,16 +253,16 @@ export class DWLogistics {
     return r;
   }
   spawn(side, kind, from, to, task) {
-    const r = this.route(from, to);
+    const r = this.route(from, to, VEH[kind].cls !== 'civil');
     if (!r) return null;
-    const v = { id: nextVeh++, side, kind, x: from[0], y: from[1], heading: 0, path: r.path, pi: 1, state: 'go', task, hp: 1, dead: false, spotted: {}, t0: this.sim.time };
+    const v = { id: nextVeh++, side, kind, x: from[0], y: from[1], heading: 0, path: r.path, pi: 1, state: 'go', task, hp: 1, dead: false, spotted: {}, t0: this.sim.time, offroad: !!r.offroad };
     this.vehicles.push(v);
     return v;
   }
   send(v, to, state = 'go') {
-    const r = this.route([v.x, v.y], to);
+    const r = this.route([v.x, v.y], to, VEH[v.kind].cls !== 'civil');
     if (!r) return false;
-    v.path = r.path; v.pi = 1; v.state = state;
+    v.path = r.path; v.pi = 1; v.state = state; v.offroad = !!r.offroad;
     return true;
   }
   // Сторона: снабжение магазина «отрезано», если к нему нет дороги от распредцентра
@@ -247,14 +278,13 @@ export class DWLogistics {
       // Импорт: фура с погранперехода в распредцентр
       L.importT -= dt;
       if (L.importT <= 0) {
-        L.importT = 18 + sim.rng.float(0, 10);
-        const inRoad = this.vehicles.filter((v) => !v.dead && v.side === side && v.kind === 'fura' && v.state === 'go').length;
-        if (borderOk && L.hub.stock + inRoad * 3 < 45 && !g.prep) this.spawn(side, 'fura', this.gate(L.border), this.gate(L.hub), { type: 'import' });
+        L.importT = 11 + sim.rng.float(0, 6);
+        if (borderOk) this.spawn(side, 'fura', this.gate(L.border), this.gate(L.hub), { type: 'import' });
       }
       // Развоз по магазинам: кому нужнее (и до кого есть дорога)
       L.deliverT -= dt;
       if (L.deliverT <= 0) {
-        L.deliverT = 7 + sim.rng.float(0, 5);
+        L.deliverT = 5 + sim.rng.float(0, 4);
         if (L.hub.stock >= 2 && hubOk > 0.2) {
           const cand = L.markets.filter((m) => m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= SALE[m.kind].cap - SALE[m.kind].load);
           cand.sort((a, b) => (a.stock + (a.coming || 0)) / SALE[a.kind].value - (b.stock + (b.coming || 0)) / SALE[b.kind].value);
@@ -266,14 +296,35 @@ export class DWLogistics {
           }
         }
       }
-      // Продажи в магазинах: нужен товар и свет
-      for (const m of L.markets) {
+      // Бензовозы: нефтебаза → АЗС (нужны целые резервуары)
+      L.fuelT -= dt;
+      if (L.fuelT <= 0) {
+        L.fuelT = 6 + sim.rng.float(0, 4);
+        const depot = L.oilDepot;
+        const oilLeft = depot ? depot.comps.filter((c) => c.k === 'tank' && c.state !== 'destroyed').length / Math.max(1, depot.comps.filter((c) => c.k === 'tank').length) : 0;
+        const pumpOk = depot?.comps.some((c) => (c.k === 'pump' || c.k === 'rack') && c.state !== 'destroyed');
+        if (depot && oilLeft > 0 && pumpOk && sim.rng.chance(0.35 + 0.65 * oilLeft)) {
+          const cand = L.fuels.filter((m) => m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= SALE.fuel.cap - SALE.fuel.load);
+          cand.sort((a, b) => a.stock + (a.coming || 0) - (b.stock + (b.coming || 0)));
+          for (const m of cand.slice(0, 3)) {
+            const v = this.spawn(side, 'tanker', this.gate(depot), this.gate(m), { type: 'deliver', to: m.id, load: SALE.fuel.load, home: depot.id });
+            if (v) { m.coming = (m.coming || 0) + SALE.fuel.load; m.cut = false; break; }
+            m.cut = true;
+          }
+        }
+      }
+      // Продажи в магазинах и на АЗС: нужен товар и свет
+      for (const m of [...L.markets, ...L.fuels]) {
         const ok = m.comps.some((c) => c.state === 'ok');
         const sup = this.supplyAt(side, m);
         m.saleT -= dt * (0.25 + 0.75 * sup) * (ok ? 1 : 0);
         if (m.saleT <= 0) {
           m.saleT += SALE[m.kind].every;
-          if (m.stock >= 1) { m.stock--; S.points += SALE[m.kind].value; L.stats.sold++; L.stats.trade += SALE[m.kind].value; }
+          if (m.stock >= 1) {
+            const val = SALE[m.kind].value * this.g.incomeK(side);
+            m.stock--; S.points += val; L.stats.sold++;
+            if (m.kind === 'fuel') L.stats.fuel += val; else L.stats.trade += val;
+          }
         }
       }
       // Снабжение ПВО с арсенала
@@ -306,7 +357,7 @@ export class DWLogistics {
       if (v.dead) continue;
       if (v.state === 'work') { this.work(v, dt); continue; }
       if (v.state === 'idle') continue;
-      let step = (VEH[v.kind].speed * dt);
+      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * dt;
       while (step > 0 && v.pi < v.path.length) {
         const [tx, ty] = v.path[v.pi];
         const dx = tx - v.x, dy = ty - v.y, d = Math.hypot(dx, dy);
@@ -317,6 +368,13 @@ export class DWLogistics {
       if (v.pi >= v.path.length) this.arrive(v);
     }
     this.vehicles = this.vehicles.filter((v) => !v.dead || sim.time - v.deadAt < 240);
+  }
+  // Начисление с отметкой «+N» на карте
+  earn(side, v, x, y, kind) {
+    const val = v * this.g.incomeK(side);
+    this.g.sides[side].points += val;
+    this.side[side].stats[kind] += val;
+    this.g.fx.push({ t: 'money', x, y, v: Math.round(val), side, t0: this.sim.time });
   }
   supplyAt(side, o) {
     const ps = this.g.objs(side, 'ps110');
@@ -335,13 +393,27 @@ export class DWLogistics {
   arrive(v) {
     const g = this.g, sim = this.sim, L = this.side[v.side];
     const T = v.task;
-    if (v.state === 'back') { this.home(v); return; }
-    if (T.type === 'import') { L.hub.stock += 3; L.stats.imports++; v.state = 'back'; if (!this.send(v, this.gate(L.border), 'back')) this.home(v); return; }
+    if (v.state === 'back') {
+      if (v.kind === 'fura' && T.type === 'export' && T.loaded && L.border.comps.some((c) => c.state !== 'destroyed')) { this.earn(v.side, TRANSIT.export, v.x, v.y, 'transit'); L.stats.exports++; }
+      this.home(v);
+      return;
+    }
+    if (T.type === 'import') {
+      L.hub.stock = Math.min(45, L.hub.stock + 4); // излишек уходит транзитом дальше
+      L.stats.imports++;
+      this.earn(v.side, TRANSIT.import, v.x, v.y, 'transit');
+      // обратно — с экспортным грузом со складов распредцентра (если склад работает)
+      const hubOk = L.hub.comps.some((c) => c.k === 'hall' && c.state === 'ok');
+      v.task = { type: 'export', loaded: hubOk };
+      if (!this.send(v, this.gate(L.border), 'back')) this.home(v);
+      return;
+    }
     if (T.type === 'deliver') {
       const m = g.obj(T.to);
       if (m) { m.stock += T.load || 1; m.coming = Math.max(0, (m.coming || 0) - (T.load || 1)); }
       L.stats.deliveries++;
-      if (!this.send(v, this.gate(L.hub), 'back')) this.home(v);
+      const home = T.home ? g.obj(T.home) : L.hub;
+      if (!this.send(v, this.gate(home), 'back')) this.home(v);
       return;
     }
     if (T.type === 'resupply') {
@@ -397,9 +469,8 @@ export class DWLogistics {
     L.stats.lostTrucks++;
     if (v.kind === 'supply') { L.trucksFree++; const a = this.g.ad.find((q) => q.id === v.task.ad); if (a) a.supplyComing = null; }
     if (v.kind === 'fire') { const st = this.g.obj(v.task.home); if (st) st.engines++; const c = this.g.comps.get(v.task.comp); if (c) c.fireEngine = null; }
-    if (v.kind === 'van') { const m = this.g.obj(v.task.to); if (m) m.coming = Math.max(0, (m.coming || 0) - (v.task.load || 1)); }
+    if ((v.kind === 'van' || v.kind === 'tanker') && v.task.type === 'deliver') { const m = this.g.obj(v.task.to); if (m) m.coming = Math.max(0, (m.coming || 0) - (v.task.load || 1)); }
     if (v.kind === 'crew') this.g.crewLost(v);
     this.sim.msg(`Потеря на дороге: ${VEH[v.kind].name.toLowerCase()} (${why})`, v.side);
   }
 }
-void M;

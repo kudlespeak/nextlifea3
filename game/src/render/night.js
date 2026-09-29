@@ -51,13 +51,16 @@ export function drawNight(ctx, world, sim, view, darkness) {
   };
   const p = world.power;
   if (p) {
-    // Уличные фонари
+    // Уличные фонари: пятно света на проезжей части рядом с опорой, сама лампа — маленькая точка
+    const close = cam.zoom > 1.2 * dpr;
     for (const l of p.lamps) {
       if (!l.on || !inView(l.x, l.y, 30) || !tpPowered(world, l.tp)) continue;
-      hole(l.x, l.y, 12, 0.6);
-      glows.push([l.x, l.y, 1.2, 'rgba(255,200,120,0.35)']);
+      const px = l.x + (l.nx || 0) * 3.5, py = l.y + (l.ny || 0) * 3.5;
+      hole(px, py, close ? 11 : 13, close ? 0.55 : 0.5);
+      if (close) glows.push([px, py, 9, 'rgba(255,190,110,0.10)', null, 0, 'pool']);
+      glows.push([l.x + (l.nx || 0) * 1.2, l.y + (l.ny || 0) * 1.2, 0.35, 'rgba(255,214,150,0.9)', null, 0, 'lamp']);
     }
-    // Окна жилых домов
+    // Окна: вблизи — светящиеся проёмы вдоль стен (из планировки или по фасаду), издали — точка
     for (const b of world.buildings.query({ x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh })) {
       if (b.tp === undefined || b.collapsed || !tpPowered(world, b.tp)) continue;
       const seed = Math.floor(b.x * 3 + b.y * 7);
@@ -66,11 +69,30 @@ export function drawNight(ctx, world, sim, view, darkness) {
           if (hash2(i, 9, seed) > 0.45) continue;
           const w = b.interior.windows[i];
           hole(w.p[0] + w.n[0] * 1.5, w.p[1] + w.n[1] * 1.5, 2.6, 0.55);
-          // окно — светящийся прямоугольник вдоль стены, а не круг
           glows.push([w.p[0] + w.n[0] * 0.2, w.p[1] + w.n[1] * 0.2, 0.6, 'rgba(255,214,140,0.8)', w.n, w.w || 1.1]);
         }
+      } else if (cam.zoom > 1.2 * dpr && b.poly) {
+        // нет планировки: окна по периметру, через 3.2 м, часть горит
+        const P = b.poly, cx = b.x, cy = b.y;
+        let lit = 0;
+        for (let e = 0; e < P.length; e++) {
+          const p0 = P[e], p1 = P[(e + 1) % P.length];
+          const L = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+          const n = Math.min(8, Math.floor(L / 3.2));
+          let nx = -(p1[1] - p0[1]) / L, ny = (p1[0] - p0[0]) / L;
+          const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
+          if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }
+          for (let k = 0; k < n; k++) {
+            if (hash2(k, e, seed) > 0.32) continue;
+            const t = (k + 0.5) / n;
+            const wx = p0[0] + (p1[0] - p0[0]) * t, wy = p0[1] + (p1[1] - p0[1]) * t;
+            hole(wx + nx * 1.6, wy + ny * 1.6, 2.4, 0.45);
+            glows.push([wx + nx * 0.15, wy + ny * 0.15, 0.5, 'rgba(255,212,140,0.75)', [nx, ny], 1.2]);
+            if (++lit > 10) break;
+          }
+        }
       } else if (hash2(1, 2, seed) < 0.6) {
-        hole(b.x, b.y, Math.max(b.w, b.h) * 0.9, 0.5);
+        hole(b.x, b.y, Math.min(10, Math.max(b.w, b.h) * 0.6), 0.45);
         glows.push([b.x, b.y, 1.2, 'rgba(255,205,130,0.45)']);
       }
     }
@@ -101,12 +123,26 @@ export function drawNight(ctx, world, sim, view, darkness) {
   ctx.drawImage(lightCv, 0, 0, canvas.width, canvas.height);
   // Тёплое свечение
   ctx.globalCompositeOperation = 'lighter';
-  for (const [x, y, r, c, n, ww] of glows) {
+  for (const [x, y, r, c, n, ww, kind] of glows) {
     const sx = (x - cam.x) * cam.zoom + canvas.width / 2, sy = (y - cam.y) * cam.zoom + canvas.height / 2;
     ctx.fillStyle = c;
-    if (n && cam.zoom > 4 * dpr) {
+    if (kind === 'pool') {
+      // тёплое пятно натриевой лампы на асфальте
+      const R = r * cam.zoom;
+      const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, R);
+      gr.addColorStop(0, c); gr.addColorStop(1, 'rgba(255,190,110,0)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(sx - R, sy - R, R * 2, R * 2);
+      continue;
+    }
+    if (kind === 'lamp') {
+      const R = Math.min(Math.max(1 * dpr, r * cam.zoom), 2.6 * dpr);
+      ctx.beginPath(); ctx.arc(sx, sy, R, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    if (n && cam.zoom > 2 * dpr) {
       // окно: полоска по ширине проёма
-      const tx = -n[1], ty = n[0], L = ww * cam.zoom * 0.5, T = Math.max(1, 0.18 * cam.zoom);
+      const tx = -n[1], ty = n[0], L = ww * cam.zoom * 0.5, T = Math.max(0.8, 0.18 * cam.zoom);
       ctx.beginPath();
       ctx.moveTo(sx - tx * L - n[0] * T, sy - ty * L - n[1] * T); ctx.lineTo(sx + tx * L - n[0] * T, sy + ty * L - n[1] * T);
       ctx.lineTo(sx + tx * L + n[0] * T, sy + ty * L + n[1] * T); ctx.lineTo(sx - tx * L + n[0] * T, sy - ty * L + n[1] * T);
@@ -114,7 +150,7 @@ export function drawNight(ctx, world, sim, view, darkness) {
       continue;
     }
     // точечные огни не раздуваются при приближении
-    const R = Math.min(Math.max(1.5 * dpr, r * cam.zoom), 5 * dpr);
+    const R = Math.min(Math.max(1.2 * dpr, r * cam.zoom), (n ? 1.6 : 4) * dpr);
     ctx.beginPath();
     ctx.arc(sx, sy, R, 0, Math.PI * 2);
     ctx.fill();

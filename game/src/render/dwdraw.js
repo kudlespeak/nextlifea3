@@ -8,11 +8,12 @@ import { MODELS } from './models.js';
 import { DW_DRONES, DW_AD, KIND_NAME } from '../sim/dronewar.js';
 import { daylight } from '../power.js';
 import { FACTIONS } from '../sim/factions.js';
+import { CivTraffic } from './dwtraffic.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ' };
-const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС' };
+const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
@@ -71,6 +72,27 @@ export function drawDW(ctx, sim, view, side, ui) {
       fire(ctx, toS, c.x, c.y, size, z, now, c.k === 'tank' || c.k === 'coal', hash(c.x + c.y));
     }
   }
+
+  // ---------- Сетки над дорогами ----------
+  for (const n of g.nets) {
+    if (n.side !== side || z < 0.08) continue;
+    if (!inView(n.x, n.y, 400)) continue;
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    n.line.forEach((p, i) => { const [sx, sy] = toS(p[0], p[1]); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+    if (!n.done) { ctx.setLineDash([6 * dpr, 5 * dpr]); ctx.strokeStyle = 'rgba(255,220,120,0.7)'; ctx.lineWidth = Math.max(2 * dpr, n.w * z); ctx.stroke(); }
+    else {
+      ctx.strokeStyle = 'rgba(70,90,60,0.45)'; ctx.lineWidth = Math.max(3 * dpr, n.w * z); ctx.stroke();
+      if (z > 1.5) { ctx.setLineDash([0.4 * z, 1.1 * z]); ctx.strokeStyle = 'rgba(40,50,35,0.7)'; ctx.lineWidth = n.w * z * 0.92; ctx.stroke(); } // ячейки сетки
+    }
+    ctx.restore();
+  }
+
+  // ---------- Гражданский транспорт (только для вида) ----------
+  if (!g._traffic) g._traffic = new CivTraffic(g);
+  g._traffic.update(t);
+  g._traffic.draw(ctx, view, toS, inView, now);
 
   // ---------- Перебитые ЛЭП ----------
   for (const l of g.lines) {
@@ -184,6 +206,15 @@ export function drawDW(ctx, sim, view, side, ui) {
         ctx.fillStyle = 'rgba(40,36,32,0.8)';
         for (let i = 0; i < 4; i++) { const k2 = Math.min(1, age / 3); ctx.fillRect(sx + (hash(i + f.x) - 0.5) * 20 * dpr, sy + k2 * up(f.alt) * (0.8 + hash(i * 3 + f.y) * 0.2), 2 * dpr, 2 * dpr); }
       }
+    } else if (f.t === 'money') {
+      if (age > 3 || f.side !== side || z < 0.05) continue;
+      const [sx, sy] = toS(f.x, f.y);
+      ctx.font = `700 ${11 * dpr}px "PT Sans Narrow", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3 * dpr; ctx.strokeStyle = `rgba(0,0,0,${0.6 * (1 - age / 3)})`;
+      ctx.strokeText(`+${f.v}`, sx, sy - 12 * dpr - age * 12 * dpr);
+      ctx.fillStyle = `rgba(255,226,110,${1 - age / 3})`;
+      ctx.fillText(`+${f.v}`, sx, sy - 12 * dpr - age * 12 * dpr);
     } else if (f.t === 'fall') {
       if (age > 6) continue;
       const [sx, sy0] = toS(f.x, f.y);
@@ -315,10 +346,10 @@ export function drawDW(ctx, sim, view, side, ui) {
     const fire = o.comps.some((c) => c.fire > 0);
     const st = !o.comps.length ? 'ok' : dead / o.comps.length > 0.5 || (o.kind === 'bridge' && g.bridgeCap(o) === 0) ? 'destroyed' : bad ? 'damaged' : 'ok';
     const sel = ui.selObj === o.id;
-    const minor = o.kind === 'store' || o.kind === 'market' || o.kind === 'firest';
+    const minor = o.kind === 'store' || o.kind === 'market' || o.kind === 'firest' || o.kind === 'fuel' || (o.kind === 'rembase' && o.small);
     if (minor && z < 0.12 && !sel) continue; // мелкие объекты — только вблизи
     if (!detail || labels || sel) {
-      const w = (o.kind === 'bridge' ? 16 : 26) * dpr;
+      const w = (o.kind === 'bridge' ? 16 : o.kind === 'fuel' ? 28 : 26) * dpr;
       ctx.fillStyle = o.side === side ? 'rgba(20,28,40,0.85)' : 'rgba(45,18,16,0.85)';
       ctx.strokeStyle = sel ? '#fff27a' : SIDE_COL[o.side];
       ctx.lineWidth = (sel ? 2.5 : 1.5) * dpr;
@@ -358,11 +389,22 @@ export function drawDW(ctx, sim, view, side, ui) {
 
 // Пролёт моста: обрушен — провал с обломками в воде; повреждён — воронки на полотне
 function drawSpan(ctx, c, sx, sy, z, o) {
+  const w = c.w * z, h = (o.btype === 'rail' ? 10 : 14) * z;
+  if (c.shelter && c.state !== 'destroyed') {
+    // сетка над пролётом: рамы-арки и полотно
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(c.angle);
+    ctx.fillStyle = 'rgba(60,75,55,0.4)';
+    ctx.fillRect(-w / 2, -h / 2 - 2 * z, w, h + 4 * z);
+    ctx.strokeStyle = 'rgba(40,48,36,0.8)'; ctx.lineWidth = Math.max(1, 0.5 * z);
+    ctx.beginPath();
+    for (let u = -w / 2; u <= w / 2 + 0.1; u += Math.max(4, 6 * z)) { ctx.moveTo(u, -h / 2 - 2 * z); ctx.lineTo(u, h / 2 + 2 * z); }
+    ctx.stroke();
+    ctx.restore();
+  }
   if (c.state === 'ok') return;
   ctx.save();
   ctx.translate(sx, sy);
   ctx.rotate(c.angle);
-  const w = c.w * z, h = (o.btype === 'rail' ? 10 : 14) * z;
   if (c.state === 'destroyed') {
     ctx.fillStyle = '#3e5a60';
     ctx.fillRect(-w / 2, -h / 2 - 1, w, h + 2);

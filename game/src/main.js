@@ -102,8 +102,13 @@ function buildMenu() {
   opts('opt-time', 'Начало', [[5, 'Рассвет 05:00'], [12, 'День 12:00'], [20, 'Сумерки 20:00'], [23, 'Ночь 23:00']], 'startHour');
   opts('opt-fog', 'Туман войны', [[true, 'Включён'], [false, 'Выключен']], 'fog');
   opts('opt-diff', 'Сложность ИИ', [['easy', 'Лёгкая'], ['normal', 'Нормальная'], ['hard', 'Тяжёлая']], 'difficulty');
-  opts('opt-dur', 'Длительность', [[1800, '30 мин'], [3600, '60 мин'], [5400, '90 мин']], 'duration');
-  opts('opt-prep', 'Подготовка', [[0, 'Нет'], [180, '3 мин'], [300, '5 мин'], [600, '10 мин']], 'prep');
+  // «Война дронов» — короткие партии с фазами эскалации
+  const durs = menu.mode === 'drones' ? [[900, '15 мин'], [1500, '25 мин'], [2400, '40 мин']] : [[1800, '30 мин'], [3600, '60 мин'], [5400, '90 мин']];
+  if (!durs.some(([v]) => v === menu.duration)) menu.duration = menu.mode === 'drones' ? 1500 : 3600;
+  opts('opt-dur', 'Длительность', durs, 'duration');
+  const preps = menu.mode === 'drones' ? [[0, 'Нет'], [60, '1 мин'], [120, '2 мин'], [180, '3 мин']] : [[0, 'Нет'], [180, '3 мин'], [300, '5 мин'], [600, '10 мин']];
+  if (!preps.some(([v]) => v === menu.prep)) menu.prep = menu.mode === 'drones' ? 120 : 300;
+  opts('opt-prep', 'Подготовка', preps, 'prep');
   $('opt-seed').value = menu.seed;
   $('opt-diff').style.display = menu.tab === 'single' ? 'flex' : 'none';
   $('mp-card').style.display = menu.tab === 'mp' ? 'block' : 'none';
@@ -1165,7 +1170,8 @@ function updateScoreboard() {
   if (g.mode === 'drones') {
     const S = g.sides[controlSide], E = g.sides[controlSide === 'blue' ? 'red' : 'blue'];
     const col = (v) => (v > 0.8 ? 'var(--ok)' : v > 0.4 ? '#f0c34a' : 'var(--bad)');
-    mid = `<span class="m">свет</span> <span style="color:${col(S.supply)}">${(S.supply * 100).toFixed(0)}%</span> <span class="m">· очки</span> <b>${Math.floor(S.points)}</b> <span class="m">(+${S.income.toFixed(0)}/мин) · у противника</span> <span style="color:${col(E.supply)}">${(E.supply * 100).toFixed(0)}%</span>`;
+    const mc = (v) => (v > 60 ? 'var(--ok)' : v > 30 ? '#f0c34a' : 'var(--bad)');
+    mid = `<span class="m" title="Устойчивость тыла: ваша : противника">тыл</span> <b style="color:${mc(S.morale ?? 100)}">${Math.round(S.morale ?? 100)}</b><span class="m">:</span><span style="color:${mc(E.morale ?? 100)}">${Math.round(E.morale ?? 100)}</span> <span class="m">· свет</span> <span style="color:${col(S.supply)}">${(S.supply * 100).toFixed(0)}%</span> <span class="m">·</span> <b>${Math.floor(S.points)}</b> <span class="m">оч (+${S.income.toFixed(0)})${g.prep ? '' : ` · фаза ${(g.phaseNo || 0) + 1}`}</span>`;
   } else if (g.mode === 'zones') mid = `<span class="b">${Math.floor(g.score.blue)}</span> : <span class="r">${Math.floor(g.score.red)}</span> <span class="m">/ 500</span>`;
   else if (g.mode === 'assault') { const att = g.cfg.attacker; mid = `<span class="m">прорвано линий</span> <span class="${att === 'blue' ? 'b' : 'r'}">${g.linesTaken || 0}/4</span>`; }
   else {
@@ -1189,7 +1195,7 @@ function showEnd() {
     return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>погибло ${sol.filter((s) => s.dead && !s.evac).length}</td><td>эвакуировано ${sol.filter((s) => s.evac).length + (sim.stats[side].evac || 0)}</td><td>потеряно техники ${us.filter((u) => !u.soldiers && u.dead).length}</td></tr>`;
   };
   if (g.mode === 'drones') {
-    const r2 = (side) => { const S = g.sides[side]; return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>пущено ${S.stats.launched}, попаданий ${S.stats.hits}</td><td>сбито чужих ${S.stats.shot}</td><td>ремонтов ${S.stats.repairs}, потеряно ПВО ${S.stats.lostAD}</td></tr>`; };
+    const r2 = (side) => { const S = g.sides[side]; return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>устойчивость тыла ${Math.round(S.morale ?? 0)}</td><td>пущено ${S.stats.launched}, попаданий ${S.stats.hits}</td><td>сбито чужих ${S.stats.shot}</td><td>ремонтов ${S.stats.repairs}, потеряно ПВО ${S.stats.lostAD}</td></tr>`; };
     $('end-stats').innerHTML = r2('blue') + r2('red');
   } else $('end-stats').innerHTML = row('blue') + row('red');
   $('end-screen').classList.add('show');
@@ -1566,6 +1572,7 @@ if (params.get('autostart')) {
   if (params.get('fog') === '0') menu.fog = false;
   if (params.get('role')) menu.role = params.get('role');
   if (params.get('prep')) menu.prep = Number(params.get('prep'));
+  if (menu.mode === 'drones') menu.duration = Number(params.get('dur')) || 1500;
   startGame(gameConfig());
 }
 

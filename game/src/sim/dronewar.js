@@ -7,8 +7,12 @@
 //   → ЛЭП 110 кВ → ПС 110/10 (трансформаторы Т-1/Т-2, ОРУ) → районы городов.
 // Максимальный поток (Эдмондс—Карп) даёт мощность, дошедшую до каждой ПС 110; при дефиците —
 // графики отключений (часть районов гаснет), при резкой потере генерации — срабатывает АЧР.
-// Промышленность городов даёт очки, очки тратятся на дроны, ПВО и ремонт. Проигрывает сторона,
-// энергосистема которой рухнула, а средств на восстановление нет.
+// Очки дают промышленность (от света), торговля (магазины, АЗС) и транзит фур; тратятся на дроны,
+// ПВО, ремонт, укрытия и сетки. Партия короткая (15–40 мин) и идёт по фазам эскалации.
+// У каждой стороны — «устойчивость тыла» (0–100): падает от отключений, разрушений, пожаров,
+// обрушенных мостов и пустых магазинов, растёт, когда всё работает. Директивы штаба дают цель
+// с премией. Проигрывает сторона, чья устойчивость упала до нуля (или энергосистема рухнула без
+// средств на ремонт); по истечении времени побеждает более устойчивый тыл.
 
 import { DW_NAMES } from '../mapgen.js';
 import { daylight } from '../power.js';
@@ -18,16 +22,16 @@ import { DWLogistics, VEH } from './dwlogi.js';
 // ---------------------------------------------------------------- Дроны
 export const DW_DRONES = {
   // Кардагор
-  shahed: { side: 'red', cls: 'strike', name: 'Герань-2 (Шахед-136)', short: 'Герань-2', speed: 51, alt: [300, 2000], wh: 50, cep: 8, ew: 0.8, rcs: 0.5, noise: 1, cost: 18, desc: 'Барражирующий боеприпас большой дальности, 50 кг, спутниковая навигация с антенной «Комета» — устойчив к РЭБ' },
-  geran3: { side: 'red', cls: 'strike', name: 'Герань-3 (реактивный)', short: 'Герань-3', speed: 100, alt: [1500, 3000], wh: 50, cep: 8, ew: 0.8, rcs: 0.6, noise: 0.35, cost: 45, desc: 'Реактивный — вдвое быстрее, пулемёты и перехватчики почти бессильны' },
-  gerbera: { side: 'red', cls: 'decoy', name: 'Гербера (ложная цель)', short: 'Гербера', speed: 45, alt: [400, 1600], wh: 0, cep: 30, ew: 0.5, rcs: 0.5, noise: 0.8, cost: 4, desc: 'Дешёвая ложная цель: на радаре не отличить от «Герани», отвлекает ПВО и расходует ракеты' },
+  shahed: { side: 'red', cls: 'strike', name: 'Герань-2 (Шахед-136)', short: 'Герань-2', speed: 51, alt: [200, 1400], wh: 50, cep: 8, ew: 0.8, rcs: 0.5, noise: 1, cost: 18, desc: 'Барражирующий боеприпас большой дальности, 50 кг, спутниковая навигация с антенной «Комета» — устойчив к РЭБ' },
+  geran3: { side: 'red', cls: 'strike', name: 'Герань-3 (реактивный)', short: 'Герань-3', speed: 100, alt: [1500, 3000], wh: 50, cep: 8, ew: 0.8, rcs: 0.6, noise: 0.35, cost: 55, desc: 'Реактивный — вдвое быстрее, пулемёты и перехватчики почти бессильны' },
+  gerbera: { side: 'red', cls: 'decoy', name: 'Гербера (ложная цель)', short: 'Гербера', speed: 45, alt: [200, 1400], wh: 0, cep: 30, ew: 0.5, rcs: 0.5, noise: 0.8, cost: 5, desc: 'Дешёвая ложная цель: на радаре не отличить от «Герани», отвлекает ПВО и расходует ракеты' },
   lancet: { side: 'red', cls: 'loiter', name: 'Ланцет-3', short: 'Ланцет', speed: 30, alt: [300, 800], wh: 3, cep: 1.5, ew: 0.35, rcs: 0.15, noise: 0.3, cost: 10, range: 22000, desc: 'Барражирующий боеприпас по разведанной цели (ПВО, РЛС, РЭБ). Нужна разведка' },
   orlan: { side: 'red', cls: 'recon', name: 'Орлан-10', short: 'Орлан', speed: 28, alt: [800, 1500], wh: 0, ew: 0.45, rcs: 0.3, noise: 0.7, cost: 8, endurance: 1000, spot: 1600, desc: 'Разведчик: находит позиции ПВО противника (день — камера, ночью — тепловизор)' },
   elka: { side: 'red', cls: 'interceptor', name: 'Перехватчик «Ёлка»', short: 'Ёлка', speed: 80, alt: [0, 3000], wh: 0.5, ew: 0.6, rcs: 0.1, noise: 0.2, cost: 3, desc: 'Дрон-перехватчик' },
   // Велнария
-  fp1: { side: 'blue', cls: 'strike', name: 'FP-1', short: 'FP-1', speed: 45, alt: [200, 1500], wh: 60, cep: 10, ew: 0.65, rcs: 0.45, noise: 1, cost: 17, desc: 'Дальнобойный ударный БПЛА, 60 кг' },
+  fp1: { side: 'blue', cls: 'strike', name: 'FP-1', short: 'FP-1', speed: 45, alt: [200, 1500], wh: 60, cep: 10, ew: 0.65, rcs: 0.45, noise: 1, cost: 15, desc: 'Дальнобойный ударный БПЛА, 60 кг' },
   fp2: { side: 'blue', cls: 'strike', name: 'FP-2', short: 'FP-2', speed: 55, alt: [300, 1200], wh: 105, cep: 7, ew: 0.7, rcs: 0.55, noise: 1, cost: 34, desc: 'Тяжёлый ударный БПЛА, 105 кг — рушит пролёты мостов и цеха' },
-  lyutyi: { side: 'blue', cls: 'strike', name: 'Лютый', short: 'Лютый', speed: 55, alt: [500, 1800], wh: 75, cep: 6, ew: 0.75, rcs: 0.6, noise: 1, cost: 28, desc: 'Точный ударный БПЛА самолётного типа, 75 кг' },
+  lyutyi: { side: 'blue', cls: 'strike', name: 'Лютый', short: 'Лютый', speed: 55, alt: [500, 1800], wh: 75, cep: 6, ew: 0.75, rcs: 0.6, noise: 1, cost: 25, desc: 'Точный ударный БПЛА самолётного типа, 75 кг' },
   bober: { side: 'blue', cls: 'strike', name: 'Бобёр', short: 'Бобёр', speed: 50, alt: [150, 600], wh: 20, cep: 5, ew: 0.7, rcs: 0.35, noise: 0.9, cost: 9, desc: 'Малый и дешёвый ударный БПЛА, 20 кг — по трансформаторам и пусковым' },
   warmate: { side: 'blue', cls: 'loiter', name: 'Warmate', short: 'Warmate', speed: 28, alt: [300, 800], wh: 1.4, cep: 1.5, ew: 0.35, rcs: 0.12, noise: 0.3, cost: 9, range: 20000, desc: 'Барражирующий боеприпас по разведанной цели (ПВО, РЛС, РЭБ)' },
   leleka: { side: 'blue', cls: 'recon', name: 'Лелека-100', short: 'Лелека', speed: 27, alt: [700, 1400], wh: 0, ew: 0.45, rcs: 0.25, noise: 0.6, cost: 7, endurance: 1000, spot: 1600, desc: 'Разведчик: находит позиции ПВО противника' },
@@ -57,7 +61,7 @@ export const COMP = {
   chimney: { name: 'дымовая труба', cost: 60, time: 300, hard: 2.5 },
   tower: { name: 'градирня', cost: 70, time: 300, hard: 2.5 },
   coal: { name: 'угольный склад', cost: 30, time: 120, fire: 0.6, hard: 1.2, big: true },
-  span: { name: 'пролёт моста', cost: 170, time: 720, hard: 2.2 },
+  span: { name: 'пролёт моста', cost: 170, time: 720, hard: 2.2, net: true },
   tank: { name: 'резервуар', cost: 45, time: 200, fire: 0.9, hard: 0.9 },
   pump: { name: 'насосная', cost: 30, time: 120, fire: 0.5, hard: 1 },
   rack: { name: 'эстакада', cost: 20, time: 90, fire: 0.5, hard: 1 },
@@ -70,19 +74,32 @@ export const COMP = {
   mall: { name: 'торговый зал', cost: 70, time: 300, fire: 0.6, hard: 1.2, big: true },
   kiosk: { name: 'магазин', cost: 10, time: 60, fire: 0.5, hard: 0.8 },
   garage: { name: 'гараж', cost: 40, time: 200, fire: 0.5, hard: 1.2 },
+  fcanopy: { name: 'навес с колонками', cost: 30, time: 120, fire: 0.8, hard: 0.9 },
 };
+// Потеря узла бьёт по устойчивости тыла (разрушен — полностью, выведен из строя — наполовину)
+const SHOCK = { unit: 2, at: 2, gsu: 1.5, span: 1.5, tr: 1, oru: 1, shop: 1, tank: 0.6, bunker: 0.6, hall: 0.6, chimney: 0.6, tower: 0.6, coal: 0.5, launcher: 0.3, ctrl: 0.3, pump: 0.3, rack: 0.2, store: 0.3 };
+// Темп: полёт в 1,5 раза быстрее реального (карта 40 км, партия 25 мин); вероятности огня ПВО
+// в секунду умножены на тот же коэффициент — время в зоне поражения и шансы сбития те же
+export const PACE = 1.5;
+const PHASES = [{ name: 'Фаза 1 — пробные удары', inc: 1, drain: 1 }, { name: 'Фаза 2 — массированные удары', inc: 1.25, drain: 1.25 }, { name: 'Фаза 3 — удар возмездия', inc: 1.5, drain: 1.6 }];
+const NET_ROAD = { cost: 40, time: 200, len: 600, name: 'Антидроновая сетка над дорогой' };
 // Ремонт дешевле номинала: часть покрывает государственный фонд восстановления
 const REPAIR_K = 0.55;
+// Время ремонта сжато под темп партии (25 мин): замена трансформатора — минуты, а не часы
+const REPAIR_T = 0.5;
 // По гражданским объектам удары не наносятся (магазины, ТЦ, погранпереход)
-export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase']);
+export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel']);
 export const SHELTER = [null, { name: 'Габионы и мешки (защита от осколков)', cost: 35, time: 90 }, { name: 'Бетонное укрытие (защита от прямого попадания)', cost: 110, time: 300 }];
-export const KIND_NAME = { tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
+// Сетка над пролётом моста: лёгкие дроны (до 25 кг БЧ: «Бобёр», «Ланцет», Warmate) рвутся на ней
+export const NET = [null, { name: 'Антидроновая сетка над пролётом', cost: 30, time: 150 }];
+export const shelterDef = (c, level) => (COMP[c.k]?.net ? NET[level] : SHELTER[level]);
+export const KIND_NAME = { fuel: 'АЗС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
 
 // Западные образцы ПВО точнее, у Кардагора — массовость и ложные цели
-const AD_EFF = { blue: 1.2, red: 1.0 };
+const AD_EFF = { blue: 1.3, red: 1.0 };
 const DEMAND = { 0: 210, 1: 150, 2: 150 }; // МВт на одну ПС 110 кВ (столицу питают две)
 const LINE_CAP = { 330: 900, 110: 260 };
-const START_POINTS = 900;
+const START_POINTS = 800;
 const FRONT_POST = 1300;
 
 let nextId = 1;
@@ -98,9 +115,10 @@ export class DroneWar {
     this.reason = '';
     this.prepEnd = sim.time + (cfg.prep ?? 180);
     this.prep = (cfg.prep ?? 180) > 0;
+    this.startAt = this.prepEnd;
     this.ready = { blue: false, red: false };
     for (const s of cfg.aiSides || []) this.ready[s] = true; // ИИ готов сразу — «К бою» начинает без ожидания
-    this.endAt = this.prepEnd + (cfg.duration || 5400);
+    this.endAt = this.prepEnd + (cfg.duration || 1500);
     this.frontX = this.world.frontX || this.world.W / 2;
     this.drones = [];
     this.missiles = [];
@@ -114,14 +132,18 @@ export class DroneWar {
     this.detTimer = 0;
     this.econTimer = 0;
     this.logPower = { blue: [], red: [] };
+    this.nets = [];
+    this.phaseNo = 0;
+    this.directive = { blue: null, red: null };
+    this.nextDirective = 0;
     this.buildObjects();
     for (const side of ['blue', 'red']) {
       const cap = this.world.settlements.find((s) => s.type === 'city' && s.side === side && s.capital);
       this.sides[side] = {
-        points: START_POINTS, income: 0, crews: [0, 1, 2].map((i) => ({ id: i + 1, job: null, veh: null })), queue: [], auto: true, reserve: 60,
+        points: START_POINTS, income: 0, crews: [0, 1, 2, 3].map((i) => ({ id: i + 1, job: null, veh: null })), queue: [], auto: true, reserve: 60,
         spare: 2, base: { x: cap.x, y: cap.y }, supply: 1, gen: 0, demand: 0, delivered: 0, achrUntil: 0, lastGen: null,
         collapse: 0, launchCd: {}, stats: { launched: 0, hits: 0, shot: 0, lostAD: 0, spent: 0, repairs: 0 },
-        seenObjects: new Set(), history: [], factor: 1,
+        seenObjects: new Set(), history: [], factor: 1, morale: 100, moraleLog: [], lastLoss: null,
       };
     }
     this.logi = new DWLogistics(this);
@@ -242,7 +264,7 @@ export class DroneWar {
     for (let i = 0; i < count; i++) {
       // Разные пусковые и интервалы, у каждого — свой маршрут: дроны идут веером, а не колонной
       const site = sites[(i + rng.int(0, sites.length - 1)) % sites.length];
-      tDep += strike ? rng.float(6, 22) : rng.float(2, 6);
+      tDep += strike ? rng.float(2, 7) : rng.float(1, 4);
       const delay = tDep + (site.delay || 0);
       const own = (opts.route || []).map((p) => ({ x: p.x + rng.float(-1500, 1500), y: p.y + rng.float(-1500, 1500) }));
       if (strike && D.cls !== 'loiter') {
@@ -303,13 +325,49 @@ export class DroneWar {
   shelter(side, id, level) {
     const S = this.sides[side];
     const c = this.comps.get(id);
-    if (!c || c.obj.side !== side || !COMP[c.k].shelter) return 'Здесь укрытие не строят';
+    if (!c || c.obj.side !== side || !(COMP[c.k].shelter || COMP[c.k].net)) return 'Здесь укрытие не строят';
     if (c.shelter >= level) return 'Уже есть';
+    if (COMP[c.k].net && level > 1) return 'Сетка уже есть';
     if (level > c.shelter + 1) return 'Сначала — габионы';
     if (S.queue.includes('S' + id)) return 'Уже в очереди';
     S.queue.push('S' + id);
-    this.sim.msg(`${SHELTER[level].name}: ${c.name} — в очереди`, side);
+    this.sim.msg(`${shelterDef(c, level).name}: ${c.name} — в очереди`, side);
     return null;
+  }
+  // Сетка над участком дороги (~600 м): ставит ремонтная бригада
+  buildNet(side, x, y) {
+    const S = this.sides[side];
+    if (side === 'blue' ? x > this.frontX - 700 : x < this.frontX + 700) return 'Только на своей территории';
+    if (this.nets.filter((n) => n.side === side).length >= 14) return 'Больше сеток не поставить';
+    if (S.points < NET_ROAD.cost) return `Не хватает очков: нужно ${NET_ROAD.cost}`;
+    let best = null, bd = 120, bi = 0;
+    for (const r of this.world.roadList) {
+      if (r.type === 'street') continue;
+      for (let i = 0; i < r.line.length; i++) { const d = hyp(r.line[i][0] - x, r.line[i][1] - y); if (d < bd) { bd = d; best = r; bi = i; } }
+    }
+    if (!best) return 'Укажите точку на дороге (не городская улица)';
+    // Участок ±300 м вдоль дороги
+    const L = best.line;
+    let i0 = bi, i1 = bi, acc = 0;
+    while (i0 > 0 && acc < NET_ROAD.len / 2) { acc += hyp(L[i0][0] - L[i0 - 1][0], L[i0][1] - L[i0 - 1][1]); i0--; }
+    acc = 0;
+    while (i1 < L.length - 1 && acc < NET_ROAD.len / 2) { acc += hyp(L[i1 + 1][0] - L[i1][0], L[i1 + 1][1] - L[i1][1]); i1++; }
+    const line = L.slice(i0, i1 + 1).map((p) => [p[0], p[1]]);
+    if (this.nets.some((n) => n.side === side && hyp(n.x - L[bi][0], n.y - L[bi][1]) < 250)) return 'Здесь сетка уже есть';
+    const xs = line.map((p) => p[0]), ys = line.map((p) => p[1]);
+    const net = { id: 'R' + (this.nets.length + 1) + side[0], side, line, x: L[bi][0], y: L[bi][1], done: false, w: (best.width || 8) + 6,
+      bb: { x0: Math.min(...xs) - 12, y0: Math.min(...ys) - 12, x1: Math.max(...xs) + 12, y1: Math.max(...ys) + 12 } };
+    this.nets.push(net);
+    S.queue.push(net.id);
+    this.sim.msg(`${NET_ROAD.name}: участок у точки ${Math.round(net.x)}, ${Math.round(net.y)} — в очереди`, side);
+    return null;
+  }
+  underNet(side, x, y) {
+    for (const n of this.nets) {
+      if (!n.done || n.side !== side || x < n.bb.x0 || x > n.bb.x1 || y < n.bb.y0 || y > n.bb.y1) continue;
+      for (let i = 1; i < n.line.length; i++) if (segDist(x, y, n.line[i - 1], n.line[i]) < n.w / 2 + 2) return true;
+    }
+    return false;
   }
   buyCrew(side) {
     const S = this.sides[side];
@@ -335,9 +393,12 @@ export class DroneWar {
     if (this.winner) return;
     if (this.prep && (sim.time >= this.prepEnd || (this.ready.blue && this.ready.red))) {
       this.prep = false;
-      this.endAt = sim.time + (this.cfg.duration || 5400);
+      this.startAt = sim.time;
+      this.endAt = sim.time + (this.cfg.duration || 1500);
+      this.nextDirective = sim.time + 120;
       sim.msg('Развёртывание окончено — стороны могут наносить удары');
     }
+    if (!this.prep) this.updateCampaign();
     this.updateAD(dt);
     this.updateDrones(dt);
     this.updateMissiles(dt);
@@ -462,12 +523,18 @@ export class DroneWar {
       // Промышленность при отключениях проседает сильнее, чем свет: цеха стоят целиком
       const ind = (ci) => town(ci) ** 2;
       // Промышленность (от света) + торговля в магазинах (начисляется при продажах, см. логистику)
-      const perMin = 3 + 8 * ind(0) + (3 * ind(1) + 3 * ind(2)) * logi + 3 * facOk * town(0) + 2 * S.oil;
+      const perMin = (4 + 10 * ind(0) + (4 * ind(1) + 4 * ind(2)) * logi + 4 * facOk * town(0) + 2 * S.oil) * this.incomeK(side);
       const L = this.logi.side[side];
-      S.tradeRate = (L.stats.trade - (L.lastTrade ?? L.stats.trade)) * (60 / dt);
-      L.lastTrade = L.stats.trade;
-      S.income = perMin + (S.tradeAvg = (S.tradeAvg ?? S.tradeRate) * 0.9 + S.tradeRate * 0.1);
+      // Скользящие средние по статьям дохода (очков в минуту)
+      const rate = (key) => { const v = (L.stats[key] - (L['last_' + key] ?? L.stats[key])) * (60 / dt); L['last_' + key] = L.stats[key]; return v; };
+      const avg = (k, v) => (S.inc[k] = (S.inc[k] ?? v) * 0.88 + v * 0.12);
+      S.inc = S.inc || {};
+      S.inc.industry = perMin;
+      avg('trade', rate('trade')); avg('fuel', rate('fuel')); avg('transit', rate('transit'));
+      S.tradeAvg = S.inc.trade + S.inc.fuel + S.inc.transit;
+      S.income = perMin + S.tradeAvg;
       if (!this.prep) S.points += (perMin * dt) / 60;
+      if (!this.prep) this.moraleTick(side, dt);
       // История снабжения для итога
       S.history.push(S.supply);
       if (S.history.length > 120) S.history.shift();
@@ -477,22 +544,82 @@ export class DroneWar {
       if (!this.prep && S.supply < 0.35 && broke) S.collapse += dt;
       else if (!this.prep && S.points < 1 && pend.n > 6) S.collapse += dt * 0.5;
       else S.collapse = Math.max(0, S.collapse - dt * 2);
-      if (S.collapse >= 180 && !this.winner) {
+      if (S.collapse >= 120 && !this.winner) {
         this.winner = side === 'blue' ? 'red' : 'blue';
         this.reason = `Энергосистема стороны «${side === 'blue' ? 'Велнария' : 'Кардагор'}» рухнула, а средств на восстановление не осталось`;
         sim.msg(this.reason);
       }
     }
-    if (!this.winner && !this.prep && sim.time >= this.endAt) {
-      const sc = (side) => {
-        const S = this.sides[side];
-        const avg = S.history.reduce((a, b) => a + b, 0) / Math.max(1, S.history.length);
-        return avg * 100 + this.integrity(side) * 60 + Math.min(40, S.points / 25);
-      };
-      const b = sc('blue'), r = sc('red');
-      this.winner = Math.abs(b - r) < 3 ? 'draw' : b > r ? 'blue' : 'red';
-      this.reason = `Время вышло. Устойчивость тыла: Велнария ${b.toFixed(0)}, Кардагор ${r.toFixed(0)}`;
+    for (const side of ['blue', 'red']) {
+      if (this.winner || this.sides[side].morale > 0) continue;
+      this.winner = side === 'blue' ? 'red' : 'blue';
+      this.reason = `Тыл стороны «${side === 'blue' ? 'Велнария' : 'Кардагор'}» не выдержал: отключения, разрушения и пожары обрушили устойчивость до нуля`;
+      sim.msg(this.reason);
     }
+    if (!this.winner && !this.prep && sim.time >= this.endAt) {
+      const b = this.sides.blue.morale + Math.min(5, this.sides.blue.points / 400), r = this.sides.red.morale + Math.min(5, this.sides.red.points / 400);
+      this.winner = Math.abs(b - r) < 3 ? 'draw' : b > r ? 'blue' : 'red';
+      this.reason = `Время вышло. Устойчивость тыла: Велнария ${this.sides.blue.morale.toFixed(0)}, Кардагор ${this.sides.red.morale.toFixed(0)}`;
+    }
+  }
+  // ---------- Кампания: фазы эскалации и директивы штаба ----------
+  phase() { return this.phaseNo; }
+  incomeK() { return PHASES[this.phaseNo].inc; }
+  updateCampaign() {
+    const sim = this.sim, t = sim.time;
+    const dur = this.endAt - this.startAt;
+    const ph = Math.min(2, Math.floor(((t - this.startAt) / dur) * 3));
+    if (ph !== this.phaseNo) {
+      this.phaseNo = ph;
+      sim.msg(`${PHASES[ph].name}: доход ×${PHASES[ph].inc}, удары по тылу болезненнее (×${PHASES[ph].drain})`);
+    }
+    for (const side of ['blue', 'red']) {
+      const D = this.directive[side];
+      const enemy = side === 'blue' ? 'red' : 'blue';
+      if (D && !D.done && t > D.until) {
+        D.done = 'fail';
+        this.sides[enemy].morale = Math.min(100, this.sides[enemy].morale + 3);
+        sim.msg(`Директива не выполнена: ${this.obj(D.oid).name} уцелел`, side);
+        sim.msg(`Удар противника по объекту «${this.obj(D.oid).name}» сорван — устойчивость +3`, enemy);
+      }
+    }
+    if (t >= this.nextDirective) {
+      this.nextDirective = t + 300;
+      for (const side of ['blue', 'red']) {
+        const enemy = side === 'blue' ? 'red' : 'blue';
+        const W = { tpp: 3, ps330: 4, ps110: 3, bridge: 2, oil: 2, ammo: 1.5, factory: 2, hub: 2, launch: 1.5 };
+        const cands = this.objs(enemy).filter((o) => W[o.kind] && (o.kind !== 'bridge' || o.btype === 'rail' || o.btype === 'highway') && o.comps.some((c) => c.state === 'ok'));
+        if (!cands.length) continue;
+        const o = sim.rng.weighted(cands.map((q) => [q, W[q.kind]]));
+        const bonus = Math.round(150 * this.incomeK());
+        this.directive[side] = { oid: o.id, until: t + 360, done: null, bonus };
+        sim.msg(`Директива штаба: поразить «${o.name}» за 6 минут — премия ${bonus} оч. и −6 к устойчивости противника`, side);
+        sim.msg(`Разведка: противник готовит удар по объекту «${o.name}» — усильте ПВО (продержаться 6 минут: +3 к устойчивости)`, enemy);
+      }
+    }
+  }
+  // Устойчивость тыла: отключения, мосты, пустые магазины, пожары, погранпереход
+  moraleTick(side, dt) {
+    const S = this.sides[side], L = this.logi.side[side];
+    const k = PHASES[this.phaseNo].drain;
+    let burning = 0;
+    for (const o of this.objs(side)) for (const c of o.comps) if (c.fire > 0) burning++;
+    const br = this.objs(side, 'bridge').filter((b) => b.btype !== 'village' && b.btype !== 'dirt');
+    const brDown = br.length ? br.filter((b) => this.bridgeCap(b) === 0).length / br.length : 0;
+    const shops = [...L.markets, ...L.fuels];
+    const empty = shops.length ? shops.filter((m) => m.stock < 1 || !m.comps.some((c) => c.state !== 'destroyed')).length / shops.length : 0;
+    const borderDown = !L.border.comps.some((c) => c.state !== 'destroyed');
+    const parts = { power: (1 - S.supply) * 6, bridges: brDown * 2, shops: Math.max(0, empty - 0.5) * 4, fires: Math.min(2, burning * 0.25), border: borderDown ? 1 : 0 };
+    let drain = 0;
+    for (const key in parts) { parts[key] *= k; drain += parts[key]; }
+    const regen = S.supply > 0.93 && burning === 0 ? 1.5 : S.supply > 0.8 ? 0.6 : 0;
+    S.moraleParts = { ...parts, regen };
+    S.morale = Math.max(0, Math.min(100, S.morale + ((regen - drain) * dt) / 60));
+  }
+  shock(side, v, why) {
+    const S = this.sides[side];
+    S.morale = Math.max(0, S.morale - v * PHASES[this.phaseNo].drain);
+    void why;
   }
   integrity(side) {
     let n = 0, ok = 0;
@@ -515,8 +642,8 @@ export class DroneWar {
   repairTime(side, c) {
     if (c.pylons) return 90;
     const C = COMP[c.k];
-    let t = C.time * (c.state === 'destroyed' ? 1 : 0.4);
-    if (C.spare && c.state === 'destroyed' && this.sides[side].spare <= 0) t *= 2;
+    let t = C.time * REPAIR_T * (c.state === 'destroyed' ? 1 : 0.4);
+    if (C.spare && c.state === 'destroyed' && this.sides[side].spare <= 0) t *= 1.6;
     const S = this.sides[side];
     t *= 1 + (1 - (S.oil ?? 1)) * 0.3; // без топлива техника бригад простаивает
     return t;
@@ -550,13 +677,13 @@ export class DroneWar {
         want.sort((a, b) => this.priority(b) - this.priority(a));
         S.queue.push(...want.map((c) => c.id));
       }
-      const L = this.logi.side[side];
-      if (!L.base || !L.base.comps.some((c) => c.state !== 'destroyed')) continue; // база разрушена — бригады не выезжают
       for (const crew of S.crews) {
         if (crew.job || crew.veh) continue;
         const job = this.nextJob(side);
         if (!job) break;
-        const v = this.logi.spawn(side, 'crew', this.logi.gate(L.base), job.pos, { type: 'repair', crew: crew.id });
+        const base = this.logi.baseNear(side, job.pos[0], job.pos[1]);
+        if (!base) { S.queue.unshift(job.qid); break; } // все базы разрушены — бригады не выезжают
+        const v = this.logi.spawn(side, 'crew', this.logi.gate(base), job.pos, { type: 'repair', crew: crew.id });
         if (!v) { const bc = this.comps.get(job.id) || this.lines.find((l) => l.id === job.id); if (bc) bc.blockedUntil = sim.time + 60; S.queue.push(job.qid); continue; }
         crew.job = job; crew.veh = v;
         job.state = 'travel';
@@ -568,17 +695,18 @@ export class DroneWar {
     const S = this.sides[side];
     for (let qi = 0; qi < S.queue.length; qi++) {
       const id = S.queue[qi];
-      const shelter = typeof id === 'string' && id.startsWith('S');
-      const c = shelter ? this.comps.get(id.slice(1)) : this.comps.get(id) || this.lines.find((l) => l.id === id);
-      const need = c && (shelter ? true : c.pylons ? !!c.cut : c.state !== 'ok');
+      const kind = typeof id === 'string' && id.startsWith('S') ? 'shelter' : typeof id === 'string' && id.startsWith('R') ? 'net' : 'repair';
+      const c = kind === 'shelter' ? this.comps.get(id.slice(1)) : kind === 'net' ? this.nets.find((n) => n.id === id) : this.comps.get(id) || this.lines.find((l) => l.id === id);
+      const need = c && (kind === 'shelter' ? !!shelterDef(c, c.shelter + 1) : kind === 'net' ? !c.done : c.pylons ? !!c.cut : c.state !== 'ok');
       if (!need) { S.queue.splice(qi--, 1); continue; }
       if (c.blockedUntil && this.sim.time < c.blockedUntil) continue;
       S.queue.splice(qi, 1);
+      const shelter = kind === 'shelter';
       const level = shelter ? c.shelter + 1 : 0;
-      const cost = shelter ? SHELTER[level].cost : this.repairCost(side, c);
-      const total = shelter ? SHELTER[level].time : this.repairTime(side, c);
+      const cost = shelter ? shelterDef(c, level).cost : kind === 'net' ? NET_ROAD.cost : this.repairCost(side, c);
+      const total = shelter ? shelterDef(c, level).time : kind === 'net' ? NET_ROAD.time : this.repairTime(side, c);
       const pos = c.pylons ? [c.cut.x, c.cut.y] : [c.x, c.y];
-      return { id: c.id, qid: id, shelter, level, cost, total, left: total, paid: 0, pos, state: 'travel' };
+      return { id: c.id, qid: id, kind, shelter, level, cost, total, left: total, paid: 0, pos, state: 'travel' };
     }
     return null;
   }
@@ -587,8 +715,8 @@ export class DroneWar {
     const sim = this.sim, side = v.side, S = this.sides[side];
     const crew = this.crewOf(v);
     const j = crew?.job;
-    if (!j) { if (!this.logi.send(v, this.logi.gate(this.logi.side[side].base), 'back')) this.logi.home(v); return; }
-    const c = j.shelter ? this.comps.get(j.id) : this.comps.get(j.id) || this.lines.find((l) => l.id === j.id);
+    if (!j) { const b = this.logi.baseNear(side, v.x, v.y); if (!b || !this.logi.send(v, this.logi.gate(b), 'back')) this.logi.home(v); return; }
+    const c = j.kind === 'net' ? this.nets.find((n) => n.id === j.id) : j.shelter ? this.comps.get(j.id) : this.comps.get(j.id) || this.lines.find((l) => l.id === j.id);
     if (!c) { crew.job = null; this.crewNext(v, crew); return; }
     if (c.fire > 0) { j.state = 'waitfire'; return; } // тушат пожарные
     // Оплата по ходу работы
@@ -598,7 +726,8 @@ export class DroneWar {
     j.state = 'work';
     j.left -= dt;
     if (j.left > 0) return;
-    if (j.shelter) { c.shelter = j.level; sim.msg(`${SHELTER[j.level].name}: ${c.name} (${c.obj.name}) — готово`, side); }
+    if (j.kind === 'net') { c.done = true; sim.msg(`${NET_ROAD.name} — готова`, side); }
+    else if (j.shelter) { c.shelter = j.level; sim.msg(`${shelterDef(c, j.level).name}: ${c.name} (${c.obj.name}) — готово`, side); }
     else if (c.pylons) { c.cut = null; this.world.power.version++; sim.msg(`ЛЭП ${c.kv} кВ восстановлена`, side); }
     else {
       if (COMP[c.k].spare && c.state === 'destroyed' && S.spare > 0) S.spare--;
@@ -613,16 +742,20 @@ export class DroneWar {
   // После работы — сразу к следующему узлу, иначе на базу
   crewNext(v, crew) {
     const job = this.nextJob(v.side);
-    if (job && this.logi.send(v, job.pos)) { crew.job = job; v.task = { type: 'repair', crew: crew.id }; return; }
+    // Следующий узел рядом — едем сразу; далеко — пусть едет бригада с ближайшей базы
+    const base = job && this.logi.baseNear(v.side, job.pos[0], job.pos[1]);
+    const near = job && hyp(job.pos[0] - v.x, job.pos[1] - v.y) < Math.max(4000, base ? hyp(job.pos[0] - base.x, job.pos[1] - base.y) : 0);
+    if (job && near && this.logi.send(v, job.pos)) { crew.job = job; v.task = { type: 'repair', crew: crew.id }; return; }
     if (job) this.sides[v.side].queue.unshift(job.qid);
-    if (!this.logi.send(v, this.logi.gate(this.logi.side[v.side].base), 'back')) this.logi.home(v);
+    const b = this.logi.baseNear(v.side, v.x, v.y);
+    if (!b || !this.logi.send(v, this.logi.gate(b), 'back')) this.logi.home(v);
   }
-  crewHome(v) { const crew = this.crewOf(v); if (crew) { if (crew.job) this.sides[v.side].queue.unshift(crew.job.shelter ? 'S' + crew.job.id : crew.job.id); crew.job = null; crew.veh = null; } }
+  crewHome(v) { const crew = this.crewOf(v); if (crew) { if (crew.job) this.sides[v.side].queue.unshift(crew.job.qid); crew.job = null; crew.veh = null; } }
   crewLost(v) {
     const S = this.sides[v.side];
     const crew = this.crewOf(v);
     if (!crew) return;
-    if (crew.job) S.queue.unshift(crew.job.shelter ? 'S' + crew.job.id : crew.job.id);
+    if (crew.job) S.queue.unshift(crew.job.qid);
     S.crews = S.crews.filter((w) => w !== crew);
     this.sim.msg(`Потеряна ремонтная бригада №${crew.id}`, v.side);
   }
@@ -646,11 +779,11 @@ export class DroneWar {
   updateFires(dt) {
     for (const c of this.comps.values()) {
       if (c.fire <= 0) continue;
-      c.fire -= dt * (c.fireEngine ? 0 : 0.25); // без пожарных горит долго
+      c.fire -= dt * 0.4; // без пожарных выгорает долго (тушение — см. логистику)
       // Горящий резервуар может поджечь соседний
       if (c.k === 'tank' && this.sim.rng.chance(dt * 0.004)) {
         for (const n of c.obj.comps) if (n !== c && n.k === 'tank' && n.fire <= 0 && n.state !== 'destroyed' && hyp(n.x - c.x, n.y - c.y) < 45) {
-          n.fire = 300 + this.sim.rng.float(0, 300); n.state = 'damaged'; n.hp = Math.min(n.hp, 0.5);
+          n.fire = 200 + this.sim.rng.float(0, 150); n.state = 'damaged'; n.hp = Math.min(n.hp, 0.5);
           this.sim.msg(`${c.obj.name}: огонь перекинулся на ${n.name}`, c.obj.side);
           break;
         }
@@ -719,18 +852,18 @@ export class DroneWar {
       if (dist > T.range || a.ammo <= 0) return;
       a.ammo -= dt;
       // Пулемёт с прожектором и тепловизором: хорош по медленным низким целям
-      const fs = Math.max(0.2, Math.min(1.1, 55 / d.speed));
+      const fs = Math.max(0.2, Math.min(1.1, 55 / D.speed));
       const fa = d.alt < 400 ? 1 : d.alt < 900 ? 0.6 : 0.3;
       const fn = 1 - night * 0.2;
-      const p = 0.022 * AD_EFF[a.side] * fs * fa * fn * (cued ? 1 : 0.55) * (1 - dist / (T.range * 1.3));
+      const p = 0.022 * PACE * AD_EFF[a.side] * fs * fa * fn * (cued ? 1 : 0.55) * (1 - dist / (T.range * 1.3));
       a.fireT = sim.time;
       this.fx.push({ t: 'tracer', x0: a.x, y0: a.y, x1: d.x + sim.rng.float(-25, 25), y1: d.y + sim.rng.float(-25, 25), alt: d.alt, t0: sim.time, side: a.side });
       if (sim.rng.chance(p * dt)) this.kill(d, a, 'пулемётным огнём');
     } else if (a.type === 'spaag') {
       if (a.missiles > 0 && dist > T.range && a.cd <= 0) { this.fireMissile(a, d, T.mCost); a.missiles--; a.cd = 4; return; }
       if (dist > T.range || a.ammo <= 0) return;
-      const fs = Math.max(0.35, Math.min(1, 80 / d.speed));
-      const p = 0.034 * AD_EFF[a.side] * fs * (1 - dist / (T.range * 1.2));
+      const fs = Math.max(0.35, Math.min(1, 80 / D.speed));
+      const p = 0.034 * PACE * AD_EFF[a.side] * fs * (1 - dist / (T.range * 1.2));
       a.fireT = sim.time;
       a.ammo -= dt;
       this.fx.push({ t: 'tracer', x0: a.x, y0: a.y, x1: d.x, y1: d.y, alt: d.alt, t0: sim.time, side: a.side, heavy: true });
@@ -791,7 +924,9 @@ export class DroneWar {
     const D = DW_DRONES[d.type];
     this.fx.push({ t: 'airburst', x: d.x, y: d.y, alt: d.alt, t0: sim.time });
     if (by) by.kills = (by.kills || 0) + 1;
-    this.sides[by?.side || (d.side === 'blue' ? 'red' : 'blue')].stats.shot++;
+    const defSide = by?.side || (d.side === 'blue' ? 'red' : 'blue');
+    this.sides[defSide].stats.shot++;
+    if (D.cls === 'strike' && !this.prep) this.sides[defSide].morale = Math.min(100, this.sides[defSide].morale + 0.08); // сбитые над городом — поддержка тыла
     const decoy = D.cls === 'decoy';
     if (by) sim.msg(`${by.name}: сбит ${decoy ? 'дрон — оказалась ложная цель «Гербера»' : D.short} ${how}`, by.side);
     if (D.wh >= 10 && sim.rng.chance(d.alt < 600 ? 0.4 : 0.15)) {
@@ -840,7 +975,7 @@ export class DroneWar {
       }
       const wp = d.route.length ? d.route[0] : { x: d.aimX + d.drift[0], y: d.aimY + d.drift[1] };
       const dx = wp.x - d.x, dy = wp.y - d.y, dist = hyp(dx, dy);
-      let v = D.speed;
+      let v = D.speed * PACE;
       // Профиль высоты: набор после старта, крейсер, пикирование на последних 1.5 км
       const toTarget = hyp(d.aimX + d.drift[0] - d.x, d.aimY + d.drift[1] - d.y);
       let wantAlt = d.cruise;
@@ -877,15 +1012,15 @@ export class DroneWar {
     }
     const dx = t.x - d.x, dy = t.y - d.y, dz = t.alt - d.alt, dist = hyp(dx, dy);
     // Перехват с упреждением
-    const lead = dist / Math.max(20, D.speed);
+    const lead = dist / Math.max(20, D.speed * PACE);
     const px = t.x + Math.cos(t.heading) * t.speed * lead, py = t.y + Math.sin(t.heading) * t.speed * lead;
     d.heading = Math.atan2(py - d.y, px - d.x);
-    d.x += Math.cos(d.heading) * D.speed * dt; d.y += Math.sin(d.heading) * D.speed * dt;
+    d.x += Math.cos(d.heading) * D.speed * PACE * dt; d.y += Math.sin(d.heading) * D.speed * PACE * dt;
     d.alt += Math.max(-25 * dt, Math.min(25 * dt, dz));
     d.trail.push([d.x, d.y]); if (d.trail.length > 25) d.trail.shift();
     if (hyp(t.x - d.x, t.y - d.y, t.alt - d.alt) < 30) {
       const TD = DW_DRONES[t.type];
-      const p = (t.speed > D.speed * 0.95 ? 0.12 : 0.55) * AD_EFF[d.side];
+      const p = (DW_DRONES[t.type].speed > D.speed * 0.95 ? 0.2 : 0.55) * AD_EFF[d.side];
       d.dead = true; d.deadAt = sim.time;
       if (sim.rng.chance(p)) this.kill(t, { side: d.side, name: D.short, kills: 0 }, 'дроном-перехватчиком');
       else { this.fx.push({ t: 'airburst', x: d.x, y: d.y, alt: d.alt, t0: sim.time, small: true }); void TD; }
@@ -906,7 +1041,7 @@ export class DroneWar {
     const want = Math.atan2(dy, dx);
     const dh = Math.atan2(Math.sin(want - d.heading), Math.cos(want - d.heading));
     d.heading += Math.max(-0.4 * dt, Math.min(0.4 * dt, dh));
-    d.x += Math.cos(d.heading) * D.speed * dt; d.y += Math.sin(d.heading) * D.speed * dt;
+    d.x += Math.cos(d.heading) * D.speed * PACE * dt; d.y += Math.sin(d.heading) * D.speed * PACE * dt;
     d.alt += Math.max(-20 * dt, Math.min(8 * dt, d.cruise - d.alt));
     d.trail.push([d.x, d.y]); if (d.trail.length > 40) d.trail.shift();
     if (d.state === 'rtb' && dist < 150) { d.dead = true; d.deadAt = sim.time; }
@@ -952,12 +1087,13 @@ export class DroneWar {
         let dmg;
         if (dist <= rl) {
           dmg = (wh / 50) * 1.1 / C.hard;
-          if (c.shelter >= 2) dmg *= 0.3; // бетонное укрытие
+          if (C.net && c.shelter) dmg *= wh <= 25 ? 0.08 : 0.8; // сетка: лёгкий дрон рвётся на ней
+          else if (c.shelter >= 2) dmg *= 0.3; // бетонное укрытие
           else if (c.shelter === 1) dmg *= 0.75;
           if (C.big && dist <= 0.5) dmg *= 0.8; // большие объекты теряют часть площади
         } else {
           dmg = (wh / 50) * 0.35 * (1 - (dist - rl) / (rf - rl)) / C.hard;
-          if (c.shelter >= 1) dmg *= 0.12; // габионы держат осколки
+          if (c.shelter >= 1) dmg *= C.net ? 0.4 : 0.12; // габионы держат осколки
           if (C.big) dmg *= 0.5;
         }
         if (dmg < 0.03) continue;
@@ -974,8 +1110,10 @@ export class DroneWar {
     for (const v of this.logi.vehicles) {
       if (v.dead) continue;
       const dd = hyp(v.x - x, v.y - y);
-      const kill = dd < 6 ? 0.95 : dd < rl * 1.5 ? 0.8 : dd < rf ? 0.4 * (1 - dd / rf) : 0;
-      if (kill && sim.rng.chance(kill)) { this.logi.destroy(v, `удар ${D.short}`); if (v.side !== d.side) sim.msg(`${D.short}: уничтожен ${VEH[v.kind].name.toLowerCase()} противника`, d.side); }
+      let kill = dd < 6 ? 0.95 : dd < rl * 1.5 ? 0.8 : dd < rf ? 0.4 * (1 - dd / rf) : 0;
+      if (kill && this.underNet(v.side, v.x, v.y)) kill *= wh <= 25 ? 0.08 : 0.8; // машина под сеткой
+      if (kill && sim.rng.chance(kill)) {
+        this.sides[v.side].lastLoss = [v.x, v.y]; this.logi.destroy(v, `удар ${D.short}`); if (v.side !== d.side) sim.msg(`${D.short}: уничтожен ${VEH[v.kind].name.toLowerCase()} противника`, d.side); }
     }
     // ПВО рядом с разрывом
     for (const a of this.ad) {
@@ -1003,11 +1141,23 @@ export class DroneWar {
     if (c.hp <= 0) { c.hp = 0; c.state = 'destroyed'; }
     else if (c.hp < 0.62) c.state = 'damaged';
     if (C.fire && c.state !== 'ok' && c.fire <= 0 && sim.rng.chance(C.fire * (c.state === 'destroyed' ? 1 : 0.6))) {
-      c.fire = (c.k === 'tank' ? 600 : c.k === 'at' || c.k === 'gsu' || c.k === 'tr' ? 240 : 150) * sim.rng.float(0.7, 1.3);
+      c.fire = (c.k === 'tank' ? 320 : c.k === 'at' || c.k === 'gsu' || c.k === 'tr' ? 240 : 150) * sim.rng.float(0.7, 1.3);
     }
     if (C.detonate && c.state !== 'ok' && was === 'ok') { c.fire = Math.max(c.fire, 120); sim.msg(`${c.obj.name}: детонация боеприпасов в «${c.name}»`, c.obj.side); }
     if (c.k === 'span' && c.state === 'destroyed' && was !== 'destroyed') sim.msg(`${c.obj.name}: обрушен ${c.name.toLowerCase()} — движение по мосту невозможно`, c.obj.side);
-    if (was !== c.state) this.flowTimer = 0;
+    if (was !== c.state) {
+      this.flowTimer = 0;
+      const side = c.obj.side;
+      if (!this.prep && SHOCK[c.k] && !CIVIL.has(c.obj.kind)) this.shock(side, SHOCK[c.k] * (c.state === 'destroyed' ? 1 : 0.5), c.name);
+      const D = d && this.directive[d.side];
+      if (D && !D.done && D.oid === c.oid && c.state !== 'ok') {
+        D.done = 'ok';
+        this.sides[d.side].points += D.bonus;
+        this.shock(side, 6 / PHASES[this.phaseNo].drain, 'директива');
+        sim.msg(`Директива выполнена: «${c.obj.name}» поражён — премия ${D.bonus} оч.`, d.side);
+        sim.msg(`Противник поразил приоритетный объект «${c.obj.name}» — устойчивость −6`, side);
+      }
+    }
     // Сторона видит, что её объект повреждён; противник узнаёт об успехе по вспышке/разведке
     if (d) this.sides[d.side].seenObjects.add(c.oid);
   }
@@ -1066,8 +1216,9 @@ DroneWar.prototype.snapshot = function () {
   const t = this.sim.time;
   const seenBits = (d) => (d.seen.blue && t - d.seen.blue < 4 ? 1 : 0) | (d.seen.red && t - d.seen.red < 4 ? 2 : 0);
   const sideSnap = (S) => [R1(S.points), R1(S.income), Math.round(S.supply * 1000) / 1000, S.gen, S.demand, S.delivered, R1(S.achrUntil), R1(S.collapse), S.spare, S.auto ? 1 : 0,
-    S.crews.map((c) => (c.job ? [c.id, c.job.id, R1(c.job.left), R1(c.job.total), c.job.state, c.job.shelter ? 1 : 0, c.job.level || 0, c.veh ? 1 : 0] : [c.id, c.veh ? 1 : 0])), S.queue.slice(0, 60), R1(S.tradeAvg ?? 0),
-    [S.stats.launched, S.stats.hits, S.stats.shot, S.stats.lostAD, S.stats.spent, S.stats.repairs], R1(S.logi ?? 1), R1(S.oil ?? 1), R1(S.ammo ?? 1)];
+    S.crews.map((c) => (c.job ? [c.id, c.job.id, R1(c.job.left), R1(c.job.total), c.job.state, c.job.shelter ? 1 : 0, c.job.level || 0, c.veh ? 1 : 0, c.job.kind || 'repair'] : [c.id, c.veh ? 1 : 0])), S.queue.slice(0, 60), R1(S.tradeAvg ?? 0),
+    [S.stats.launched, S.stats.hits, S.stats.shot, S.stats.lostAD, S.stats.spent, S.stats.repairs], R1(S.logi ?? 1), R1(S.oil ?? 1), R1(S.ammo ?? 1),
+    R1(S.morale), S.inc ? [R1(S.inc.industry), R1(S.inc.trade), R1(S.inc.fuel), R1(S.inc.transit)] : 0, S.moraleParts ? Object.values(S.moraleParts).map(R1) : 0];
   return {
     d: this.drones.filter((d) => !d.dead && d.state !== 'wait').map((d) => [d.id, d.side, d.type, R1(d.x), R1(d.y), Math.round(d.alt), R1(d.heading), R1(d.aimX ?? d.x), R1(d.aimY ?? d.y), seenBits(d), d.state === 'loiter' ? 1 : 0, (d.route || []).map((p) => [Math.round(p.x), Math.round(p.y)])]),
     a: this.ad.map((a) => [a.id, a.side, a.type, R1(a.x), R1(a.y), R1(a.heading), AST.indexOf(a.state), a.dead ? 1 : 0, a.missiles, a.stock, Math.round(a.ammo), a.kills || 0, a.target ? 1 : 0, R1(a.aim), R1(a.spotted.blue || 0), R1(a.spotted.red || 0), a.roe, R1(a.until), R1(a.fireT), a.dest ? [Math.round(a.dest.x), Math.round(a.dest.y)] : 0]),
@@ -1075,7 +1226,9 @@ DroneWar.prototype.snapshot = function () {
     ps: this.objects.map((o) => (o.supply === undefined ? -1 : Math.round(o.supply * 1000) / 1000)),
     l: this.lines.map((l) => (l.cut ? [Math.round(l.cut.x), Math.round(l.cut.y)] : 0)),
     m: this.missiles.map((m) => [R1(m.x), R1(m.y), Math.round(m.alt), m.side]),
-    f: this.fx.filter((f) => t - f.t0 < 0.3 || (f.t !== 'tracer' && t - f.t0 < 0.3)).map((f) => [f.t, R1(f.x ?? f.x0), R1(f.y ?? f.y0), R1(f.x1 ?? 0), R1(f.y1 ?? 0), Math.round(f.alt || 0), f.side || '', f.heavy ? 1 : 0, f.small ? 1 : 0, f.wh || 0]),
+    f: this.fx.filter((f) => t - f.t0 < 0.3 || (f.t !== 'tracer' && t - f.t0 < 0.3)).map((f) => [f.t, R1(f.x ?? f.x0), R1(f.y ?? f.y0), R1(f.x1 ?? 0), R1(f.y1 ?? 0), Math.round(f.alt || 0), f.side || '', f.heavy ? 1 : 0, f.small ? 1 : 0, f.wh || 0, f.v || 0]),
+    cp: [this.phaseNo, R1(this.startAt ?? 0), ['blue', 'red'].map((sd) => { const D = this.directive[sd]; return D ? [D.oid, R1(D.until), D.done || '', D.bonus] : 0; })],
+    n: this.nets.map((n) => [n.id, n.side, n.done ? 1 : 0, n.line.map((p) => [Math.round(p[0]), Math.round(p[1])]), n.w]),
     s: { blue: sideSnap(this.sides.blue), red: sideSnap(this.sides.red) },
     g: [this.prep ? 1 : 0, R1(this.prepEnd), R1(this.endAt), this.winner, this.reason, this.ready.blue ? 1 : 0, this.ready.red ? 1 : 0],
     v: this.logi.vehicles.map((v) => [v.id, v.side, v.kind, R1(v.x), R1(v.y), R1(v.heading), v.state, v.dead ? 1 : 0, v.wreck ? 1 : 0, (v.spotted.blue && t - v.spotted.blue < 90 ? 1 : 0) | (v.spotted.red && t - v.spotted.red < 90 ? 2 : 0), v.task.type, R1(v.deadAt ?? 0)]),
@@ -1116,7 +1269,7 @@ DroneWar.prototype.applySnapshot = function (s) {
   this.lines.forEach((l, i) => { const q = s.l[i]; l.cut = q ? { x: q[0], y: q[1] } : null; });
   this.missiles = s.m.map((q) => ({ x: q[0], y: q[1], alt: q[2], side: q[3], trail: [[q[0], q[1], q[2]]] }));
   for (const q of s.f) {
-    const f = q[0] === 'tracer' ? { t: 'tracer', x0: q[1], y0: q[2], x1: q[3], y1: q[4], alt: q[5], side: q[6], heavy: !!q[7], t0: t } : { t: q[0], x: q[1], y: q[2], alt: q[5], small: !!q[8], wh: q[9], t0: t };
+    const f = q[0] === 'tracer' ? { t: 'tracer', x0: q[1], y0: q[2], x1: q[3], y1: q[4], alt: q[5], side: q[6], heavy: !!q[7], t0: t } : { t: q[0], x: q[1], y: q[2], alt: q[5], small: !!q[8], wh: q[9], v: q[10], side: q[6], t0: t };
     this.fx.push(f);
   }
   if (this.fx.length > 400) this.fx.splice(0, this.fx.length - 400);
@@ -1124,8 +1277,11 @@ DroneWar.prototype.applySnapshot = function (s) {
     const S = this.sides[side], q = s.s[side];
     Object.assign(S, { points: q[0], income: q[1], supply: q[2], gen: q[3], demand: q[4], delivered: q[5], achrUntil: q[6], collapse: q[7], spare: q[8], auto: !!q[9], queue: q[11], tradeAvg: q[12], logi: q[14], oil: q[15], ammo: q[16] });
     void 0;
-    S.crews = q[10].map((c) => (c.length > 2 ? { id: c[0], job: { id: c[1], left: c[2], total: c[3], state: c[4], shelter: !!c[5], level: c[6] }, veh: c[7] ? {} : null } : { id: c[0], job: null, veh: c[1] ? {} : null }));
+    S.crews = q[10].map((c) => (c.length > 2 ? { id: c[0], job: { id: c[1], left: c[2], total: c[3], state: c[4], shelter: !!c[5], level: c[6], kind: c[8] }, veh: c[7] ? {} : null } : { id: c[0], job: null, veh: c[1] ? {} : null }));
     [S.stats.launched, S.stats.hits, S.stats.shot, S.stats.lostAD, S.stats.spent, S.stats.repairs] = q[13];
+    S.morale = q[17];
+    if (q[18]) { S.inc = { industry: q[18][0], trade: q[18][1], fuel: q[18][2], transit: q[18][3] }; S.tradeAvg = q[18][1] + q[18][2] + q[18][3]; }
+    if (q[19]) { const [power, bridges, shops, fires, border, regen] = q[19]; S.moraleParts = { power, bridges, shops, fires, border, regen }; }
   }
   [this.prep, this.prepEnd, this.endAt, this.winner, this.reason] = [!!s.g[0], s.g[1], s.g[2], s.g[3], s.g[4]];
   const oldV = new Map(this.logi.vehicles.map((v) => [v.id, v]));
@@ -1140,6 +1296,11 @@ DroneWar.prototype.applySnapshot = function (s) {
   if (s.st) this.objects.forEach((o, i) => { if (s.st[i] >= 0) o.stock = s.st[i]; });
   if (s.ls) ['blue', 'red'].forEach((sd, i) => { const L = this.logi.side[sd]; [L.stats.imports, L.stats.deliveries, L.stats.sold, L.stats.lostTrucks, L.stats.trade] = s.ls[i]; });
   this.ready = { blue: !!s.g[5], red: !!s.g[6] };
+  if (s.cp) {
+    this.phaseNo = s.cp[0]; this.startAt = s.cp[1];
+    ['blue', 'red'].forEach((sd, i) => { const q = s.cp[2][i]; this.directive[sd] = q ? { oid: q[0], until: q[1], done: q[2] || null, bonus: q[3] } : null; });
+  }
+  if (s.n) this.nets = s.n.map((q) => { const xs = q[3].map((p) => p[0]), ys = q[3].map((p) => p[1]); const m = q[3][Math.floor(q[3].length / 2)]; return { id: q[0], side: q[1], done: !!q[2], line: q[3], w: q[4], x: m[0], y: m[1], bb: { x0: Math.min(...xs) - 12, y0: Math.min(...ys) - 12, x1: Math.max(...xs) + 12, y1: Math.max(...ys) + 12 } }; });
 };
 // Гость: плавное движение дронов между снимками
 DroneWar.prototype.interpolate = function (dt) {
@@ -1147,6 +1308,12 @@ DroneWar.prototype.interpolate = function (dt) {
   for (const d of this.drones) if (d.tx !== undefined) { d.x += (d.tx - d.x) * k; d.y += (d.ty - d.y) * k; }
   for (const v of this.logi.vehicles) if (v.tx !== undefined && !v.dead) { v.x += (v.tx - v.x) * k; v.y += (v.ty - v.y) * k; }
 };
+
+function segDist(x, y, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2));
+  return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t);
+}
 
 // Максимальный поток (Эдмондс—Карп) на матрице ёмкостей; возвращает поток в указанные узлы
 function maxflowPer(cap, s, t, watch) {

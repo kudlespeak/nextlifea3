@@ -47,9 +47,11 @@ export class DroneWarAI {
     if (!g.prep && t > this.next.loiter) { this.next.loiter = t + 70; this.loiter(); }
     if (!g.prep && t > this.next.strike) {
       const night = ((t / 3600) % 24) > 20 || ((t / 3600) % 24) < 5;
-      this.next.strike = t + (night ? 260 : 420) / this.k + this.sim.rng.float(0, 160);
+      // Эскалация: к третьей фазе удары вдвое чаще
+      this.next.strike = t + ((night ? 200 : 300) / this.k + this.sim.rng.float(0, 120)) / (1 + 0.5 * g.phase());
       this.strike();
     }
+    this.nets();
     if (S.points > 700 && S.crews.length < 5 && this.can('def', 60) && !this.g.buyCrew(this.side)) this.pay('def', 60);
     if (S.spare === 0 && this.can('def', 150) && !this.g.buySpare(this.side)) this.pay('def', 150);
     this.lastPts = S.points;
@@ -82,10 +84,12 @@ export class DroneWarAI {
     }
     // Самый недоприкрытый ценный объект
     let worst = null, ws = Infinity;
+    const threat = g.directive[this.enemy];
     for (const o of g.objs(this.side)) {
-      const want = WANT_COVER[o.kind];
+      let want = WANT_COVER[o.kind];
       if (!want) continue;
       if (o.kind === 'bridge' && o.btype !== 'rail' && o.btype !== 'highway') continue;
+      if (threat && !threat.done && threat.oid === o.id) want += 4; // разведка предупредила об ударе
       const s = this.cover(o) / want;
       if (s < ws) { ws = s; worst = o; }
     }
@@ -96,7 +100,7 @@ export class DroneWarAI {
     else if (have('sam') < (this.k > 1 ? 3 : 2) && spend() > DW_AD.sam.cost + 100 && ['tpp', 'ps330'].includes(worst.kind)) type = 'sam';
     else if (have('spaag') < 4 && spend() > DW_AD.spaag.cost + 60 && ['tpp', 'ps330', 'factory'].includes(worst.kind)) type = 'spaag';
     else if (['tpp', 'ps330', 'ps110'].includes(worst.kind) && !g.ad.some((a) => !a.dead && a.side === this.side && a.type === 'ew' && Math.hypot(a.x - worst.x, a.y - worst.y) < 2000) && spend() > DW_AD.ew.cost) type = 'ew';
-    else if (have('icpt') < 4 && spend() > DW_AD.icpt.cost && rng.chance(0.4)) type = 'icpt';
+    else if (have('icpt') < 4 && spend() > DW_AD.icpt.cost && rng.chance(0.6)) type = 'icpt';
     if (spend() < DW_AD[type].cost) return;
     // Со стороны фронта, откуда идут дроны
     const r = type === 'ew' ? rng.float(200, 700) : type === 'sam' ? rng.float(1500, 3500) : rng.float(500, 1600);
@@ -115,6 +119,23 @@ export class DroneWarAI {
         if (lvl === 2 && this.fund.def < 300) continue;
         if (!g.shelter(this.side, c.id, lvl)) { this.pay('def', lvl === 1 ? 35 : 110); return; }
       }
+  }
+
+  // Сетки: над пролётами главных мостов и над дорогой, где жгут наши машины
+  nets() {
+    const g = this.g, t = this.sim.time;
+    if (g.prep || this.fund.def < 80 || t < (this.next.nets || 0)) return;
+    this.next.nets = t + 60;
+    // Сначала — дорога, где только что сожгли нашу машину
+    const loss = this.S.lastLoss;
+    this.S.lastLoss = null;
+    if (loss && !g.buildNet(this.side, loss[0], loss[1])) { this.pay('def', 40); return; }
+    const busy = (c) => this.S.queue.includes('S' + c.id) || this.S.crews.some((w) => w.job?.qid === 'S' + c.id);
+    for (const o of g.objs(this.side, 'bridge')) {
+      if (o.btype !== 'rail' && o.btype !== 'highway') continue;
+      const c = o.comps.find((q) => q.k === 'span' && !q.shelter && q.state === 'ok' && !busy(q));
+      if (c && !g.shelter(this.side, c.id, 1)) { this.pay('def', 30); return; }
+    }
   }
 
   // ---------- Разведка и удары ----------
@@ -137,7 +158,7 @@ export class DroneWarAI {
     const pri = { sam: 6, radar: 5, spaag: 4, ew: 4, icpt: 3, mog: 2, acoustic: 0.5 };
     known.sort((a, b) => (pri[b.type] || 0) - (pri[a.type] || 0));
     // Охота на снабжение: замеченные разведкой фуры и грузовики ПВО в досягаемости
-    const trucks = g.logi.vehicles.filter((v) => !v.dead && v.side === this.enemy && (v.kind === 'supply' || v.kind === 'fura') && v.spotted[this.side] && t - v.spotted[this.side] < 60 && Math.abs(v.x - launchX) < T.loiter.range * 0.8);
+    const trucks = g.logi.vehicles.filter((v) => !v.dead && v.side === this.enemy && (v.kind === 'supply' || v.kind === 'fura' || v.kind === 'tanker') && v.spotted[this.side] && t - v.spotted[this.side] < 60 && Math.abs(v.x - launchX) < T.loiter.range * 0.8);
     const tr = trucks[this.sim.rng.int(0, Math.max(0, trucks.length - 1))];
     if (tr && this.sim.rng.chance(0.5) && !g.drones.some((d) => !d.dead && d.vehTarget === tr.id) && this.can('off', T.loiter.cost)) {
       if (!g.launch(this.side, T.loiter.k, 1, tr.x, tr.y, { vehTarget: tr.id })) this.pay('off', g.droneCost(this.side, T.loiter.k));
@@ -156,8 +177,10 @@ export class DroneWarAI {
     // Ценность цели / известная защита
     const knownAD = g.ad.filter((a) => !a.dead && a.side === this.enemy && a.spotted[this.side]);
     let best = null, bs = -1;
+    const dir = g.directive[this.side];
     for (const o of g.objs(this.enemy)) {
-      const v = VALUE[o.kind];
+      let v = VALUE[o.kind];
+      if (v && dir && !dir.done && dir.oid === o.id) v *= 4; // директива штаба
       if (!v) continue;
       const ok = o.comps.filter((c) => TARGET_COMPS[o.kind]?.includes(c.k) && c.state === 'ok');
       if (!ok.length) continue;
@@ -171,7 +194,7 @@ export class DroneWarAI {
     // Состав волны
     const heavy = best.kind === 'bridge' || best.kind === 'factory';
     const main = this.side === 'red'
-      ? (heavy || rng.chance(0.25) ? T.strike.find((d) => d.k === 'geran3') : null) || T.strike.find((d) => d.k === 'shahed')
+      ? (heavy || rng.chance(0.15) ? T.strike.find((d) => d.k === 'geran3') : null) || T.strike.find((d) => d.k === 'shahed')
       : heavy ? T.strike.find((d) => d.k === 'fp2') : rng.chance(0.5) ? T.strike.find((d) => d.k === 'lyutyi') : T.strike.find((d) => d.k === (best.kind === 'ps110' || best.kind === 'launch' ? 'bober' : 'fp1'));
     const unit = g.droneCost(this.side, main.k);
     let n = Math.max(2, Math.min(Math.round(12 * this.k), Math.floor((budget * 0.8) / unit)));
@@ -181,8 +204,8 @@ export class DroneWarAI {
     // Ложные цели идут первыми, чтобы вскрыть и отвлечь ПВО (у Велнарии — рой дешёвых «Бобров»)
     if (!T.decoy.length && main.k !== 'bober') {
       const bob = T.strike.find((d) => d.k === 'bober');
-      const nb = Math.min(n, Math.floor((budget - n * unit) / g.droneCost(this.side, 'bober')));
-      if (bob && nb > 1) {
+      const nb = Math.min(Math.ceil(n / 2), 8, Math.floor((budget - n * unit) / g.droneCost(this.side, 'bober')));
+      if (bob && nb > 1 && rng.chance(0.5)) {
         const c = aims[rng.int(0, aims.length - 1)];
         if (!g.launch(this.side, 'bober', nb, c.x, c.y, { route, oid: best.id, cid: c.id })) this.pay('off', g.droneCost(this.side, 'bober') * nb);
       }

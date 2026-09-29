@@ -106,7 +106,9 @@ export function drawChunk(ctx, world, b, ppm) {
   const q = { x0: b.x0 - 10, y0: b.y0 - 10, x1: b.x1 + 10, y1: b.y1 + 10 };
 
   drawSteppeTexture(ctx, world, b, ppm);
-  for (const f of world.fields.query(q)) drawField(ctx, f, b, ppm);
+  const fl = world.fields.query(q);
+  fl.sort((a, b2) => (CROPS[b2.crop].soft ? 1 : 0) - (CROPS[a.crop].soft ? 1 : 0)); // пятна степи — под полями
+  for (const f of fl) drawField(ctx, f, b, ppm);
   drawAreas(ctx, world, b, q, ppm);
   drawLowFreq(ctx, world, b, ppm);
   if (ppm >= 2) drawMicro(ctx, world, b, ppm);
@@ -212,6 +214,18 @@ function drawLowFreq(ctx, world, b, ppm) {
 // ---------- Поле ----------
 function drawField(ctx, f, b, ppm) {
   const crop = CROPS[f.crop];
+  if (crop.soft) {
+    // пятно степи: без межи и борозд, края растушёваны двумя проходами
+    ctx.fillStyle = crop.color;
+    ctx.globalAlpha = crop.soft * 0.5;
+    ctx.beginPath(); pathPoly(ctx, f.poly); ctx.fill();
+    ctx.lineJoin = 'round'; ctx.lineWidth = 60; ctx.strokeStyle = crop.color; ctx.globalAlpha = crop.soft * 0.25; ctx.stroke();
+    ctx.globalAlpha = crop.soft * 0.6;
+    const [cx, cy] = f.poly.reduce((a, p) => [a[0] + p[0] / f.poly.length, a[1] + p[1] / f.poly.length], [0, 0]);
+    ctx.beginPath(); pathPoly(ctx, f.poly.map(([x, y]) => [cx + (x - cx) * 0.7, cy + (y - cy) * 0.7])); ctx.fill();
+    ctx.globalAlpha = 1;
+    return;
+  }
   ctx.save();
   ctx.beginPath();
   pathPoly(ctx, f.poly);
@@ -345,36 +359,58 @@ function drawArea(ctx, a, b, ppm) {
       break;
     }
     case 'dwsite': {
-      // Площадка объекта: щебень/бетон, забор, у подстанций — гравийная отсыпка с дорожками
+      // Прилегающая территория: выкошенная полоса вокруг ограды, площадка (щебень/асфальт/гравий),
+      // забор с воротами, у магазинов и АЗС — парковка с разметкой
+      const civil = ['mall', 'market', 'store', 'fuel', 'hub', 'border', 'firest', 'rembase'].includes(a.site);
+      if (a.apron) {
+        ctx.beginPath(); pathPoly(ctx, a.apron);
+        ctx.fillStyle = civil ? 'rgba(122,128,86,0.9)' : 'rgba(128,132,88,0.92)';
+        ctx.fill();
+        if (ppm >= 0.4) { ctx.lineWidth = Math.max(0.3, 0.5 / ppm); ctx.strokeStyle = 'rgba(80,84,50,0.35)'; ctx.stroke(); }
+      }
       ctx.beginPath();
       pathPoly(ctx, a.poly);
-      ctx.fillStyle = a.site === 'bridge' ? 'rgba(0,0,0,0)' : a.site === 'ammo' ? '#6d6b4d' : a.site === 'tpp' || a.site === 'factory' ? '#8d8a80' : '#8f8b7c';
+      const paved = a.site === 'mall' || a.site === 'market' || a.site === 'fuel' || a.site === 'hub' || a.site === 'border';
+      ctx.fillStyle = a.site === 'bridge' ? 'rgba(0,0,0,0)' : paved ? '#6b6c68' : a.site === 'ammo' ? '#6d6b4d' : a.site === 'store' ? '#7d7a70' : a.site === 'tpp' || a.site === 'factory' ? '#8d8a80' : '#8f8b7c';
       ctx.fill();
       if (ppm >= 0.5) {
         ctx.save();
         ctx.clip();
         ctx.translate(a.x, a.y);
         ctx.rotate(a.angle);
-        ctx.strokeStyle = 'rgba(60,58,50,0.25)';
-        ctx.lineWidth = 0.4;
-        ctx.beginPath();
         const hw = a.w / 2, hh = a.h / 2;
-        const step = a.site === 'ps330' || a.site === 'ps110' ? 12 : 30;
-        for (let u = -hw; u <= hw; u += step) { ctx.moveTo(u, -hh); ctx.lineTo(u, hh); }
-        ctx.stroke();
-        // внутренние проезды
-        ctx.fillStyle = 'rgba(70,70,66,0.55)';
-        ctx.fillRect(-hw, -4, a.w, 8);
+        if (paved) {
+          // разметка парковки: ряды мест 2.6 м
+          ctx.strokeStyle = 'rgba(235,235,225,0.55)';
+          ctx.lineWidth = 0.15;
+          ctx.beginPath();
+          const py = a.site === 'fuel' ? null : hh - 7;
+          if (py !== null) for (let u = -hw + 4; u < hw - 4; u += 2.6) { ctx.moveTo(u, py - 5); ctx.lineTo(u, py); ctx.moveTo(u, -hh + 2); ctx.lineTo(u, -hh + 7); }
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(40,40,38,0.25)';
+          ctx.fillRect(-hw, -1.5, a.w, 3);
+        } else {
+          ctx.strokeStyle = 'rgba(60,58,50,0.25)';
+          ctx.lineWidth = 0.4;
+          ctx.beginPath();
+          const step = a.site === 'ps330' || a.site === 'ps110' ? 12 : 30;
+          for (let u = -hw; u <= hw; u += step) { ctx.moveTo(u, -hh); ctx.lineTo(u, hh); }
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(70,70,66,0.55)';
+          ctx.fillRect(-hw, -4, a.w, 8); // внутренний проезд
+        }
         ctx.restore();
       }
-      ctx.save();
-      ctx.beginPath();
-      pathPoly(ctx, a.poly);
-      ctx.strokeStyle = 'rgba(55,55,50,0.9)';
-      ctx.lineWidth = Math.max(0.25, 0.6 / ppm);
-      ctx.setLineDash(ppm >= 1 ? [2.5, 0.8] : []);
-      ctx.stroke();
-      ctx.restore();
+      if (a.site !== 'bridge') {
+        ctx.save();
+        ctx.beginPath();
+        pathPoly(ctx, a.poly);
+        ctx.strokeStyle = civil ? 'rgba(70,72,68,0.7)' : 'rgba(55,55,50,0.9)';
+        ctx.lineWidth = Math.max(0.25, 0.6 / ppm);
+        ctx.setLineDash(ppm >= 1 ? [2.5, 0.8] : []);
+        ctx.stroke();
+        ctx.restore();
+      }
       break;
     }
     case 'floodplain':
