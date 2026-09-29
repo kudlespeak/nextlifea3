@@ -4,6 +4,7 @@
 import { SIDES } from '../sim/units.js';
 import { FACTIONS } from '../sim/factions.js';
 import { DRONE_KINDS } from '../sim/drones.js';
+import { drawDrone } from './drones.js';
 import { T } from '../sim/nav.js';
 import { vehicleSprite, turretSprite, soldierSprite, soldierKind, SOLDIER_FRAMES } from './sprites.js';
 
@@ -740,7 +741,6 @@ export function drawCombatFx(ctx, sim, view, fogSide) {
       if (!near) continue;
     }
     const [x, y] = toS(d.x, d.y);
-    const s = Math.max(5 * dpr, (d.kind === 'fpv' ? 0.5 : 0.7) * z);
     const own = !fogSide || d.side === fogSide;
     if (own && d.state !== 'return') {
       const [tx, ty] = toS(d.tx, d.ty);
@@ -753,23 +753,6 @@ export function drawCombatFx(ctx, sim, view, fogSide) {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    // Тень (дрон высоко — тень смещена)
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.arc(x + 10 * dpr, y + 10 * dpr, s * 0.9, 0, Math.PI * 2); ctx.fill();
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(d.heading + Math.PI / 4);
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = Math.max(1.5, s * 0.25);
-    ctx.beginPath();
-    ctx.moveTo(-s, -s); ctx.lineTo(s, s); ctx.moveTo(s, -s); ctx.lineTo(-s, s);
-    ctx.stroke();
-    ctx.fillStyle = SIDES[d.side].fill;
-    for (const [px, py] of [[-s, -s], [s, s], [s, -s], [-s, s]]) {
-      ctx.beginPath(); ctx.arc(px, py, s * 0.45, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.fillStyle = d.kind === 'fpv' ? '#c33' : d.kind === 'bomber' ? '#b80' : '#333';
-    ctx.fillRect(-s * 0.35, -s * 0.35, s * 0.7, s * 0.7);
-    ctx.restore();
+    drawDrone(ctx, d, x, y, z, dpr, performance.now());
   }
 }
