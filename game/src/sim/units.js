@@ -147,9 +147,11 @@ export class Sim {
   constructor(world) {
     this.world = world;
     const t0 = performance.now();
-    this.nav = new NavGrid(world);
+    // В «Войне дронов» наземных войск нет — тактическая сетка проходимости не нужна (экономия памяти)
+    const dw = world.layout === 'dronewar';
+    this.nav = dw ? null : new NavGrid(world);
     this.navTime = performance.now() - t0;
-    this.roads = new RoadGraph(world);
+    this.roads = dw ? null : new RoadGraph(world);
     this.trenches = new TrenchGraph(world);
     this.units = [];
     this.time = 5 * 3600 + 30 * 60; // 05:30, первый день

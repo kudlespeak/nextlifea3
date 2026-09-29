@@ -15,6 +15,8 @@ const MAX_INFLIGHT = 3;
 export class ChunkCache {
   constructor(world) {
     this.world = world;
+    // Обзорные уровни собираются из детальных; на большой карте это сотни чанков — рисуем обзор напрямую
+    this.composeBelow = world.W * world.H > 3e8 ? 1 : COMPOSE_BELOW;
     this.cache = new Map(); // key → { canvas, level, cx, cy, used, stale }
     this.frame = 0;
     this.tick = 0; // счётчик изменений мира (для устаревших ответов)
@@ -61,7 +63,7 @@ export class ChunkCache {
   }
   // Запросить чанк. Возвращает запись, если она готова (в фоне — сразу null, придёт позже).
   render(level, cx, cy, deadline = Infinity) {
-    if (level < COMPOSE_BELOW) return this.compose(level, cx, cy, deadline);
+    if (level < this.composeBelow) return this.compose(level, cx, cy, deadline);
     const size = this.worldSize(level);
     const key = this.key(level, cx, cy);
     const b = { x0: cx * size, y0: cy * size, x1: (cx + 1) * size, y1: (cy + 1) * size };
@@ -118,7 +120,7 @@ export class ChunkCache {
   evict() {
     if (this.cache.size <= MAX_CACHE) return;
     // Обзорные уровни и их «источник» (уровень 3) держим всегда
-    const entries = [...this.cache.entries()].filter(([, e]) => e.level > COMPOSE_BELOW).sort((a, b) => a[1].used - b[1].used);
+    const entries = [...this.cache.entries()].filter(([, e]) => e.level > this.composeBelow).sort((a, b) => a[1].used - b[1].used);
     for (let i = 0; i < entries.length && this.cache.size > MAX_CACHE; i++) {
       entries[i][1].canvas?.close?.();
       this.cache.delete(entries[i][0]);

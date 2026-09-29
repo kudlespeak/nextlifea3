@@ -4,9 +4,9 @@
 
 import { DW_AD, DW_DRONES, COMP } from './dronewar.js';
 
-const VALUE = { tpp: 14, ps330: 12, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5 };
+const VALUE = { tpp: 14, ps330: 12, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5 };
 const WANT_COVER = { tpp: 7, ps330: 6, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2 };
-const TARGET_COMPS = { tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'] };
+const TARGET_COMPS = { tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 export class DroneWarAI {
   constructor(sim, side, difficulty = 'normal') {
@@ -20,7 +20,8 @@ export class DroneWarAI {
     this.fund = { def: 420, off: 380 };
     this.lastPts = null;
   }
-  can(pool, cost) { return this.fund[pool] >= cost && this.S.points - cost >= 30; }
+  // Тратить можно, только оставив запас на идущий ремонт (оплата идёт по ходу работ)
+  can(pool, cost) { return this.fund[pool] >= cost && this.S.points - cost >= (this.reserve ?? 30); }
   pay(pool, cost) { this.fund[pool] -= cost; }
 
   get g() { return this.sim.game; }
@@ -39,7 +40,7 @@ export class DroneWarAI {
     }
     const pend = g.pendingCost(this.side);
     // Резерв на ремонт: не тратить последнее, пока энергосистема повреждена
-    this.reserve = 120 + Math.min(400, pend.n * 30);
+    this.reserve = Math.min(260, 25 + pend.n * 25);
     this.defense();
     if (t > this.next.shelter) { this.next.shelter = t + 90; this.shelters(); }
     if (t > this.next.recon) { this.next.recon = t + 200 / this.k + this.sim.rng.float(0, 80); this.recon(); }
@@ -70,7 +71,7 @@ export class DroneWarAI {
   }
   defense() {
     const g = this.g, S = this.S, rng = this.sim.rng;
-    const spend = () => Math.min(this.fund.def, S.points - 30);
+    const spend = () => Math.min(this.fund.def, S.points - this.reserve);
     const put = (type, x, y) => { if (!g.canPlace(this.side, type, x, y) && !g.placeAD(this.side, type, x, y)) this.pay('def', DW_AD[type].cost); };
     const dir = this.side === 'blue' ? 1 : -1; // к фронту
     // Сеть акустических постов перед тылом
@@ -135,6 +136,12 @@ export class DroneWarAI {
     const known = g.ad.filter((a) => !a.dead && a.side === this.enemy && a.spotted[this.side] && t - a.spotted[this.side] < 150 && Math.abs(a.x - launchX) < T.loiter.range);
     const pri = { sam: 6, radar: 5, spaag: 4, ew: 4, icpt: 3, mog: 2, acoustic: 0.5 };
     known.sort((a, b) => (pri[b.type] || 0) - (pri[a.type] || 0));
+    // Охота на снабжение: замеченные разведкой фуры и грузовики ПВО в досягаемости
+    const trucks = g.logi.vehicles.filter((v) => !v.dead && v.side === this.enemy && (v.kind === 'supply' || v.kind === 'fura') && v.spotted[this.side] && t - v.spotted[this.side] < 60 && Math.abs(v.x - launchX) < T.loiter.range * 0.8);
+    const tr = trucks[this.sim.rng.int(0, Math.max(0, trucks.length - 1))];
+    if (tr && this.sim.rng.chance(0.5) && !g.drones.some((d) => !d.dead && d.vehTarget === tr.id) && this.can('off', T.loiter.cost)) {
+      if (!g.launch(this.side, T.loiter.k, 1, tr.x, tr.y, { vehTarget: tr.id })) this.pay('off', g.droneCost(this.side, T.loiter.k));
+    }
     for (const a of known.slice(0, 2)) {
       if (g.drones.some((d) => !d.dead && d.adTarget === a.id)) continue;
       const n = a.type === 'sam' || a.type === 'radar' ? 2 : 1;
@@ -144,7 +151,7 @@ export class DroneWarAI {
   }
   strike() {
     const g = this.g, S = this.S, T = this.types(), rng = this.sim.rng;
-    const budget = Math.min(this.fund.off, S.points - 30) * 0.9;
+    const budget = Math.min(this.fund.off, S.points - this.reserve) * 0.9;
     if (budget < 50) return;
     // Ценность цели / известная защита
     const knownAD = g.ad.filter((a) => !a.dead && a.side === this.enemy && a.spotted[this.side]);

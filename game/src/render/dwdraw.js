@@ -3,7 +3,7 @@
 // трассеры, ракеты, прожекторы, разрывы в воздухе; на обзорном масштабе — значки и подписи.
 
 import { spriteFor, drawSprite, K3 } from './mesh3d.js';
-import { buildComp, buildAD, buildDrone } from './dwmodels.js';
+import { buildComp, buildAD, buildDrone, buildVehicle } from './dwmodels.js';
 import { MODELS } from './models.js';
 import { DW_DRONES, DW_AD, KIND_NAME } from '../sim/dronewar.js';
 import { daylight } from '../power.js';
@@ -11,7 +11,8 @@ import { FACTIONS } from '../sim/factions.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ' };
+const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
@@ -207,6 +208,37 @@ export function drawDW(ctx, sim, view, side, ui) {
     ctx.beginPath(); ctx.arc(sx, sy - up(m.alt), 2.5 * dpr, 0, Math.PI * 2); ctx.fill();
   }
 
+  // ---------- Машины на дорогах ----------
+  for (const v of g.visibleVehicles(side)) {
+    if (!inView(v.x, v.y, 30)) continue;
+    const [sx, sy] = toS(v.x, v.y);
+    if (v.wreck) {
+      const age = t - v.deadAt;
+      ctx.fillStyle = 'rgba(25,20,16,0.85)';
+      ctx.beginPath(); ctx.ellipse(sx, sy, Math.max(2 * dpr, 4 * z), Math.max(1.5 * dpr, 2 * z), v.heading, 0, Math.PI * 2); ctx.fill();
+      if (age < 180) fire(ctx, toS, v.x, v.y, 3, z, now, age < 60, hash(v.id));
+      continue;
+    }
+    if (z >= 1.2) {
+      const variant = v.id % 6;
+      const key = v.kind === 'supply' ? `truck:${v.side}:hull` : `dwv:${v.kind}:${v.kind === 'fura' || v.kind === 'van' ? variant : v.side}`;
+      const b = v.kind === 'supply' ? MODELS[key] : () => buildVehicle(v.kind, v.side, variant);
+      const r = spriteFor(key, b, v.heading, z, undefined, now);
+      if (r) drawSprite(ctx, r, sx, sy, z, r.residual);
+      if (v.kind === 'fire' && Math.floor(now / 250) % 2) { ctx.fillStyle = 'rgba(80,140,255,0.9)'; ctx.beginPath(); ctx.arc(sx, sy - 3.2 * 0.42 * z, Math.max(2, 0.6 * z), 0, Math.PI * 2); ctx.fill(); }
+      if (v.state === 'work' && v.kind === 'crew' && Math.floor(now / 150) % 3 === 0) { ctx.fillStyle = 'rgba(255,240,170,0.95)'; ctx.beginPath(); ctx.arc(sx + Math.cos(now / 300) * 3 * z, sy - 4 * z, Math.max(1.5, 0.5 * z), 0, Math.PI * 2); ctx.fill(); } // сварка
+      if (v.state === 'work' && v.kind === 'fire') { ctx.strokeStyle = 'rgba(200,230,255,0.7)'; ctx.lineWidth = Math.max(1, 0.4 * z); ctx.beginPath(); ctx.moveTo(sx, sy - 2 * z); ctx.quadraticCurveTo(sx + 8 * z, sy - 9 * z, sx + 14 * z, sy - 3 * z); ctx.stroke(); }
+    } else {
+      // обзорный масштаб: точки на дорогах — видно потоки машин
+      ctx.fillStyle = VEH_COL[v.kind] || SIDE_COL[v.side];
+      ctx.strokeStyle = v.side === side ? 'rgba(0,0,0,0.7)' : '#ff4a3a';
+      ctx.lineWidth = 1 * dpr;
+      const r = (v.kind === 'fura' ? 2.6 : 2.1) * dpr;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill(); if (v.side !== side || z > 0.15) ctx.stroke();
+    }
+    if (ui.selVeh === v.id) { ctx.strokeStyle = '#fff27a'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.arc(sx, sy, Math.max(8 * dpr, 6 * z), 0, Math.PI * 2); ctx.stroke(); }
+  }
+
   // ---------- Дроны ----------
   const drones = g.visibleDrones(side);
   for (const d of drones) {
@@ -240,7 +272,7 @@ export function drawDW(ctx, sim, view, side, ui) {
     // Опознание: свои — модель; чужие — силуэт по классу (ложную цель от ударной на радаре не отличить)
     const showType = own ? d.type : D.cls === 'decoy' ? 'shahed' : d.type;
     if (z >= 1.2) {
-      const k = Math.max(z * 1.6, (D.cls === 'interceptor' ? 12 : 8) * dpr); // не мельче читаемого
+      const k = Math.max(z * 1.1, (D.cls === 'interceptor' ? 7 : 5) * dpr); // не мельче читаемого
       const r = spriteFor(`dwd:${showType}`, () => buildDrone(showType), d.heading, k, { shadow: false }, now);
       if (r) drawSprite(ctx, r, sx, sy, k, r.residual);
       // толкающий винт — мерцающий диск за хвостом
@@ -249,7 +281,7 @@ export function drawDW(ctx, sim, view, side, ui) {
         ctx.beginPath(); ctx.arc(sx - Math.cos(d.heading) * 1.8 * k, sy - Math.sin(d.heading) * 1.8 * k, 0.45 * k, 0, Math.PI * 2); ctx.fill();
       }
     } else {
-      const s = (D.cls === 'interceptor' ? 4 : D.cls === 'recon' ? 5 : 6) * dpr;
+      const s = (D.cls === 'interceptor' ? 2.5 : D.cls === 'recon' ? 3.5 : 4) * dpr;
       ctx.save();
       ctx.translate(sx, sy);
       ctx.rotate(d.heading);
@@ -283,6 +315,8 @@ export function drawDW(ctx, sim, view, side, ui) {
     const fire = o.comps.some((c) => c.fire > 0);
     const st = !o.comps.length ? 'ok' : dead / o.comps.length > 0.5 || (o.kind === 'bridge' && g.bridgeCap(o) === 0) ? 'destroyed' : bad ? 'damaged' : 'ok';
     const sel = ui.selObj === o.id;
+    const minor = o.kind === 'store' || o.kind === 'market' || o.kind === 'firest';
+    if (minor && z < 0.12 && !sel) continue; // мелкие объекты — только вблизи
     if (!detail || labels || sel) {
       const w = (o.kind === 'bridge' ? 16 : 26) * dpr;
       ctx.fillStyle = o.side === side ? 'rgba(20,28,40,0.85)' : 'rgba(45,18,16,0.85)';
@@ -299,7 +333,7 @@ export function drawDW(ctx, sim, view, side, ui) {
         ctx.fillStyle = o.supply > 0.8 ? '#ffe27a' : o.supply > 0.4 ? '#f0a040' : '#ef5a4a';
         ctx.fillRect(sx - w / 2, sy + 9 * dpr, w * o.supply, 3 * dpr);
       }
-      if (z > 0.06 && (o.kind !== 'bridge' || z > 0.2)) {
+      if (z > 0.06 && (o.kind !== 'bridge' || z > 0.2) && (!minor || z > 0.35 || sel)) {
         ctx.font = `600 ${10 * dpr}px "PT Sans", sans-serif`;
         ctx.textBaseline = 'top';
         ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.7)';

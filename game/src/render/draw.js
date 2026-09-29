@@ -8,7 +8,7 @@ import { M } from '../spatial.js';
 
 const GROUND = '#7b784e';
 
-const AREA_ORDER = ['floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
+const AREA_ORDER = ['hill', 'floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
 const AREA_COLORS = {
   floodplain: '#6c7843',
   urban: '#7d7c64',
@@ -332,6 +332,18 @@ function drawAreas(ctx, world, b, q, ppm) {
 
 function drawArea(ctx, a, b, ppm) {
   switch (a.kind) {
+    case 'hill': {
+      // Холм: мягкая светотень (склон к солнцу светлее, обратный — темнее)
+      const gr = ctx.createRadialGradient(a.x - a.r * 0.35, a.y - a.r * 0.35, a.r * 0.1, a.x, a.y, a.r * 1.1);
+      gr.addColorStop(0, `rgba(255,250,215,${0.1 * a.h})`);
+      gr.addColorStop(0.55, 'rgba(0,0,0,0)');
+      gr.addColorStop(1, `rgba(20,24,10,${0.14 * a.h})`);
+      ctx.beginPath();
+      pathPoly(ctx, a.poly);
+      ctx.fillStyle = gr;
+      ctx.fill();
+      break;
+    }
     case 'dwsite': {
       // Площадка объекта: щебень/бетон, забор, у подстанций — гравийная отсыпка с дорожками
       ctx.beginPath();

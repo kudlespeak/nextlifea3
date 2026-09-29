@@ -206,6 +206,7 @@ function startGame(c) {
       for (let cx = 0; cx * chunks.worldSize(0) < world.W; cx++) chunks.render(0, cx, cy);
     const enemy = controlSide === 'blue' ? 'red' : 'blue';
     if (c.mode === 'drones') {
+      if (!c.multiplayer) $('speed8').style.display = '';
       dwui = new DWUI({ sim, side: controlSide, issue, log, focus: (x, y, zm) => focus(x, y, zm * dpr), screenToWorld, view });
       $('prep-text').innerHTML = 'Разверните ПВО: мобильные группы, РЛС, РЭБ, посты. Удары дронами — после окончания развёртывания.';
       log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
@@ -562,7 +563,7 @@ addEventListener('keydown', (e) => {
     selectionChanged();
     return;
   }
-  const speedKeys = { Digit1: 0.5, Digit2: 1, Digit3: 2, Digit4: 4 };
+  const speedKeys = { Digit1: 0.5, Digit2: 1, Digit3: 2, Digit4: 4, ...(dwui ? { Digit5: 8 } : {}) };
   if (speedKeys[c] && !cfg.multiplayer) { setSpeed(speedKeys[c]); return; }
   if (c === 'KeyL') toggleLabels();
   if (c === 'KeyO') cycleFortView();

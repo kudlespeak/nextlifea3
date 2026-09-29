@@ -55,7 +55,7 @@ export function buildPowerGrid(world, rng) {
 function buildDistribution(world, rng, mains, cities, sameSide = null) {
   // ТП: центры районов городов (по застройке) и сёл
   const tps = [];
-  const houses = world.buildings.items.filter((b) => b.interior && (b.style === 'gable' || b.style === 'flat'));
+  const houses = world.buildings.items.filter((b) => (b.interior || world.layout === 'dronewar') && (b.style === 'gable' || b.style === 'flat'));
   for (const city of cities) {
     const cityHouses = houses.filter((b) => Math.hypot(b.x - city.x, b.y - city.y) < 1900 * (city.capital === false ? 0.65 : 1));
     const cells = new Map();

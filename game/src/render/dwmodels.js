@@ -225,6 +225,86 @@ function launcherTruck(M, side, st) {
   }
 }
 
+// ------------------------------------------------------------ Гражданские здания логистики и торговли
+function warehouse(M, w, h, st) {
+  // Складской корпус класса А: светлые сэндвич-панели, доки для фур вдоль длинной стороны
+  const wall = mat('#c9ccc8', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && ((Math.abs(n[0]) > 0.5 ? y : x) * 0.9) % 1 < 0.05) mix(o, [120, 125, 125], 0.4); if (z < 1.2) mix(o, [90, 95, 95], 0.4); } });
+  building(M, w, h, 11, st, wall, mat('#8f9496', { fn(o, x, y) { if ((y * 0.35) % 1 < 0.08) mix(o, [70, 72, 72], 0.4); } }));
+  if (st === 'destroyed') return;
+  const n = Math.max(3, Math.floor(w / 9));
+  for (let i = 0; i < n; i++) {
+    const x = -w / 2 + ((i + 0.5) * w) / n;
+    M.plate([[x - 1.7, h / 2 + 0.02, 0.3], [x + 1.7, h / 2 + 0.02, 0.3], [x + 1.7, h / 2 + 0.02, 3.8], [x - 1.7, h / 2 + 0.02, 3.8]], mat('#3a4652'), [0, 1, 0]);
+    M.box(x - 2, x + 2, h / 2, h / 2 + 2.5, 3.9, 4.2, mat('#6d7275')); // козырёк
+  }
+}
+function canopy(M, w, h, st) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 1, SOOT); return; }
+  for (const x of [-w / 2 + 2, 0, w / 2 - 2]) for (const y of [-h / 2 + 2, h / 2 - 2]) M.seg([x, y, 0], [x, y, 6.5], 0.5, 0.5, mat('#9aa0a2'));
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 6.5, 7.4, mat('#e0e2de'), mat('#d8dcd6', { fn(o, x) { if ((x * 0.2) % 1 < 0.1) mix(o, [40, 90, 160], 0.6); } }));
+  for (const y of [-h / 4, h / 4]) M.box(-w / 2 + 4, w / 2 - 4, y - 0.6, y + 0.6, 0, 0.9, CONC_DK); // островки
+}
+function mall(M, w, h, st) {
+  const wall = mat('#b9b2a4', { fn(o, x, y, z, n) {
+    if (Math.abs(n[2]) < 0.5 && z > 7 && z < 9) set(o, [170, 40, 40]); // вывеска
+    if (Math.abs(n[2]) < 0.5 && z < 5 && n[1] > 0.5 && Math.abs(x) < w * 0.2) set(o, st === 'ok' ? [60, 90, 110] : [25, 22, 20]); // витрина
+  } });
+  building(M, w, h, 11, st, wall, mat('#7e8280'));
+  if (st === 'destroyed') return;
+  for (let i = 0; i < 6; i++) M.box(-w / 2 + 6 + i * (w - 12) / 5 - 1.5, -w / 2 + 6 + i * (w - 12) / 5 + 1.5, -h / 4, -h / 4 + 3, 11, 12.4, mat('#9aa0a2')); // вентиляция
+}
+function kiosk(M, w, h, st) {
+  building(M, w, h, 3.6, st, mat('#d5cbb2', { fn(o, x, y, z, n) { if (n[1] > 0.5 && z > 1 && z < 2.6 && Math.abs(x) < w * 0.3) set(o, [70, 95, 110]); } }), mat('#7a5a44'));
+  if (st !== 'destroyed') M.loft([[2.8, rect(-w / 2, w / 2, h / 2, h / 2 + 1.8)], [3.2, rect(-w / 2, w / 2, h / 2, h / 2 + 0.3)]], mat('#3f7d4a', { fn(o, x) { if ((x * 1.2) % 1 < 0.5) set(o, [225, 225, 215]); } }));
+}
+function garage(M, w, h, st) {
+  building(M, w, h, 7, st, mat('#b7ac9a', { fn(o, x, y, z, n) { if (n[1] > 0.5 && z < 5 && ((x + w / 2) / (w / 4)) % 1 > 0.12) set(o, st === 'ok' ? [165, 40, 36] : [25, 22, 20]); } }), mat('#6d6f6c'));
+  if (st !== 'destroyed') M.seg([w / 2 - 3, -h / 2 + 3, 7], [w / 2 - 3, -h / 2 + 3, 16], 0.8, 0.8, mat('#b7ac9a')); // башня для рукавов
+}
+
+// ------------------------------------------------------------ Машины на дорогах
+const TRAILER = ['#e6e6e2', '#2f5d9e', '#b8372f', '#d9d5c7', '#3f6b45', '#e0b83a'];
+function cab(M, x0, x1, w, color, zTop = 3.2) {
+  const cm = mat(color);
+  M.loft([[1.0, rect(x0, x1, -w, w)], [2.2, rect(x0, x1, -w, w)], [zTop, rect(x0 + 0.1, x1 - 0.25, -w + 0.08, w - 0.08)]], cm);
+  M.plate([[x1 + 0.01, -w + 0.15, 2.0], [x1 + 0.01, w - 0.15, 2.0], [x1 - 0.2, w - 0.2, zTop - 0.25], [x1 - 0.2, -w + 0.2, zTop - 0.25]], GLASS, [1, 0, 0.3]);
+  M.box(x1 - 0.05, x1 + 0.12, -w + 0.1, w - 0.1, 0.5, 1.0, mat('#2a2c2c')); // бампер
+}
+function wheelsRow(M, xs, y, R = 0.5) {
+  for (const x of xs) for (const sg of [1, -1]) M.cylY(x, R, R, sg > 0 ? y - 0.35 : -y, sg > 0 ? y : -y + 0.35, mat('#1a1a1a'), 10);
+}
+export function buildVehicle(kind, side, variant = 0) {
+  const M = new Model();
+  if (kind === 'fura') {
+    // Седельный тягач + полуприцеп 13,6 м
+    wheelsRow(M, [5.0, 3.3, -4.2, -5.5, -6.8], 1.25, 0.52);
+    M.box(1.8, 6.5, -0.5, 0.5, 0.6, 1.1, mat('#2b2b2b'));
+    cab(M, 4.4, 6.7, 1.25, ['#e8e8e4', '#1f4f8f', '#a83a2a', '#3a3a3a'][variant % 4], 3.6);
+    M.box(-8.2, 5.0, -1.28, 1.28, 1.2, 4.0, mat(TRAILER[variant % TRAILER.length], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && (x * 0.6) % 1 < 0.04) mix(o, [0, 0, 0], 0.15); } }));
+  } else if (kind === 'van') {
+    wheelsRow(M, [2.2, -1.8], 1.1, 0.45);
+    cab(M, 1.6, 3.4, 1.1, ['#e8e8e4', '#2f5d9e', '#d9d5c7'][variant % 3], 2.8);
+    M.box(-3.4, 1.5, -1.15, 1.15, 0.9, 3.3, mat(TRAILER[(variant + 1) % TRAILER.length]));
+  } else if (kind === 'crew') {
+    // Ремонтная машина энергетиков: оранжевая кабина, кузов с гидроподъёмником
+    wheelsRow(M, [2.3, -2.0], 1.15, 0.5);
+    cab(M, 1.3, 3.5, 1.15, '#e0782a', 2.9);
+    M.box(-3.6, 1.2, -1.2, 1.2, 0.9, 1.8, mat('#d9d7cf', { fn(o, x, y, z, n) { if (Math.abs(n[1]) > 0.5 && z > 1.2 && z < 1.5) set(o, [230, 120, 40]); } }));
+    M.cylZ(-2.8, 0, 0.4, 0.35, 1.8, 2.3, mat('#6d6d6d'), 8);
+    M.seg([-2.8, 0, 2.3], [1.0, 0.3, 3.2], 0.35, 0.35, mat('#e8e6e0'));
+    M.box(0.9, 1.6, -0.2, 0.8, 2.9, 3.6, mat('#e0782a')); // люлька
+  } else if (kind === 'fire') {
+    const red = mat('#b8231e', { fn(o, x, y, z, n) { if (Math.abs(n[1]) > 0.5 && z > 1.3 && z < 1.6) set(o, [235, 235, 225]); } });
+    wheelsRow(M, [2.6, -1.4, -2.7], 1.2, 0.5);
+    M.loft([[1.0, rect(1.4, 3.8, -1.2, 1.2)], [3.0, rect(1.5, 3.55, -1.15, 1.15)]], red);
+    M.plate([[3.81, -1.0, 1.9], [3.81, 1.0, 1.9], [3.6, 1.0, 2.8], [3.6, -1.0, 2.8]], GLASS, [1, 0, 0.3]);
+    M.box(-3.8, 1.4, -1.25, 1.25, 0.9, 3.0, red);
+    M.box(-3.6, 1.2, -0.45, 0.45, 3.0, 3.35, mat('#c9ccc8', { fn(o, x) { if ((x * 2.5) % 1 < 0.2) mix(o, [60, 60, 60], 0.5); } })); // лестница
+    M.box(2.0, 3.0, -0.8, 0.8, 3.0, 3.2, mat('#3a6fd8', { ao: false, glow: 30 })); // мигалки
+  }
+  return M;
+}
+
 // ------------------------------------------------------------ Дроны (в полёте)
 function droneShahed(M, k = 1, color = '#8a8f8a') {
   const body = mat(color, { fn(o, x, y, z) { mix(o, [60, 62, 60], vnoise(x * 3, y * 3, z * 3) * 0.2); } });
@@ -334,6 +414,11 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'bunker': bunker(M, w, h, st); if (shelterLevel && st !== 'destroyed') M.box(-w / 2 - 1, w / 2 + 1, h / 2 + 0.2, h / 2 + 1.5, 0, 3, GABION); break;
     case 'store': hangar(M, w, h, st); break;
     case 'shop': workshop(M, w, h, st); break;
+    case 'hall': warehouse(M, w, h, st); break;
+    case 'canopy': canopy(M, w, h, st); break;
+    case 'mall': mall(M, w, h, st); break;
+    case 'kiosk': kiosk(M, w, h, st); break;
+    case 'garage': garage(M, w, h, st); break;
     case 'launcher': launcherTruck(M, side, st); break;
     default: M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 3, CONCRETE);
   }

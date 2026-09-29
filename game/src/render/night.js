@@ -28,7 +28,7 @@ function layer(cv, w, h) {
 export function drawNight(ctx, world, sim, view, darkness) {
   if (darkness < 0.02) return;
   const { cam, canvas, dpr } = view;
-  const k = 0.5; // слой в половинном разрешении
+  const k = cam.zoom > 3 * dpr ? 1 : 0.5; // вблизи — полное разрешение (иначе пятна света «дрожат» на полпикселя)
   const W = Math.ceil(canvas.width * k), H = Math.ceil(canvas.height * k);
   lightCv = layer(lightCv, W, H);
   sprite = sprite || mkSprite(true);
@@ -55,7 +55,7 @@ export function drawNight(ctx, world, sim, view, darkness) {
     for (const l of p.lamps) {
       if (!l.on || !inView(l.x, l.y, 30) || !tpPowered(world, l.tp)) continue;
       hole(l.x, l.y, 12, 0.6);
-      glows.push([l.x, l.y, 3.5, 'rgba(255,190,110,0.22)']);
+      glows.push([l.x, l.y, 1.2, 'rgba(255,200,120,0.35)']);
     }
     // Окна жилых домов
     for (const b of world.buildings.query({ x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh })) {
@@ -65,12 +65,13 @@ export function drawNight(ctx, world, sim, view, darkness) {
         for (let i = 0; i < b.interior.windows.length; i++) {
           if (hash2(i, 9, seed) > 0.45) continue;
           const w = b.interior.windows[i];
-          hole(w.p[0] + w.n[0] * 1.5, w.p[1] + w.n[1] * 1.5, 3.2, 0.7);
-          glows.push([w.p[0] + w.n[0] * 0.5, w.p[1] + w.n[1] * 0.5, 1.4, 'rgba(255,215,140,0.55)']);
+          hole(w.p[0] + w.n[0] * 1.5, w.p[1] + w.n[1] * 1.5, 2.6, 0.55);
+          // окно — светящийся прямоугольник вдоль стены, а не круг
+          glows.push([w.p[0] + w.n[0] * 0.2, w.p[1] + w.n[1] * 0.2, 0.6, 'rgba(255,214,140,0.8)', w.n, w.w || 1.1]);
         }
       } else if (hash2(1, 2, seed) < 0.6) {
         hole(b.x, b.y, Math.max(b.w, b.h) * 0.9, 0.5);
-        glows.push([b.x, b.y, 2.5, 'rgba(255,205,130,0.5)']);
+        glows.push([b.x, b.y, 1.2, 'rgba(255,205,130,0.45)']);
       }
     }
     for (const m of p.mains) if (m.alive && !m.feedCut && inView(m.x, m.y, 60)) hole(m.x, m.y, 35, 0.6);
@@ -100,10 +101,20 @@ export function drawNight(ctx, world, sim, view, darkness) {
   ctx.drawImage(lightCv, 0, 0, canvas.width, canvas.height);
   // Тёплое свечение
   ctx.globalCompositeOperation = 'lighter';
-  for (const [x, y, r, c] of glows) {
+  for (const [x, y, r, c, n, ww] of glows) {
     const sx = (x - cam.x) * cam.zoom + canvas.width / 2, sy = (y - cam.y) * cam.zoom + canvas.height / 2;
-    const R = Math.max(1.5 * dpr, r * cam.zoom);
     ctx.fillStyle = c;
+    if (n && cam.zoom > 4 * dpr) {
+      // окно: полоска по ширине проёма
+      const tx = -n[1], ty = n[0], L = ww * cam.zoom * 0.5, T = Math.max(1, 0.18 * cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(sx - tx * L - n[0] * T, sy - ty * L - n[1] * T); ctx.lineTo(sx + tx * L - n[0] * T, sy + ty * L - n[1] * T);
+      ctx.lineTo(sx + tx * L + n[0] * T, sy + ty * L + n[1] * T); ctx.lineTo(sx - tx * L + n[0] * T, sy - ty * L + n[1] * T);
+      ctx.fill();
+      continue;
+    }
+    // точечные огни не раздуваются при приближении
+    const R = Math.min(Math.max(1.5 * dpr, r * cam.zoom), 5 * dpr);
     ctx.beginPath();
     ctx.arc(sx, sy, R, 0, Math.PI * 2);
     ctx.fill();
