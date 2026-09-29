@@ -156,9 +156,13 @@ export class Artillery {
       const inside = b.poly && pointInPoly(x, y, b.poly);
       const dd = inside ? 0 : Math.hypot(b.x - x, b.y - y) - Math.max(b.w || 2, b.h || 2) / 2;
       if (dd > cal.blast * 1.5) continue;
-      b.damage = (b.damage || 0) + (inside ? cal.dmg : cal.dmg * 0.25) / Math.max(1, (b.w * b.h) / 150);
-      if (b.damage >= 0.8) b.ruined = true;
-      if (b.damage >= 2.5 && b.style !== 'silo' && !b.collapsed) {
+      // Прочность: кирпич/панель держат несколько мин; 152 мм рушит дом за 2–3 попадания
+      const sturdy = b.style === 'flat' ? 2.2 : b.style === 'hangar' ? 0.8 : 1;
+      b.damage = (b.damage || 0) + ((inside ? cal.dmg * 0.6 : cal.dmg * 0.15) / Math.max(1, (b.w * b.h) / 150)) / sturdy;
+      // Пролом: разрыв у стены (или внутри) выбивает кусок стены — через него можно пройти
+      if (b.interior && cal.blast >= 1.4 && !b.collapsed) breachWalls(b, x, y, cal.blast);
+      if (b.damage >= 2) b.ruined = true;
+      if (b.damage >= 4.5 && b.style !== 'silo' && !b.collapsed) {
         b.collapsed = true;
         if (b.w * b.h > 30) (sim.fires || []).push({ x: b.x, y: b.y, r: Math.max(15, Math.max(b.w, b.h)), until: sim.time + 900 });
       }
@@ -345,6 +349,29 @@ export class Artillery {
       this.sim.msg(`${p.label}: машина подбита, десант понёс потери`, p.side);
     }
   }
+}
+
+// Разрезать стены планировки рядом с точкой разрыва (проём шириной ~0.5 радиуса фугасного действия)
+function breachWalls(b, x, y, blast) {
+  const it = b.interior;
+  const R = blast * 0.7;
+  const gap = Math.min(3, Math.max(0.9, blast * 0.45));
+  const out = [];
+  let made = false;
+  for (const w of it.walls) {
+    const vx = w.b[0] - w.a[0], vy = w.b[1] - w.a[1];
+    const L = Math.hypot(vx, vy);
+    if (L < 0.1) continue;
+    const t = Math.max(0, Math.min(L, ((x - w.a[0]) * vx + (y - w.a[1]) * vy) / L));
+    const px = w.a[0] + (vx / L) * t, py = w.a[1] + (vy / L) * t;
+    if (Math.hypot(px - x, py - y) > R) { out.push(w); continue; }
+    made = true;
+    const t0 = t - gap / 2, t1 = t + gap / 2;
+    if (t0 > 0.15) out.push({ ...w, b: [w.a[0] + (vx / L) * t0, w.a[1] + (vy / L) * t0] });
+    if (t1 < L - 0.15) out.push({ ...w, a: [w.a[0] + (vx / L) * t1, w.a[1] + (vy / L) * t1] });
+    (b.breaches = b.breaches || []).push([px, py]);
+  }
+  if (made) it.walls = out;
 }
 
 function gauss(rng) {

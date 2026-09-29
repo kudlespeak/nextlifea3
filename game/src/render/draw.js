@@ -724,7 +724,147 @@ function drawBuildings(ctx, world, q, ppm) {
   ctx.fillStyle = 'rgba(18,18,12,0.42)';
   ctx.fill('nonzero');
 
+  // Сначала северные: фасад южного здания должен перекрывать крышу северного (вид с наклоном с юга)
+  list.sort((a, b) => a.y - b.y);
   for (const bd of list) drawBuilding(ctx, bd, ppm);
+}
+
+// ---------- Фасады (псевдо-3D) ----------
+// Камера смотрит чуть с юга: у каждого здания видна южная стена — полоса под контуром крыши
+// высотой ~0.28 от высоты здания. На ней — этажи, окна, двери, балконы.
+const FACADE_STYLES = new Set(['gable', 'flat', 'barn', 'hangar', 'shed']);
+const WALLS = {
+  gable: ['#d8cfb9', '#cdbb94', '#b98d6e', '#e2dcc8', '#bfa77f'], // штукатурка, кирпич
+  flat: ['#b9b3a6', '#c7c0ae', '#a9a79d', '#bdb09a'], // панель, силикатный кирпич
+  barn: ['#9a6a52', '#a58f72'], hangar: ['#8f979b', '#7d8a86'], shed: ['#8a7a64', '#7f8c7c'],
+};
+export const FACADE_K = 0.42;
+
+function drawFacade(ctx, bd, ppm) {
+  const p = bd.poly;
+  const H = bd.height || 4;
+  const D = H * FACADE_K;
+  const seed = Math.floor(bd.x * 3 + bd.y * 5);
+  const pal = WALLS[bd.style] || WALLS.gable;
+  const base = pal[Math.floor(hash2(seed, 1, 5) * pal.length)];
+  const floors = bd.interior?.floors || Math.max(1, Math.round(H / 3.1));
+  const dmg = Math.min(1, bd.damage || 0);
+  // Ориентация контура — чтобы найти внешние нормали
+  let area = 0;
+  for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; area += a[0] * b[1] - b[0] * a[1]; }
+  const orient = area > 0 ? 1 : -1;
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < 0.5) continue;
+    const tx = (b[0] - a[0]) / L, ty = (b[1] - a[1]) / L;
+    const nx = ty * orient, ny = -tx * orient;
+    if (ny <= 0.05) continue; // стена смотрит на север — не видна
+    const Dq = D * ny; // косая стена видна уже
+    const quad = [a, b, [b[0], b[1] + Dq], [a[0], a[1] + Dq]];
+    ctx.beginPath(); pathPoly(ctx, quad);
+    ctx.fillStyle = base; ctx.fill();
+    // Освещение: солнце с северо-запада — западные грани светлее, восточные темнее; низ темнее (земля, тень)
+    const k = -nx * 0.18 - 0.06;
+    ctx.fillStyle = k > 0 ? `rgba(255,250,235,${k})` : `rgba(0,0,0,${-k})`;
+    ctx.fill();
+    const g = ctx.createLinearGradient(a[0], a[1], a[0], a[1] + Dq);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.28)');
+    ctx.fillStyle = g; ctx.fill();
+    if (ppm < 1) continue;
+    const fh = Dq / floors;
+    // Межэтажные пояса
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = Math.min(0.12, fh * 0.08);
+    ctx.beginPath();
+    for (let f = 1; f < floors; f++) { ctx.moveTo(a[0], a[1] + fh * f); ctx.lineTo(b[0], b[1] + fh * f); }
+    ctx.stroke();
+    // Окна (и ворота у ангаров/сараев)
+    if (bd.style === 'hangar' || bd.style === 'barn') {
+      const gw = Math.min(L * 0.4, 5);
+      const c = (L - gw) / 2;
+      const gx = a[0] + tx * c, gy = a[1] + ty * c;
+      ctx.fillStyle = dmg > 0.5 ? '#1a1612' : '#5b5f5c';
+      ctx.beginPath(); pathPoly(ctx, [[gx, gy + Dq * 0.25], [gx + tx * gw, gy + ty * gw + Dq * 0.25], [gx + tx * gw, gy + ty * gw + Dq], [gx, gy + Dq]]); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.05; ctx.stroke();
+    } else {
+      const step = bd.style === 'flat' ? 3.2 : 3.6;
+      const n = Math.max(1, Math.floor(L / step));
+      const ww = Math.min(1.3, (L / n) * 0.45);
+      for (let f = 0; f < floors; f++) {
+        const top = a[1] + fh * (f + 0.22), hgt = fh * 0.5;
+        for (let k2 = 0; k2 < n; k2++) {
+          const t = ((k2 + 0.5) / n) * L;
+          const cx = a[0] + tx * t, cy = top + ty * t;
+          const ground = f === floors - 1;
+          const door = ground && k2 === Math.floor(n / 2) && bd.style !== 'flat' && n > 1 && hash2(seed, i, 3) < 0.5;
+          const broken = hash2(seed + k2, f, i) < dmg * 1.2;
+          const x0 = cx - tx * ww / 2, y0 = cy - ty * ww / 2;
+          const h2 = door ? fh * 0.72 : hgt;
+          ctx.beginPath(); pathPoly(ctx, [[x0, y0], [x0 + tx * ww, y0 + ty * ww], [x0 + tx * ww, y0 + ty * ww + h2], [x0, y0 + h2]]);
+          ctx.fillStyle = door ? '#4a3a2c' : broken ? '#141210' : (hash2(k2, f, seed) < 0.3 ? '#4d5a62' : '#35434b');
+          ctx.fill();
+          if (!door && !broken && ppm >= 2) {
+            // Рама и блик
+            ctx.strokeStyle = 'rgba(240,240,230,0.55)'; ctx.lineWidth = Math.min(0.06, ww * 0.06); ctx.stroke();
+            ctx.fillStyle = 'rgba(200,225,240,0.25)';
+            ctx.beginPath(); pathPoly(ctx, [[x0, y0], [x0 + tx * ww * 0.45, y0 + ty * ww * 0.45], [x0 + tx * ww * 0.2, y0 + ty * ww * 0.2 + h2 * 0.6], [x0, y0 + h2 * 0.6]]); ctx.fill();
+          }
+          if (broken && ppm >= 2) { ctx.fillStyle = 'rgba(40,30,20,0.5)'; ctx.beginPath(); ctx.ellipse(cx, cy - fh * 0.1, ww * 0.8, fh * 0.35, 0, 0, Math.PI * 2); ctx.fill(); } // копоть
+          // Балконы многоэтажек
+          if (bd.style === 'flat' && !ground && k2 % 2 === 1 && ppm >= 1.5) {
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.fillRect(x0 - tx * 0.3, y0 + h2 + fh * 0.05, ww + 0.6, fh * 0.18);
+            ctx.strokeStyle = 'rgba(200,200,190,0.8)'; ctx.lineWidth = 0.05;
+            ctx.beginPath(); ctx.moveTo(x0 - tx * 0.3, y0 + h2 + fh * 0.2); ctx.lineTo(x0 + tx * (ww + 0.3), y0 + ty * (ww + 0.3) + h2 + fh * 0.2); ctx.stroke();
+          }
+        }
+      }
+    }
+    // Пробоины от попаданий
+    for (const br of bd.breaches || []) {
+      const d = Math.abs((br[0] - a[0]) * nx + (br[1] - a[1]) * ny);
+      const t = (br[0] - a[0]) * tx + (br[1] - a[1]) * ty;
+      if (d > 1.5 || t < 0 || t > L) continue;
+      ctx.fillStyle = '#100d0a';
+      ctx.beginPath(); ctx.ellipse(a[0] + tx * t, a[1] + ty * t + Dq * 0.6, 1.1, Dq * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    // Кромка: карниз сверху светлее, цоколь снизу темнее
+    ctx.lineWidth = 0.08;
+    ctx.strokeStyle = 'rgba(255,255,240,0.35)'; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    ctx.strokeStyle = 'rgba(20,18,14,0.6)'; ctx.beginPath(); ctx.moveTo(a[0], a[1] + Dq); ctx.lineTo(b[0], b[1] + Dq); ctx.stroke();
+  }
+}
+
+// Разрушенное здание без крыши: сверху видны перекрытия, стены комнат, завалы
+function drawRuinedInside(ctx, bd, ppm) {
+  const it = bd.interior;
+  const p = bd.poly;
+  ctx.beginPath(); pathPoly(ctx, p);
+  ctx.fillStyle = '#6d665a'; ctx.fill();
+  ctx.save(); ctx.clip();
+  const seed = Math.floor(bd.x * 11 + bd.y * 3);
+  // Обгоревшие пятна и куски перекрытий
+  for (let i = 0; i < 18; i++) {
+    const u = hash2(i, 1, seed), v = hash2(i, 2, seed);
+    const x = bd.bbox.x0 + u * (bd.bbox.x1 - bd.bbox.x0), y = bd.bbox.y0 + v * (bd.bbox.y1 - bd.bbox.y0);
+    ctx.fillStyle = i % 3 === 0 ? 'rgba(20,16,12,0.55)' : i % 3 === 1 ? 'rgba(150,140,125,0.7)' : 'rgba(95,70,50,0.6)';
+    ctx.beginPath(); ctx.ellipse(x, y, 0.8 + hash2(i, 3, seed) * 2.4, 0.5 + hash2(i, 4, seed) * 1.4, hash2(i, 5, seed) * 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+  // Остатки стен — толстые, с неровным верхом
+  for (const w of it.walls) {
+    ctx.strokeStyle = w.outer ? '#9d968a' : '#8a8378';
+    ctx.lineWidth = w.outer ? 0.45 : 0.3;
+    ctx.beginPath(); ctx.moveTo(w.a[0], w.a[1]); ctx.lineTo(w.b[0], w.b[1]); ctx.stroke();
+    if (ppm >= 2) { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.08; ctx.beginPath(); ctx.moveTo(w.a[0] + 0.15, w.a[1] + 0.15); ctx.lineTo(w.b[0] + 0.15, w.b[1] + 0.15); ctx.stroke(); }
+  }
+  // Кирпичные завалы
+  for (let i = 0; i < 26; i++) {
+    const u = hash2(i, 7, seed), v = hash2(i, 8, seed);
+    const x = bd.bbox.x0 + u * (bd.bbox.x1 - bd.bbox.x0), y = bd.bbox.y0 + v * (bd.bbox.y1 - bd.bbox.y0);
+    ctx.fillStyle = i % 2 ? '#7a5140' : '#8f877a';
+    ctx.fillRect(x, y, 0.35 + hash2(i, 9, seed) * 0.5, 0.25);
+  }
 }
 
 // Освещение скатов: солнце с северо-запада
@@ -831,6 +971,10 @@ function drawBuilding(ctx, bd, ppm) {
     }
     return;
   }
+
+  // Объём: видимые с юга стены (фасады с окнами и этажами)
+  if (FACADE_STYLES.has(bd.style) && ppm >= 0.5) drawFacade(ctx, bd, ppm);
+  if (bd.ruined && bd.interior && ppm >= 1) { drawRuinedInside(ctx, bd, ppm); return; }
 
   ctx.beginPath();
   pathPoly(ctx, p);
@@ -1025,6 +1169,22 @@ function drawBuilding(ctx, bd, ppm) {
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(x + 0.3, y + 0.3, 0.35, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#d9d8d2'; ctx.beginPath(); ctx.arc(x, y, 0.35, 0, Math.PI * 2); ctx.fill();
     }
+  }
+  // Пробоины в кровле от попаданий (до полного разрушения)
+  if (!bd.ruined && (bd.damage || 0) > 0.15) {
+    ctx.save();
+    ctx.beginPath(); pathPoly(ctx, p); ctx.clip();
+    const seed = Math.floor(bd.x * 17 + bd.y * 19);
+    const n = Math.ceil((bd.damage || 0) * 7);
+    for (let i = 0; i < n; i++) {
+      const u = (hash2(i, 21, seed) - 0.5) * bd.w * 0.8, v = (hash2(i, 22, seed) - 0.5) * bd.h * 0.8;
+      const [x, y] = W(u, v);
+      const r = 0.6 + hash2(i, 23, seed) * 1.4;
+      ctx.fillStyle = 'rgba(40,32,24,0.6)'; ctx.beginPath(); ctx.arc(x, y, r * 1.6, 0, Math.PI * 2); ctx.fill(); // обломки вокруг
+      ctx.fillStyle = '#16120e'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      if (ppm >= 3) { ctx.strokeStyle = '#6b5236'; ctx.lineWidth = 0.1; ctx.beginPath(); ctx.moveTo(x - r, y - r * 0.3); ctx.lineTo(x + r, y + r * 0.2); ctx.moveTo(x - r * 0.8, y + r * 0.4); ctx.lineTo(x + r * 0.7, y - r * 0.5); ctx.stroke(); } // стропила
+    }
+    ctx.restore();
   }
   // Разрушенная кровля
   if (bd.ruined) {

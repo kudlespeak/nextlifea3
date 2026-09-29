@@ -46,6 +46,8 @@ export function drawInteriors(ctx, world, sim, view, force, underground) {
   for (const b of list) {
     const it = b.interior;
     if (!it) continue;
+    // Руины и обрушенные дома рисует слой карты (обломки, остатки стен) — поверх не накрываем
+    if (b.ruined || b.collapsed) continue;
     const alpha = force ? 1 : occupied.has(b) ? Math.max(auto, zc > 1.8 ? 1 : 0) : auto;
     if (alpha <= 0.01) continue;
     ctx.globalAlpha = alpha;
