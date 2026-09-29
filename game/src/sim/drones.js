@@ -104,7 +104,7 @@ export class Drones {
     // Попали по технике?
     const veh = sim.units.find((u) => !u.dead && !u.soldiers && u.side !== d.side && Math.hypot(u.x - d.x, u.y - d.y) < 6);
     if (veh) {
-      sim.combat.hitVehicle(veh, 0.75, d.op);
+      sim.combat.hitVehicle(veh, 0.75, d.op, { x: d.x, y: d.y }, { top: true, shaped: true });
       sim.art.effects.push({ type: 'blast', x: d.x, y: d.y, caliber: 30, air: false, h: 0, t: performance.now(), rays: [] });
       sim.msg(`FPV-дрон поразил ${veh.def.short}${veh.dead ? ' — уничтожен' : ''}`, null);
     } else sim.art.explode(d.x, d.y, 'fpv', 'ground', d.side, false);

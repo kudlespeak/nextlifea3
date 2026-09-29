@@ -3,6 +3,7 @@ import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
 import { Sim, SIDES, POSES, UNIT_TYPES, unitDef } from './sim/units.js';
 import { COST, INCOME } from './sim/reserve.js';
+import { woundText, vehicleStatus } from './sim/wounds.js';
 import { T_NAMES } from './sim/nav.js';
 import { CALIBERS } from './sim/artillery.js';
 import { FACTIONS } from './sim/factions.js';
@@ -772,7 +773,11 @@ function updateCard() {
       stats.push(`Личный состав <b>${alive.length}/${one.soldiers.length}</b>${w ? ` · ранено <b>${w}</b>` : ''}${ev ? ` · эвакуировано ${ev}` : ''}`);
       const supp = alive.reduce((a, s) => a + s.supp, 0) / Math.max(1, alive.length);
       if (supp > 3) stats.push('<b style="color:var(--bad)">под огнём</b>');
-    } else stats.push(`Состояние <b>${Math.round((one.hp ?? 1) * 100)}%</b>${one.cargo ? ` · раненых на борту <b>${one.cargo}</b>` : ''}`);
+    } else {
+      stats.push(`Состояние <b>${Math.round((one.hp ?? 1) * 100)}%</b>${one.cargo ? ` · раненых на борту <b>${one.cargo}</b>` : ''}`);
+      const vs = vehicleStatus(one);
+      if (vs) stats.push(`<b style="color:var(--bad)">${vs}</b>`);
+    }
     if (one.def.caliber) stats.push(`Боезапас <b>${one.ammo}/${one.def.ammo}</b> · ${CALIBERS[one.def.caliber].name}`);
     stats.push(`${STATE_TEXT[one.state] || ''} · ${T_NAMES[sim.nav.classAt(one.x, one.y)]}`);
     if (one.state === 'moving' && one.mode === 'field' && one.speed) stats.push(`${(one.speed * 3.6).toFixed(0)} км/ч${one.eta ? ` · прибытие ~${fmtEta(one.eta)}` : ''}`);
@@ -807,7 +812,8 @@ function updateCard() {
       if (!s) continue;
       c.classList.toggle('active', !!ui.soldier && ui.soldier.idx === s.idx);
       c.classList.toggle('dead', s.dead);
-      c.querySelector('small').textContent = s.evac ? 'эвакуирован' : s.dead ? 'погиб' : `${s.wounded === 2 ? (s.treated ? 'тяжело ранен, перевязан · ' : 'тяжело ранен, кровотечение · ') : s.wounded ? 'ранен · ' : ''}${s.supp > 4 ? 'подавлен · ' : ''}${POSES[s.pose]?.name || ''}`;
+      const wt = woundText(s);
+      c.querySelector('small').textContent = s.evac ? 'эвакуирован' : s.dead ? 'погиб' : `${s.wounded === 2 ? 'тяжело · ' : ''}${wt ? wt + ' · ' : ''}${s.supp > 4 ? 'подавлен · ' : ''}${POSES[s.pose]?.name || ''}`;
       const bar = c.querySelector('.bar > i');
       bar.style.width = `${s.hp}%`;
       bar.style.background = s.hp > 70 ? 'var(--ok)' : s.hp > 30 ? 'var(--warn)' : 'var(--bad)';

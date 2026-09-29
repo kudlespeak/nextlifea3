@@ -34,7 +34,7 @@ export function makeSnapshot(sim) {
     const base = [u.id, r1(u.x), r1(u.y), r2(u.heading), u.state, u.mode, u.dead ? 1 : 0, r2(u.hp ?? 1), u.ammo, u.cargo, u.fire ? 1 : 0, r1(u.speed), u.task?.type || '', u.roe, u.firedAt ? r1(u.firedAt) : 0];
     base.push(u.soldiers ? u.soldiers.map((s) => [r1(s.x), r1(s.y), r2(s.heading), POSE_IDX.indexOf(s.pose), Math.round(s.hp), (s.dead ? 1 : 0) | (s.under ? 2 : 0) | (s.evac ? 4 : 0) | (s.wounded << 3) | (s.moving ? 32 : 0) | (s.treated ? 64 : 0) | (s.inTrench ? 128 : 0), r2(s.mag ?? 1)]) : 0);
     // Десант и снабжение
-    base.push([u.embarked ? u.embarked.id : 0, u.fuel === undefined ? -1 : r2(u.fuel), u.rounds === undefined ? -1 : r2(u.rounds), u.cargoRes ? [Math.round(u.cargoRes.ammo), Math.round(u.cargoRes.shells), Math.round(u.cargoRes.fuel), u.autoSupply ? 1 : 0] : 0, u.aim === undefined ? null : r2(u.aim)]);
+    base.push([u.embarked ? u.embarked.id : 0, u.fuel === undefined ? -1 : r2(u.fuel), u.rounds === undefined ? -1 : r2(u.rounds), u.cargoRes ? [Math.round(u.cargoRes.ammo), Math.round(u.cargoRes.shells), Math.round(u.cargoRes.fuel), u.autoSupply ? 1 : 0] : 0, u.aim === undefined ? null : r2(u.aim), (u.immobile ? 1 : 0) | (u.gunOut ? 2 : 0) | (u.burning ? 4 : 0) | (u.opticsHit ? 8 : 0), u.crew ?? -1, u.era ?? -1]);
     base.push([u.type, u.side, u.label]); // чтобы гость мог создать новое подразделение
     return base;
   });
@@ -118,6 +118,9 @@ export function applySnapshot(sim, snap) {
       if (e[2] >= 0) u.rounds = e[2];
       if (e[3]) { u.cargoRes = { ammo: e[3][0], shells: e[3][1], fuel: e[3][2] }; u.autoSupply = !!e[3][3]; }
       if (e[4] !== null) u.aim = e[4];
+      if (e[5] !== undefined) { u.immobile = !!(e[5] & 1); u.gunOut = !!(e[5] & 2); u.burning = e[5] & 4 ? 1 : 0; u.opticsHit = !!(e[5] & 8); }
+      if (e[6] >= 0) u.crew = e[6];
+      if (e[7] >= 0) u.era = e[7];
     }
   }
   sim.art.shells = snap.shells.map((s) => ({ x0: s[0], y0: s[1], x: s[2], y: s[3], tLaunch: s[4], tImpact: s[5], caliber: s[6] }));

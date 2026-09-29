@@ -8,6 +8,7 @@
 import { WEAPONS, VEHICLE_WEAPON, FACTIONS } from './factions.js';
 import { POSES } from './units.js';
 import { AMMO_USE } from './logistics.js';
+import { hitSoldier, hitVehicle as vehicleHit, bleedTick, woundAim } from './wounds.js';
 
 // Открытость цели для пуль (траншея и окно укрывают сильнее, чем от осколков)
 const BULLET_EXPOSE = { stand: 1, crouch: 0.7, prone: 0.35, trench: 0.12, window: 0.25, inside: 0.05, under: 0, dead: 0 };
@@ -83,7 +84,7 @@ export class Combat {
       if (s.mag > 0.3) u.ammoWarned = 0;
     }
     const nightK = 1 - dark * (1 - FACTIONS[u.side].night) * 0.8;
-    let shooter = (s.moving ? 0.35 : 1) * (s.pose === 'prone' || s.pose === 'trench' || s.pose === 'window' ? 1.15 : 1) * (1 - Math.min(0.7, s.supp / 10)) * nightK * (s.wounded ? 0.7 : 1);
+    let shooter = (s.moving ? 0.35 : 1) * (s.pose === 'prone' || s.pose === 'trench' || s.pose === 'window' ? 1.15 : 1) * (1 - Math.min(0.7, s.supp / 10)) * nightK * woundAim(s);
     if (!t.soldiers && s.weapon === 'atgm') { this.missile(u, t, s.x, s.y, s); return; }
     if (!t.soldiers) {
       // По технике — только противотанковым средством
@@ -93,7 +94,7 @@ export class Combat {
       const hit = sim.rng.chance(p);
       this.tracers.push({ x0: s.x, y0: s.y, x1: t.x + (hit ? 0 : sim.rng.float(-8, 8)), y1: t.y + (hit ? 0 : sim.rng.float(-8, 8)), t: sim.time, side: u.side, heavy: true });
       s.shotAt = sim.time; s.aim = Math.atan2(t.y - s.y, t.x - s.x);
-      if (hit) this.hitVehicle(t, w.at, u);
+      if (hit) this.hitVehicle(t, w.at, u, s, { shaped: true });
       return;
     }
     // По пехоте: случайный открытый боец цели
@@ -123,7 +124,7 @@ export class Combat {
     // Подавление: всем бойцам цели рядом с точкой попадания
     for (const q of t.soldiers) if (!q.dead && Math.hypot(q.x - ts.x, q.y - ts.y) < 10) q.supp = Math.min(12, q.supp + w.supp);
     if (w.blast && sim.rng.chance(0.5)) sim.art.explode(ts.x + sim.rng.float(-3, 3), ts.y + sim.rng.float(-3, 3), 'vog', 'ground', u.side, true);
-    else if (hit) this.wound(t, ts, w.dmg * sim.rng.float(0.6, 1.3), `${u.label}`);
+    else if (hit) this.wound(t, ts, w.dmg * sim.rng.float(0.8, 1.2), u.label, 'bullet');
   }
 
   vehicleFire(u, dark) {
@@ -132,6 +133,7 @@ export class Combat {
     u.nextShot = sim.time + w.interval * (0.8 + sim.rng.next() * 0.4) * (u.state === 'moving' ? 1.5 : 1);
     if (!this.canFire(u)) return;
     if (u.rounds !== undefined && u.rounds <= 0) return;
+    if (u.gunOut) return; // орудие выведено из строя
     // БМП: по бронетехнике издалека — ПТУР с башни
     if (u.atgmLeft > 0) {
       const tv = this.pickTarget(u, u.x, u.y, 3000, true);
@@ -153,7 +155,7 @@ export class Combat {
     u.aim = Math.atan2(t.y - u.y, t.x - u.x); // башня на цель
     const d = Math.hypot(t.x - u.x, t.y - u.y);
     const nightK = 1 - dark * (1 - FACTIONS[u.side].night) * 0.6;
-    const acc = (u.def.gun?.acc ?? 0.6) / 0.6;
+    const acc = (u.def.gun?.acc ?? 0.6) / 0.6 * (u.opticsHit ? 0.6 : 1) * (u.crew !== undefined && u.crew < u.def.men ? 0.75 : 1);
     const p = Math.min(0.95, w.p100 * Math.pow(w.fall, d / 100 - 1)) * acc * nightK * (u.state === 'moving' ? 0.5 : 1);
     const hit = sim.rng.chance(p);
     u.aimAt = sim.time;
@@ -168,14 +170,14 @@ export class Combat {
     if (!hit) { tx += sim.rng.float(-12, 12) * d / 500; ty += sim.rng.float(-12, 12) * d / 500; }
     this.tracers.push({ x0: u.x, y0: u.y, x1: tx, y1: ty, t: sim.time, side: u.side, heavy: true });
     t.underFire = sim.time;
-    if (!t.soldiers) { if (hit) this.hitVehicle(t, w.at || 0.05, u); }
+    if (!t.soldiers) { if (hit) this.hitVehicle(t, w.at || 0.05, u, u, { shaped: false }); }
     else if (w.blast) sim.art.explode(tx, ty, u.type === 'tank' ? 'he125' : 'he30', 'ground', u.side, true);
     else {
       for (const s of t.soldiers) if (!s.dead && Math.hypot(s.x - tx, s.y - ty) < 12) s.supp = Math.min(12, s.supp + w.supp);
       if (hit) {
         const q = t.soldiers.filter((s) => !s.dead && !s.under);
         const s = q.reduce((a, b) => (Math.hypot(b.x - tx, b.y - ty) < Math.hypot(a.x - tx, a.y - ty) ? b : a), q[0]);
-        if (s && sim.rng.chance(BULLET_EXPOSE[s.pose] ?? 1)) this.wound(t, s, w.dmg * sim.rng.float(0.7, 1.3), u.label);
+        if (s && sim.rng.chance(BULLET_EXPOSE[s.pose] ?? 1)) this.wound(t, s, w.dmg * sim.rng.float(0.8, 1.2), u.label, 'bullet');
       }
     }
   }
@@ -193,46 +195,27 @@ export class Combat {
     u.firedAt = sim.time;
     t.underFire = sim.time;
     sim.art.effects.push({ type: 'muzzle', x, y, h: Math.atan2(t.y - y, t.x - x), t: performance.now(), small: true });
-    if (hit) { this.hitVehicle(t, w.at, u); sim.art.explode(t.x, t.y, 'atgm', 'ground', u.side, true); }
+    if (hit) { this.hitVehicle(t, w.at, u, { x, y }, { shaped: true }); if (!t.dead) sim.art.effects.push({ type: 'blast', x: t.x, y: t.y, caliber: 30, air: false, h: 0, t: performance.now(), rays: [] }); }
     sim.msg(`${u.label}: пуск ПТУР по ${t.def.short}${hit ? ' — попадание' : ' — промах'}`, u.side);
   }
 
-  hitVehicle(t, power, shooter) {
+  // Попадание по технике: ракурс, броня, пробитие, поражение узлов (см. wounds.js)
+  hitVehicle(t, power, shooter, from = shooter, opts = {}) {
     const sim = this.sim;
-    const armor = t.def.armor ?? 0.2;
-    const dmg = power * (1 - armor * 0.75) * sim.rng.float(0.6, 1.4);
-    t.hp = (t.hp ?? 1) - dmg;
-    t.underFire = sim.time;
-    if (t.hp <= 0) {
-      sim.art.destroyVehicle(t);
-      this.fires.push({ x: t.x, y: t.y, r: 25, until: sim.time + 1200 });
-      sim.msg(`${shooter.label} поразил цель: ${t.def.short}`, shooter.side);
-    }
+    const res = vehicleHit(sim, t, power, { x: from.x, y: from.y }, opts);
+    if (res) sim.msg(`${shooter.label}: ${res}`, shooter.side);
+    if (res && t.side !== shooter.side) sim.msg(`По нам: ${res}`, t.side);
   }
 
-  wound(u, s, dmg, by) {
-    const before = s.hp;
-    s.hp -= dmg;
-    if (s.hp <= 0) {
-      s.hp = 0;
-      s.dead = true;
-      s.path = null;
-      s.mode = 'dead';
-      this.sim.checkUnit(u);
-      return;
-    }
-    s.wounded = s.hp < 30 ? 2 : s.hp < 70 ? 1 : 0;
-    if (s.wounded === 2) { s.path = null; s.mode = 'hold'; s.treated = false; }
-    if (before >= 30 && s.hp < 30) this.sim.msg(`${u.label}: тяжело ранен ${s.role.toLowerCase()}`, u.side);
+  wound(u, s, dmg, by, kind = 'bullet') {
+    hitSoldier(this.sim, u, s, kind, dmg, by);
   }
 
   // Кровопотеря и работа медика
   medical(u, s, dt) {
     const sim = this.sim;
-    if (s.wounded === 2 && !s.treated) {
-      s.hp -= dt / 12; // ~6 минут без помощи
-      if (s.hp <= 0) { s.hp = 0; s.dead = true; s.mode = 'dead'; sim.msg(`${u.label}: ${s.role.toLowerCase()} умер от ран`, u.side); sim.checkUnit(u); return; }
-    }
+    bleedTick(sim, u, s, dt);
+    if (s.dead) return;
     if (s.role !== 'Медик' || s.wounded === 2 || s.under) return;
     if (s.treating) {
       const pat = s.treating;
@@ -240,17 +223,20 @@ export class Combat {
       s.treatLeft -= dt;
       if (s.treatLeft <= 0) {
         pat.treated = true;
-        pat.hp = Math.max(pat.hp, 20);
+        pat.bleed = 0;
+        pat.hp = Math.max(pat.hp, pat.wounded === 2 ? 20 : pat.hp);
         s.treating = null;
-        sim.msg(`${u.label}: медик оказал помощь — ${pat.role.toLowerCase()} стабилен, нужна эвакуация`, u.side);
+        sim.msg(`${u.label}: медик остановил кровотечение — ${pat.role.toLowerCase()}${pat.wounded === 2 ? ' стабилен, нужна эвакуация' : ' может воевать'}`, u.side);
       }
       return;
     }
     if (s.mode === 'path') return;
-    const pat = u.soldiers.find((q) => !q.dead && q.wounded === 2 && !q.treated && !q.evac && q !== s);
+    // Сначала — с сильным кровотечением, потом остальные раненые
+    const pats = u.soldiers.filter((q) => !q.dead && !q.evac && q !== s && !q.treated && (q.bleed > 0 || q.wounded === 2));
+    const pat = pats.sort((a, b) => (b.bleed || 0) - (a.bleed || 0))[0];
     if (!pat) return;
     const d = Math.hypot(pat.x - s.x, pat.y - s.y);
-    if (d < 2) { s.treating = pat; s.treatLeft = 45; return; }
+    if (d < 2) { s.treating = pat; s.treatLeft = pat.wounded === 2 ? 45 : 25; return; }
     s.path = [{ x: s.x, y: s.y, under: s.under }, { x: pat.x + 0.8, y: pat.y, under: pat.under }];
     s.pathIdx = 1;
     s.mode = 'path';

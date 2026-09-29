@@ -18,6 +18,7 @@ import { RoadGraph } from './roads.js';
 import { Logistics } from './logistics.js';
 import { Autonomy } from './autonomy.js';
 import { Construction } from './construct.js';
+import { woundSpeed, burnTick } from './wounds.js';
 
 // Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
 export const POSES = {
@@ -877,6 +878,7 @@ export class Sim {
       }
       if (u.pending?.type === 'board' && u.state === 'idle' && !this.queue.some((q) => q.unit === u)) this.orderBoard(u, u.pending.v); // машина уехала — догоняем
       if (u.mode === 'field' && u.state === 'moving') this.moveUnit(u, dt);
+      if (u.burning) burnTick(this, u, dt);
       if (u.task?.type === 'dig') this.updateDig(u, dt);
       if (u.soldiers) this.updateSoldiers(u, dt);
     }
@@ -928,7 +930,7 @@ export class Sim {
       const d = Math.hypot(dx, dy);
       if (d > 0.01) s.heading = Math.atan2(dy, dx);
       s.moving = true;
-      const speed = s.speed * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1);
+      const speed = s.speed * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.evacMove ? 1 : woundSpeed(s));
       const step = speed * remaining;
       if (step >= d) {
         s.x = wp.x;
@@ -998,7 +1000,7 @@ export class Sim {
     const d = Math.hypot(dx, dy);
     s.inCover = !!s.cover && d < 1.2;
     if (d > 0.25) {
-      const want = Math.min(4, d * 1.1 + (moving ? u.speed : 0)) * s.pace * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1) * (s.supp > 6 ? 0.5 : 1);
+      const want = Math.min(4, d * 1.1 + (moving ? u.speed : 0)) * s.pace * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * woundSpeed(s) * (s.supp > 6 ? 0.5 : 1);
       // Разгон и торможение, а не мгновенная скорость
       s.v += Math.max(-4 * dt, Math.min(3 * dt, want - s.v));
       const step = Math.min(d, Math.max(0, s.v) * dt);
@@ -1183,6 +1185,7 @@ export class Sim {
     let target = Math.min(terrain * turnK, brake);
     if (u.speedCap) target = Math.min(target, u.speedCap);
     if (u.fuel !== undefined && u.fuel <= 0) target = 0;
+    if (u.immobile) target = 0; // двигатель / ходовая поражены
     const ahead = this.leaderAhead(u);
     if (ahead) target = Math.min(target, Math.max(0, ahead.speed * 0.95));
     if (u.speed < target) u.speed = Math.min(target, u.speed + def.accel * dt);

@@ -11,6 +11,7 @@ import { M } from '../spatial.js';
 import { Rng } from '../rng.js';
 import { refreshCanopy } from '../mapgen.js';
 import { damagePower } from '../power.js';
+import { hitSoldier, hitVehicle } from './wounds.js';
 
 export const CALIBERS = {
   81: { name: '81-мм мина', blast: 3, lethal: 12, danger: 45, frags: 430, crater: 1.1, speed: 240, sigma: 0.009, minR: 90, maxR: 5600, dmg: 1 },
@@ -198,44 +199,43 @@ export class Artillery {
     for (const u of sim.units) {
       if (u.dead || u.embarked) continue;
       if (!u.soldiers) {
-        // Техника: близкий разрыв — уничтожена, в радиусе — повреждена
+        // Техника: прямое попадание — удар сверху по крыше; близкий разрыв — осколки и ударная волна в борт
         const d = Math.hypot(u.x - x, u.y - y);
-        if (d < cal.blast * 0.7 || (d < cal.blast * 1.5 && rng.chance(0.3))) this.destroyVehicle(u);
-        else if (d < cal.blast * 3) { u.hp = (u.hp ?? 1) - rng.float(0.1, 0.35) * (cal.blast * 3 - d) / (cal.blast * 3); if (u.hp <= 0) this.destroyVehicle(u); }
+        if (d < cal.blast * 0.6) hitVehicle(sim, u, cal.blast / 5, { x, y }, { top: true });
+        else if (d < cal.blast * 1.6) hitVehicle(sim, u, (cal.blast / 12) * (1 - d / (cal.blast * 1.6)) + 0.05, { x, y });
+        else if (d < cal.blast * 3.5 && (u.def.armor ?? 0.2) < 0.35 && rng.chance(0.5)) hitVehicle(sim, u, 0.12, { x, y });
         continue;
       }
       for (const s of u.soldiers) {
         if (s.dead) continue;
         const d = Math.hypot(s.x - x, s.y - y);
         if (d > cal.danger) continue;
-        let dmg = 0;
+        const wasDead = s.dead, wasHeavy = s.wounded === 2, hp0 = s.hp;
         if (s.under) {
           // Подвал рухнувшего дома или обрушенный блиндаж
+          let dmg = 0;
           if (s.building?.collapsed && pointInPoly(x, y, s.building.poly) && caliber >= 122 && rng.chance(0.4)) dmg = rng.float(30, 120);
           if (collapsedDugouts.some((f) => Math.hypot(f.x - s.x, f.y - s.y) < 4)) dmg = 200;
           if (!dmg) continue;
+          hitSoldier(sim, u, s, 'blast', dmg, cal.name);
         } else {
           const d3 = Math.hypot(d, h);
-          // Фугасное действие
-          if (d3 < cal.blast) dmg += rng.float(60, 140) * (1 - d3 / cal.blast) * (s.building && !air ? 0.4 : 1);
-          // Осколки
+          // Фугасное действие (контузия, баротравма)
+          if (d3 < cal.blast) hitSoldier(sim, u, s, 'blast', rng.float(60, 140) * (1 - d3 / cal.blast) * (s.building && !air ? 0.4 : 1), cal.name);
+          // Осколки: каждое попадание — отдельное ранение (место, защита, кровотечение)
           const expo = this.exposure(s, x, y, d, air);
-          if (expo > 0) {
+          if (expo > 0 && !s.dead) {
             const shield = air ? 1 : this.shielding(s.x, s.y, x, y);
             const A = 0.65 * expo * shield;
             const lambda = (cal.frags * A) / (2 * Math.PI * Math.max(1, d3) * (1.4 + d3 * 0.35));
             const hits = poisson(rng, lambda);
-            for (let k = 0; k < hits; k++) dmg += rng.float(10, 55) * (0.35 + 0.65 * Math.exp(-d3 / cal.lethal));
+            for (let k = 0; k < hits && !s.dead; k++) hitSoldier(sim, u, s, 'frag', rng.float(12, 55) * (0.35 + 0.65 * Math.exp(-d3 / cal.lethal)), cal.name);
           }
         }
-        if (dmg <= 0) continue;
+        if (s.hp === hp0) continue;
         affected.add(u);
-        const before = s.hp;
-        s.hp -= dmg;
-        if (s.hp <= 0) { s.dead = true; s.hp = 0; s.path = null; s.mode = 'dead'; killed++; }
-        else if (before >= 70 && s.hp < 70) wounded++;
-        s.wounded = s.hp <= 0 ? 0 : s.hp < 30 ? 2 : s.hp < 70 ? 1 : 0;
-        if (s.wounded === 2) { s.path = null; s.mode = 'hold'; }
+        if (s.dead && !wasDead) killed++;
+        else if (!wasHeavy && s.wounds?.length) wounded++;
       }
     }
     for (const u of affected) sim.checkUnit(u);
