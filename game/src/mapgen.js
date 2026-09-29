@@ -10,7 +10,7 @@ import { SpatialIndex, PointBins, Mask, M } from './spatial.js';
 import { buildFortifications } from './forts.js';
 import { seedBattleDamage } from './damage.js';
 import { generateInterior } from './interiors.js';
-import { buildPowerGrid } from './power.js';
+import { buildPowerGrid, buildPowerGridDW } from './power.js';
 
 export const WORLD_W = 12000;
 export const WORLD_H = 6000;
@@ -30,11 +30,8 @@ export const CROPS = {
   meadow:    { color: '#707c46', furrow: null, tram: false },
 };
 
-export function generateWorld(seed) {
-  const t0 = performance.now();
-  const rng = new Rng(seed);
-  const W = WORLD_W, H = WORLD_H;
-  const world = {
+function newWorld(seed, W, H) {
+  return {
     seed, W, H,
     mask: new Mask(W, H, 4),
     fields: new SpatialIndex(W, H),
@@ -50,6 +47,15 @@ export function generateWorld(seed) {
     settlements: [],
     roadList: [],
   };
+}
+
+export function generateWorld(seed, layout = 'front') {
+  if (layout === 'dronewar') return generateDroneWarWorld(seed);
+  const t0 = performance.now();
+  const rng = new Rng(seed);
+  const W = WORLD_W, H = WORLD_H;
+  const world = newWorld(seed, W, H);
+  world.layout = 'front';
   const mask = world.mask;
 
   // ---------- Ключевые точки ----------
@@ -230,6 +236,307 @@ export function generateWorld(seed) {
   // Кроны деревьев в маску — для расчёта прямой видимости
   refreshCanopy(world, { x0: 0, y0: 0, x1: W, y1: H });
 
+  world.genTime = performance.now() - t0;
+  return world;
+}
+
+// ================================================================
+// Режим «Война дронов»: 16×9 км, по три города у каждой стороны (столица на реке и два города
+// ближе к фронту), реки с мостами, ТЭС, подстанции 330/110 кВ, нефтебазы, арсеналы, заводы БПЛА,
+// стартовые позиции. Объекты инфраструктуры — в world.infra (геометрия и узлы для симуляции).
+// ================================================================
+export const DW_W = 16000, DW_H = 9000;
+export const DW_NAMES = {
+  blue: { cities: ['Арденск', 'Белогорье', 'Тихомирск'], river: 'Ардена', tpp: 'Арденская ТЭС' },
+  red: { cities: ['Кардагор', 'Краснокаменск', 'Заволжск'], river: 'Карда', tpp: 'Кардагорская ТЭС' },
+};
+
+// Узлы объектов (локальные координаты: u — вдоль оси объекта, v — поперёк; размеры в метрах)
+function infraLayout(kind, L = 0) {
+  const c = (k, u, v, w, h, extra = {}) => ({ k, u, v, w, h, ...extra });
+  switch (kind) {
+    case 'tpp': return { w: 440, h: 320, comps: [
+      c('unit', -100, -40, 96, 58, { n: 'Энергоблок №1' }), c('unit', 0, -40, 96, 58, { n: 'Энергоблок №2' }), c('unit', 100, -40, 96, 58, { n: 'Энергоблок №3' }),
+      c('chimney', -55, 30, 18, 18, { n: 'Дымовая труба №1' }), c('chimney', 55, 30, 18, 18, { n: 'Дымовая труба №2' }),
+      c('tower', -150, 110, 76, 76, { n: 'Градирня №1' }), c('tower', -55, 120, 76, 76, { n: 'Градирня №2' }), c('tower', 40, 120, 76, 76, { n: 'Градирня №3' }),
+      c('gsu', -100, -92, 14, 9, { n: 'Блочный трансформатор №1' }), c('gsu', 0, -92, 14, 9, { n: 'Блочный трансформатор №2' }), c('gsu', 100, -92, 14, 9, { n: 'Блочный трансформатор №3' }),
+      c('oru', 160, -110, 110, 70, { n: 'ОРУ-330 кВ' }), c('coal', 165, 90, 100, 110, { n: 'Угольный склад' }), c('ctrl', -180, -110, 32, 20, { n: 'Главный щит управления' }),
+    ] };
+    case 'ps330': return { w: 250, h: 180, comps: [
+      c('at', -60, 0, 15, 10, { n: 'АТ-1 330/110 кВ' }), c('at', 0, 0, 15, 10, { n: 'АТ-2 330/110 кВ' }), c('at', 60, 0, 15, 10, { n: 'АТ-3 330/110 кВ' }),
+      c('oru', 0, -58, 210, 42, { n: 'ОРУ-330 кВ' }), c('oru', 0, 58, 210, 42, { n: 'ОРУ-110 кВ' }), c('ctrl', 104, 0, 24, 14, { n: 'ОПУ' }),
+    ] };
+    case 'ps110': return { w: 96, h: 76, comps: [
+      c('tr', -16, 6, 9, 6.5, { n: 'Т-1 110/10 кВ' }), c('tr', 16, 6, 9, 6.5, { n: 'Т-2 110/10 кВ' }), c('oru', 0, -24, 84, 18, { n: 'ОРУ-110 кВ' }), c('ctrl', 34, 26, 14, 10, { n: 'ОПУ' }),
+    ] };
+    case 'oil': {
+      const comps = [];
+      let k = 1;
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) comps.push(c('tank', -80 + i * 40, -40 + j * 40, 24, 24, { n: `Резервуар РВС-${k++}` }));
+      comps.push(c('pump', 100, -50, 26, 16, { n: 'Насосная' }), c('rack', 100, 40, 60, 10, { n: 'Эстакада налива' }));
+      return { w: 270, h: 170, comps };
+    }
+    case 'ammo': {
+      const comps = [];
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) comps.push(c('bunker', -105 + i * 60, -45 + j * 90, 26, 16, { n: `Хранилище №${i * 2 + j + 1}` }));
+      comps.push(c('store', 0, 0, 60, 18, { n: 'Склад-ангар' }));
+      return { w: 300, h: 190, comps };
+    }
+    case 'factory': return { w: 250, h: 170, comps: [
+      c('shop', -70, -35, 80, 44, { n: 'Цех сборки' }), c('shop', 30, -35, 80, 44, { n: 'Цех двигателей' }), c('shop', -20, 45, 100, 40, { n: 'Цех композитов' }), c('ctrl', 95, 50, 30, 20, { n: 'Заводоуправление' }),
+    ] };
+    case 'launch': return { w: 150, h: 90, comps: [
+      c('launcher', -40, -20, 12, 3.5, { n: 'Пусковая установка №1' }), c('launcher', -40, 20, 12, 3.5, { n: 'Пусковая установка №2' }),
+      c('launcher', 10, -20, 12, 3.5, { n: 'Пусковая установка №3' }), c('launcher', 10, 20, 12, 3.5, { n: 'Пусковая установка №4' }),
+      c('store', 55, 0, 26, 16, { n: 'Укрытие для БПЛА' }),
+    ] };
+    case 'bridge': {
+      const n = Math.max(2, Math.round(L / 40));
+      const comps = [];
+      for (let i = 0; i < n; i++) comps.push(c('span', -L / 2 + (i + 0.5) * (L / n), 0, L / n, 14, { n: `Пролёт ${i + 1}` }));
+      return { w: L, h: 16, comps };
+    }
+  }
+  return { w: 40, h: 40, comps: [] };
+}
+
+function generateDroneWarWorld(seed) {
+  const t0 = performance.now();
+  const rng = new Rng((seed ^ 0xd7a3) >>> 0);
+  const W = DW_W, H = DW_H;
+  const world = newWorld(seed, W, H);
+  world.layout = 'dronewar';
+  world.infra = [];
+  const mask = world.mask;
+  const J = (x, y, jx, jy) => [x + rng.float(-jx, jx), y + rng.float(-jy, jy)];
+  const sides = {
+    blue: { dir: -1, cities: [{ c: J(W * 0.17, H * 0.5, 200, 300), sc: 1 }, { c: J(W * 0.36, H * 0.21, 180, 150), sc: 0.6 }, { c: J(W * 0.35, H * 0.79, 180, 150), sc: 0.6 }] },
+    red: { dir: 1, cities: [{ c: J(W * 0.83, H * 0.5, 200, 300), sc: 1 }, { c: J(W * 0.64, H * 0.22, 180, 150), sc: 0.6 }, { c: J(W * 0.65, H * 0.78, 180, 150), sc: 0.6 }] },
+  };
+  for (const [side, S] of Object.entries(sides))
+    S.cities.forEach((ct, i) => {
+      ct.name = DW_NAMES[side].cities[i];
+      ct.side = side;
+      world.settlements.push({ name: ct.name, x: ct.c[0], y: ct.c[1], type: 'city', side, capital: i === 0 });
+    });
+
+  // ---------- Реки: через столицы ----------
+  for (const [side, S] of Object.entries(sides)) {
+    const cap = S.cities[0].c;
+    const xc = cap[0] - S.dir * 250 + rng.float(-100, 100);
+    const ph = rng.float(0, 6.28);
+    const pts = [];
+    for (let y = -150; y <= H + 150; y += 60) {
+      const x = xc + Math.sin(y / 700 + ph) * 260 + (fbm(y / 1100, 5.1, seed + (side === 'red' ? 17 : 3)) - 0.5) * 500 + (y - cap[1]) * 0.08 * S.dir;
+      pts.push([x, y]);
+    }
+    S.river = resample(catmullRom(pts, 6), 12);
+    S.riverW = side === 'blue' ? 44 : 40;
+    addItem(world.water, { kind: 'river', line: S.river, width: S.riverW, name: DW_NAMES[side].river }, S.riverW + 200);
+    mask.stampLine(S.river, S.riverW + 8, M.WATER);
+    addItem(world.areas, { kind: 'floodplain', line: S.river, width: 300 }, 150);
+  }
+
+  // ---------- Трасса через всю карту и дороги столица → города ----------
+  const allC = [...sides.blue.cities, ...sides.red.cities];
+  const hwY = H * 0.5 - 1250;
+  const hwCtrl = [];
+  for (let i = 0; i <= 14; i++) {
+    const x = -200 + (i / 14) * (W + 400);
+    const bend = allC.reduce((a, ct) => a + Math.exp(-(((x - ct.c[0]) / 1500) ** 2)) * -140 * ct.sc, 0);
+    hwCtrl.push([x, hwY + bend + rng.float(-80, 80)]);
+  }
+  const highway = resample(catmullRom(hwCtrl, 10), 10);
+  addRoad(world, highway, 'highway');
+  const hw2 = [];
+  for (let i = 0; i <= 14; i++) hw2.push([-200 + (i / 14) * (W + 400), H * 0.5 + 1450 + rng.float(-120, 120)]);
+  addRoad(world, resample(catmullRom(hw2, 10), 10), 'local');
+
+  // ---------- Железные дороги: из тыла через столицу к городам ----------
+  for (const [side, S] of Object.entries(sides)) {
+    const [cap, cN, cS] = S.cities.map((ct) => ct.c);
+    const edge = side === 'blue' ? -200 : W + 200;
+    const main = resample(catmullRom([[edge, cap[1] + 350], [cap[0] + S.dir * 900, cap[1] + 330], [cap[0], cap[1] + 260], [(cap[0] + cN[0]) / 2, (cap[1] + cN[1]) / 2 + 150], [cN[0], cN[1] + 230], [cN[0] - S.dir * 1200, cN[1] + 300]], 12), 8);
+    const branch = resample(catmullRom([[cap[0] - S.dir * 300, cap[1] + 300], [(cap[0] + cS[0]) / 2, (cap[1] + cS[1]) / 2 + 100], [cS[0], cS[1] - 200], [cS[0] - S.dir * 900, cS[1] - 250]], 12), 8);
+    for (const r of [main, branch]) { addItem(world.rails, { kind: 'rail', line: r, width: 10 }, 20); mask.stampLine(r, 16, M.RAIL); }
+    S.rail = main; S.branch = branch;
+  }
+
+  // ---------- Сёла ----------
+  const spots = [];
+  for (const [side, S] of Object.entries(sides)) {
+    const base = side === 'blue' ? 0 : W;
+    for (const [fx, fy] of [[0.05, 0.15], [0.07, 0.85], [0.15, 0.2], [0.14, 0.82], [0.26, 0.4], [0.25, 0.62], [0.4, 0.5], [0.44, 0.08], [0.43, 0.93], [0.3, 0.05]]) {
+      const x = side === 'blue' ? fx * W : base - fx * W;
+      spots.push([x + rng.float(-200, 200), fy * H + rng.float(-150, 150)]);
+    }
+    void S;
+  }
+  const villages = [];
+  spots.forEach((c, i) => {
+    if (mask.near(c[0], c[1], 300, M.WATER)) return;
+    if (allC.some((ct) => Math.hypot(ct.c[0] - c[0], ct.c[1] - c[1]) < 1500 * ct.sc)) return;
+    const angle = rng.float(0, Math.PI);
+    const len = rng.float(800, 1300);
+    const dir = [Math.cos(angle), Math.sin(angle)];
+    const ctrl = [];
+    for (let k = -2; k <= 2; k++) { const t = (k / 2) * (len / 2); ctrl.push([c[0] + dir[0] * t + rng.float(-40, 40) * -dir[1], c[1] + dir[1] * t + rng.float(-40, 40) * dir[0]]); }
+    const street = resample(catmullRom(ctrl, 8), 8);
+    addVillageGround(world, street);
+    world.settlements.push({ name: VILLAGE_NAMES[(i + seed) % VILLAGE_NAMES.length], x: c[0], y: c[1], type: 'village', side: c[0] < W / 2 ? 'blue' : 'red' });
+    villages.push({ c, street, angle });
+  });
+
+  // Дороги: столица ↔ города, сёла → ближайший город или трасса
+  const growth = new Map(allC.map((ct) => [ct, []]));
+  for (const S of Object.values(sides)) {
+    const [cap, cN, cS] = S.cities;
+    growth.get(cN).push(wobblyRoad(rng, cN.c, cap.c.slice(), 4));
+    growth.get(cS).push(wobblyRoad(rng, cS.c, cap.c.slice(), 4));
+    // к фронту
+    growth.get(cN).push(wobblyRoad(rng, cN.c, [W / 2 - S.dir * 300, cN.c[1] + rng.float(-300, 300)], 3));
+    growth.get(cS).push(wobblyRoad(rng, cS.c, [W / 2 - S.dir * 300, cS.c[1] + rng.float(-300, 300)], 3));
+  }
+  for (const v of villages) {
+    let best = null, bd = Infinity;
+    for (const ct of allC) { const d = Math.hypot(ct.c[0] - v.c[0], ct.c[1] - v.c[1]); if (d < bd) { bd = d; best = ct; } }
+    if (bd < 3500) growth.get(best).push(wobblyRoad(rng, v.c, best.c.slice(), 3));
+    else addRoad(world, wobblyRoad(rng, v.c, nearestPoint(highway, v.c), 3), 'local');
+  }
+  for (const v of villages) addRoad(world, v.street, 'village');
+
+  // Городские мосты столиц: два проспекта через реку (застолблены, чтобы кварталы их не перекрыли)
+  for (const S of Object.values(sides)) {
+    const cap = S.cities[0].c;
+    for (const dy of [-380, 420]) {
+      const y = cap[1] + dy;
+      const rp = S.river.reduce((a, p) => (Math.abs(p[1] - y) < Math.abs(a[1] - y) ? p : a));
+      const ln = resample([[rp[0] - 700, y + rng.float(-30, 30)], [rp[0], y], [rp[0] + 700, y + rng.float(-30, 30)]], 8);
+      addRoad(world, ln, 'avenue');
+      mask.stampLine(ln, 22, M.CITY);
+      growth.get(S.cities[0]).push(ln);
+    }
+  }
+
+  // ---------- Города ----------
+  for (const [side, S] of Object.entries(sides))
+    S.cities.forEach((ct, i) => buildCity(world, rng, ct.c, i === 0 ? S.rail : i === 1 ? S.rail : S.branch, S.river, growth.get(ct), ct.sc));
+  for (const lines of growth.values()) for (const line of lines) connectToCity(world, line);
+  for (const v of villages) { buildVillageStreet(world, rng, v.street, 1); buildFarm(world, rng, v); }
+
+  // ---------- Объекты инфраструктуры ----------
+  const FORBID = M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY | M.SETTLE | M.BALKA | M.VILLAGE | M.CITYZONE;
+  let nextId = 1;
+  const place = (side, kind, name, x, y, opts = {}) => {
+    const lay = infraLayout(kind, opts.L);
+    const angle = opts.angle ?? rng.float(-0.4, 0.4);
+    let at = null;
+    for (let a = 0; a < 140 && !at; a++) {
+      const r = a * 45, t = a * 2.4;
+      const px = x + Math.cos(t) * r, py = y + Math.sin(t) * r;
+      if (px < 250 || py < 250 || px > W - 250 || py > H - 250) continue;
+      const poly = rectCorners(px, py, lay.w + 30, lay.h + 30, angle);
+      if (mask.polyFree(poly, FORBID, 12)) at = [px, py];
+    }
+    if (!at) at = [x, y];
+    const o = { id: nextId++, side, kind, name, x: at[0], y: at[1], angle, w: lay.w, h: lay.h, comps: lay.comps, ...opts.extra };
+    const poly = rectCorners(o.x, o.y, lay.w + 16, lay.h + 16, angle);
+    mask.stampPoly(poly, M.BUILD);
+    addItem(world.areas, { kind: 'dwsite', poly, site: kind, x: o.x, y: o.y, angle, w: lay.w + 16, h: lay.h + 16 });
+    // подъездная дорога к ближайшей дороге
+    const road = world.roadList.filter((r) => r.type !== 'street').map((r) => ({ r, p: nearestPoint(r.line, at) })).sort((a, b) => Math.hypot(a.p[0] - at[0], a.p[1] - at[1]) - Math.hypot(b.p[0] - at[0], b.p[1] - at[1]))[0];
+    if (road && Math.hypot(road.p[0] - at[0], road.p[1] - at[1]) < 2500) {
+      const edge = [at[0] + Math.cos(angle + Math.PI / 2) * (lay.h / 2 + 8), at[1] + Math.sin(angle + Math.PI / 2) * (lay.h / 2 + 8)];
+      addRoad(world, wobblyRoad(rng, edge, road.p, 3), 'dirt');
+    }
+    world.infra.push(o);
+    return o;
+  };
+  const toW = (o, u, v) => [o.x + u * Math.cos(o.angle) - v * Math.sin(o.angle), o.y + u * Math.sin(o.angle) + v * Math.cos(o.angle)];
+  const lines = [];
+  const line = (a, b, kv) => {
+    const pa = [a.x, a.y], pb = [b.x ?? b[0], b.y ?? b[1]];
+    const n = 6, pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const off = Math.sin(t * Math.PI) * rng.float(-120, 120);
+      const dx = pb[0] - pa[0], dy = pb[1] - pa[1], L = Math.hypot(dx, dy) || 1;
+      pts.push([pa[0] + dx * t - (dy / L) * off, pa[1] + dy * t + (dx / L) * off]);
+    }
+    const pyl = resample(catmullRom(pts, 6), kv >= 330 ? 320 : 230).map(([x, y]) => ({ x, y }));
+    lines.push({ id: lines.length + 1, kv, a: a.id ?? null, b: b.id ?? null, pylons: pyl, side: a.side });
+  };
+  for (const [side, S] of Object.entries(sides)) {
+    const [cap, cN, cS] = S.cities.map((ct) => ct.c);
+    const rearX = side === 'blue' ? 0 : W;
+    const nm = DW_NAMES[side].cities;
+    const tpp = place(side, 'tpp', DW_NAMES[side].tpp, (cap[0] + rearX) / 2 + rng.float(-200, 200), H * 0.25 + rng.float(-300, 300), { angle: rng.float(-0.2, 0.2) });
+    const psA = place(side, 'ps330', `ПС 330 кВ «${nm[0]}»`, cap[0] - S.dir * 1400, cap[1] - 700 + rng.float(-200, 200));
+    const psB = place(side, 'ps330', 'ПС 330 кВ «Центральная»', (cap[0] + cN[0] + cS[0]) / 3 + S.dir * 300, H * 0.5 + rng.float(-500, 500));
+    const cp1 = place(side, 'ps110', `ПС 110 кВ «${nm[0]}-Северная»`, cap[0] + rng.float(-300, 300), cap[1] - 900);
+    const cp2 = place(side, 'ps110', `ПС 110 кВ «${nm[0]}-Южная»`, cap[0] + rng.float(-300, 300), cap[1] + 950);
+    const pN = place(side, 'ps110', `ПС 110 кВ «${nm[1]}»`, cN[0] + S.dir * 700, cN[1] - 250);
+    const pS = place(side, 'ps110', `ПС 110 кВ «${nm[2]}»`, cS[0] + S.dir * 700, cS[1] + 250);
+    cp1.city = 0; cp2.city = 0; pN.city = 1; pS.city = 2;
+    place(side, 'oil', `Нефтебаза «${nm[0]}»`, cap[0] + S.dir * 1300, cap[1] + 1500);
+    place(side, 'ammo', 'Арсенал', (cap[0] + rearX) / 2, H * 0.78 + rng.float(-300, 300));
+    place(side, 'factory', `Завод БПЛА «${side === 'blue' ? 'Сокол' : 'Беркут'}»`, cap[0] + S.dir * 900, cap[1] - 1700);
+    place(side, 'launch', 'Стартовая позиция «Север»', rearX - S.dir * 650, H * 0.18 + rng.float(-200, 200));
+    place(side, 'launch', 'Стартовая позиция «Юг»', rearX - S.dir * 650, H * 0.84 + rng.float(-200, 200));
+    // ЛЭП: ТЭС → обе ПС 330; импорт из соседней энергосистемы → ПС-А; ПС 330 → ПС 110
+    line(tpp, psA, 330); line(tpp, psB, 330); line(psA, psB, 330);
+    const imp = { x: rearX + S.dir * 60, y: psA.y + rng.float(-800, 800), id: 'import', side };
+    line(imp, psA, 330);
+    line(psA, cp1, 110); line(psA, cp2, 110); line(psB, cp2, 110); line(psB, pN, 110); line(psB, pS, 110);
+    world.infra.push({ id: 'import:' + side, side, kind: 'import', name: 'Межсистемная связь (импорт)', x: imp.x, y: imp.y, angle: 0, w: 0, h: 0, comps: [] });
+  }
+  world.power = { lines };
+
+  // ---------- Мосты: где дороги и ж/д пересекают реки ----------
+  const bridges = [];
+  const scan = (ln, type) => {
+    let run = null;
+    for (let i = 0; i < ln.length; i++) {
+      const wet = mask.has(ln[i][0], ln[i][1], M.WATER);
+      if (wet && !run) run = { i0: i };
+      if (!wet && run) {
+        const a = ln[Math.max(0, run.i0 - 1)], b = ln[i];
+        const x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2;
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) + 24;
+        if (L < 260 && !bridges.some((q) => Math.hypot(q.x - x, q.y - y) < 80)) bridges.push({ x, y, L, angle: Math.atan2(b[1] - a[1], b[0] - a[0]), type });
+        run = null;
+      }
+    }
+  };
+  for (const r of world.roadList) if (['highway', 'local', 'avenue', 'village', 'dirt'].includes(r.type)) scan(resample(r.line, 6), r.type);
+  for (const r of world.rails.items) scan(resample(r.line, 6), 'rail');
+  const TYPE_NAME = { highway: 'автомобильный мост (трасса)', rail: 'железнодорожный мост', avenue: 'городской мост', local: 'мост', village: 'сельский мост', dirt: 'мост' };
+  for (const b of bridges) {
+    const side = b.x < W / 2 ? 'blue' : 'red';
+    const lay = infraLayout('bridge', b.L);
+    world.infra.push({ id: nextId++, side, kind: 'bridge', btype: b.type, name: `Мост через р. ${DW_NAMES[side].river} — ${TYPE_NAME[b.type]}`, x: b.x, y: b.y, angle: b.angle, w: lay.w, h: lay.h, comps: lay.comps, L: b.L });
+  }
+  void toW;
+
+  // ---------- Поля, посадки, ивы, фронт посередине ----------
+  buildFields(world, rng);
+  for (const S of Object.values(sides))
+    for (let i = 0; i < S.river.length; i++) {
+      const tg = tangents([S.river[Math.max(0, i - 1)], S.river[Math.min(S.river.length - 1, i + 1)]])[0];
+      for (const sd of [-1, 1]) {
+        if (!rng.chance(0.5)) continue;
+        const off = S.riverW / 2 + rng.float(3, 16);
+        const x = S.river[i][0] - tg[1] * off * sd, y = S.river[i][1] + tg[0] * off * sd;
+        if (mask.has(x, y, M.ROAD | M.BUILD | M.RAIL | M.WATER)) continue;
+        world.trees.add(x, y, rng.float(3, 6), rng.int(0, 3));
+      }
+    }
+  const frontX = seedWarScars(world, rng, W * 0.5 + rng.float(-150, 150));
+  buildFortifications(world, rng, frontX);
+  seedBattleDamage(world, rng, frontX);
+  finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0));
+  buildPowerGridDW(world, new Rng((seed ^ 0x9092) >>> 0));
+  refreshCanopy(world, { x0: 0, y0: 0, x1: W, y1: H });
   world.genTime = performance.now() - t0;
   return world;
 }
@@ -655,9 +962,9 @@ function buildFarm(world, rng, v) {
 // Город «растёт» органически: несколько районов со своей сеткой и поворотом,
 // плотность застройки падает от центра, но тянется вдоль дорог и железной дороги.
 // Граница получается рваной: частный сектор, пустыри между районами, «языки» вдоль трасс.
-function buildCity(world, rng, C, rail, river, extraGrowth = []) {
+function buildCity(world, rng, C, rail, river, extraGrowth = [], sc = 1) {
   const { mask } = world;
-  const R = 1100; // характерный радиус
+  const R = 1100 * sc; // характерный радиус
   const growthLines = world.roadList.filter((r) => r.type === 'local' || r.type === 'village').map((r) => r.line);
   growthLines.push(rail, ...extraGrowth);
   const noiseSeed = rng.int(0, 1e6);
@@ -666,7 +973,7 @@ function buildCity(world, rng, C, rail, river, extraGrowth = []) {
     let dens = Math.exp(-((d / R) ** 2));
     let near = Infinity;
     for (const L of growthLines) near = Math.min(near, distToLine(p[0], p[1], L));
-    dens += 0.5 * Math.exp(-((near / 170) ** 2)) * Math.exp(-((d / 1700) ** 2));
+    dens += 0.5 * Math.exp(-((near / 170) ** 2)) * Math.exp(-((d / (1700 * sc)) ** 2));
     // Шум рвёт в основном окраины, центр остаётся сплошным
     const edge = 1 - Math.exp(-((d / (R * 0.7)) ** 2));
     dens += (fbm(p[0] / 420, p[1] / 420, noiseSeed, 3) - 0.5) * 0.7 * edge;
@@ -676,10 +983,10 @@ function buildCity(world, rng, C, rail, river, extraGrowth = []) {
   // Районы: центр + 4–6 вокруг, у каждого свой угол сетки и размер кварталов
   const base = rng.float(-0.3, 0.3);
   const districts = [{ x: C[0], y: C[1], phi: base, su: rng.float(115, 140), sv: rng.float(100, 125), core: true }];
-  const nD = rng.int(5, 7);
+  const nD = sc < 0.8 ? rng.int(3, 5) : rng.int(5, 7);
   for (let i = 0; i < nD; i++) {
     const a = (i / nD) * Math.PI * 2 + rng.float(-0.4, 0.4);
-    const r = rng.float(560, 1000);
+    const r = rng.float(560, 1000) * sc;
     districts.push({
       x: C[0] + Math.cos(a) * r, y: C[1] + Math.sin(a) * r * 0.8,
       phi: base + rng.float(-0.6, 0.6), su: rng.float(90, 150), sv: rng.float(70, 120), core: false,
@@ -699,7 +1006,7 @@ function buildCity(world, rng, C, rail, river, extraGrowth = []) {
   districts.forEach((dist, di) => {
     const c = Math.cos(dist.phi), s = Math.sin(dist.phi);
     const toW = (u, v) => [dist.x + u * c - v * s, dist.y + u * s + v * c];
-    const span = 1900;
+    const span = 1900 * sc;
     const us = [], vs = [];
     for (let u = -span; u <= span; u += dist.su * rng.float(0.8, 1.2)) us.push(u);
     for (let v = -span; v <= span; v += dist.sv * rng.float(0.8, 1.2)) vs.push(v);

@@ -46,11 +46,18 @@ export function buildPowerGrid(world, rng) {
     mains.push(main);
   }
 
+  const { tps, lamps } = buildDistribution(world, rng, mains, cities);
+  world.power = { mains, tps, lamps, version: 0 };
+}
+
+
+// Распределительная сеть: ТП районов и сёл, фидеры 10 кВ, привязка домов и фонарей
+function buildDistribution(world, rng, mains, cities, sameSide = null) {
   // ТП: центры районов городов (по застройке) и сёл
   const tps = [];
   const houses = world.buildings.items.filter((b) => b.interior && (b.style === 'gable' || b.style === 'flat'));
   for (const city of cities) {
-    const cityHouses = houses.filter((b) => Math.hypot(b.x - city.x, b.y - city.y) < 1900);
+    const cityHouses = houses.filter((b) => Math.hypot(b.x - city.x, b.y - city.y) < 1900 * (city.capital === false ? 0.65 : 1));
     const cells = new Map();
     for (const b of cityHouses) {
       const k = Math.floor(b.x / 420) + ',' + Math.floor(b.y / 420);
@@ -68,7 +75,7 @@ export function buildPowerGrid(world, rng) {
   // Фидеры 10 кВ: от ближайшей главной подстанции к каждой ТП (столбы через 45 м)
   for (const tp of tps) {
     let mi = 0, md = Infinity;
-    mains.forEach((m, i) => { const d = Math.hypot(m.x - tp.x, m.y - tp.y); if (d < md) { md = d; mi = i; } });
+    mains.forEach((m, i) => { if (sameSide && m.side !== sameSide(tp)) return; const d = Math.hypot(m.x - tp.x, m.y - tp.y); if (d < md) { md = d; mi = i; } });
     const main = mains[mi];
     tp.main = mi;
     tp.poles = resample([[main.x, main.y], [(main.x + tp.x) / 2 + rng.float(-80, 80), (main.y + tp.y) / 2 + rng.float(-80, 80)], [tp.x, tp.y]], 45);
@@ -98,7 +105,19 @@ export function buildPowerGrid(world, rng) {
       if (best >= 0) lamps.push({ x, y, tp: best, on: rng.chance(r.type === 'village' ? 0.6 : 0.85) });
     }
   }
-  world.power = { mains, tps, lamps, version: 0 };
+  return { tps, lamps };
+}
+
+// Сеть режима «Война дронов»: питание районов — от городских ПС 110 кВ (их состояние ведёт симуляция);
+// магистральные ЛЭП 330/110 кВ — в world.power.lines (строит генератор карты)
+export function buildPowerGridDW(world, rng) {
+  const lines = world.power?.lines || [];
+  const mains = world.infra.filter((o) => o.kind === 'ps110').map((o) => ({
+    x: o.x, y: o.y, w: o.w, h: o.h, angle: o.angle, hp: 1, alive: true, feedCut: null, name: o.name, pylons: [], dw: true, side: o.side, infraId: o.id, supply: 1, shift: 0,
+  }));
+  const cities = world.settlements.filter((s) => s.type === 'city');
+  const { tps, lamps } = buildDistribution(world, rng, mains, cities, (tp) => (tp.x < world.W / 2 ? 'blue' : 'red'));
+  world.power = { mains, tps, lamps, lines, version: 0 };
 }
 
 function placeTp(world, rng, x, y) {
@@ -117,7 +136,10 @@ export function tpPowered(world, i) {
   if (!p || i < 0 || i === undefined) return false;
   const tp = p.tps[i];
   const m = p.mains[tp.main];
-  return m.alive && !m.feedCut && tp.alive && !tp.cut;
+  if (!(m.alive && !m.feedCut && tp.alive && !tp.cut)) return false;
+  // Дефицит мощности: графики отключений — часть районов без света (очередь сдвигается)
+  if (m.supply !== undefined && m.supply < 0.999) return ((i * 0.6180339887 + (m.shift || 0)) % 1) < m.supply;
+  return true;
 }
 
 // Урон сети от разрыва; возвращает список сообщений и область перерисовки
@@ -127,6 +149,7 @@ export function damagePower(world, x, y, blast) {
   const msgs = [];
   const near = (a, r) => Math.hypot(a.x - x, a.y - y) < r;
   for (const m of p.mains) {
+    if (m.dw) continue; // ПС режима «Война дронов» повреждает его симуляция
     if (m.alive && near(m, blast * 1.5 + 22)) {
       m.hp -= blast / 9;
       if (m.hp <= 0) { m.alive = false; msgs.push(`Подстанция «${m.name}» уничтожена — город и сёла вокруг обесточены`); }

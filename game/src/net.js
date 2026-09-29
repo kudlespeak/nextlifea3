@@ -47,7 +47,9 @@ export function makeSnapshot(sim) {
   // Тыловые объекты: гость создаёт их по снимку
   const fac = (kind, f) => [kind, f.id, f.side, r1(f.x), r1(f.y), r2(f.angle || 0), r2(f.built ?? 1), f.alive ? 1 : 0, f.spotted ? 1 : 0, f.name, f.stock ? [Math.round(f.stock.ammo), Math.round(f.stock.shells), Math.round(f.stock.fuel)] : 0];
   snap.fac = [...sim.log.depots.map((d) => fac('depot', d)), ...sim.medpoints.blue.map((m) => fac('medpoint', m)), ...sim.medpoints.red.map((m) => fac('medpoint', m))];
-  if (g) {
+  if (g?.mode === 'drones') {
+    snap.dw = g.snapshot();
+  } else if (g) {
     snap.prep = g.prep ? 1 : 0; snap.prepEnd = g.prepEnd; snap.ready = g.ready;
     snap.zones = g.zones.map((z) => [z.owner, r2(z.prog), z.blue || 0, z.red || 0, z.contested ? 1 : 0, z.locked ? 1 : 0]);
     snap.lt = g.linesTaken || 0;
@@ -130,6 +132,7 @@ export function applySnapshot(sim, snap) {
   sim.combat.fires = sim.fires;
   for (const t of snap.tracers || []) sim.combat.tracers.push({ x0: t[0], y0: t[1], x1: t[2], y1: t[3], side: t[4] ? 'red' : 'blue', heavy: !!t[5], t: sim.time });
   const g = sim.game;
+  if (g && snap.dw) g.applySnapshot(snap.dw);
   if (g && snap.zones) {
     snap.zones.forEach((z, i) => { const zn = g.zones[i]; if (!zn) return; zn.owner = z[0]; zn.prog = z[1]; zn.blue = z[2]; zn.red = z[3]; zn.contested = !!z[4]; zn.locked = !!z[5]; });
     if (g.lines) { g.linesTaken = snap.lt; g.lines.forEach((l, i) => { l.owner = i < snap.lt ? g.cfg.attacker : l.owner; }); }

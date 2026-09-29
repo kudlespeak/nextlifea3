@@ -25,7 +25,7 @@ export class ChunkCache {
       this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
       this.worker.onmessage = (e) => this.onMessage(e.data);
       this.worker.onerror = () => { this.worker = null; this.inflight.clear(); };
-      this.worker.postMessage({ t: 'init', seed: world.seed });
+      this.worker.postMessage({ t: 'init', seed: world.seed, layout: world.layout });
     } catch { this.worker = null; }
   }
   worldSize(level) {

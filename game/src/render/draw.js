@@ -8,7 +8,7 @@ import { M } from '../spatial.js';
 
 const GROUND = '#7b784e';
 
-const AREA_ORDER = ['floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
+const AREA_ORDER = ['floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
 const AREA_COLORS = {
   floodplain: '#6c7843',
   urban: '#7d7c64',
@@ -332,6 +332,39 @@ function drawAreas(ctx, world, b, q, ppm) {
 
 function drawArea(ctx, a, b, ppm) {
   switch (a.kind) {
+    case 'dwsite': {
+      // Площадка объекта: щебень/бетон, забор, у подстанций — гравийная отсыпка с дорожками
+      ctx.beginPath();
+      pathPoly(ctx, a.poly);
+      ctx.fillStyle = a.site === 'bridge' ? 'rgba(0,0,0,0)' : a.site === 'ammo' ? '#6d6b4d' : a.site === 'tpp' || a.site === 'factory' ? '#8d8a80' : '#8f8b7c';
+      ctx.fill();
+      if (ppm >= 0.5) {
+        ctx.save();
+        ctx.clip();
+        ctx.translate(a.x, a.y);
+        ctx.rotate(a.angle);
+        ctx.strokeStyle = 'rgba(60,58,50,0.25)';
+        ctx.lineWidth = 0.4;
+        ctx.beginPath();
+        const hw = a.w / 2, hh = a.h / 2;
+        const step = a.site === 'ps330' || a.site === 'ps110' ? 12 : 30;
+        for (let u = -hw; u <= hw; u += step) { ctx.moveTo(u, -hh); ctx.lineTo(u, hh); }
+        ctx.stroke();
+        // внутренние проезды
+        ctx.fillStyle = 'rgba(70,70,66,0.55)';
+        ctx.fillRect(-hw, -4, a.w, 8);
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.beginPath();
+      pathPoly(ctx, a.poly);
+      ctx.strokeStyle = 'rgba(55,55,50,0.9)';
+      ctx.lineWidth = Math.max(0.25, 0.6 / ppm);
+      ctx.setLineDash(ppm >= 1 ? [2.5, 0.8] : []);
+      ctx.stroke();
+      ctx.restore();
+      break;
+    }
     case 'floodplain':
       for (const part of clipLine(a.line, b, a.width)) {
         strokeLine(ctx, part, a.width, 'rgba(98,112,62,0.75)');
@@ -1672,7 +1705,7 @@ function inQ(q, x, y, pad = 60) {
 function drawPowerGround(ctx, world, q, ppm) {
   const p = world.power;
   if (!p) return;
-  for (const m of p.mains) if (inQ(q, m.x, m.y, 60)) {
+  for (const m of p.mains) if (!m.dw && inQ(q, m.x, m.y, 60)) {
     ctx.save();
     ctx.translate(m.x, m.y);
     ctx.rotate(m.angle);
@@ -1731,6 +1764,48 @@ function drawPowerGround(ctx, world, q, ppm) {
 function drawPowerLines(ctx, world, q, ppm) {
   const p = world.power;
   if (!p || ppm < 0.2) return;
+  // Магистральные ЛЭП 330/110 кВ (режим «Война дронов»): опоры-«рюмки» и расщеплённые фазы
+  for (const ln of p.lines || []) {
+    const pl = ln.pylons, big = ln.kv >= 330;
+    const sp = big ? 7 : 3.5;
+    for (let i = 1; i < pl.length; i++) {
+      const a = pl[i - 1], b = pl[i];
+      if (!inQ(q, a.x, a.y, 400) && !inQ(q, b.x, b.y, 400)) continue;
+      const L = Math.hypot(b.x - a.x, b.y - a.y);
+      const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
+      for (const o of [-sp, 0, sp]) {
+        ctx.beginPath();
+        ctx.moveTo(a.x + nx * o + 9, a.y + ny * o + 9);
+        ctx.lineTo(b.x + nx * o + 9, b.y + ny * o + 9);
+        ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+        ctx.lineWidth = Math.max(0.15, (big ? 0.6 : 0.4) / ppm);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(a.x + nx * o, a.y + ny * o);
+        ctx.lineTo(b.x + nx * o, b.y + ny * o);
+        ctx.strokeStyle = 'rgba(50,52,50,0.65)';
+        ctx.stroke();
+      }
+    }
+    for (let i = 0; i < pl.length; i++) {
+      const t = pl[i];
+      if (!inQ(q, t.x, t.y, 20)) continue;
+      const nb = pl[Math.min(pl.length - 1, i + 1)], pb = pl[Math.max(0, i - 1)];
+      const ang = Math.atan2(nb.y - pb.y, nb.x - pb.x);
+      ctx.save();
+      ctx.translate(t.x, t.y);
+      ctx.rotate(ang);
+      const s = big ? 1.6 : 1;
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillRect(-2.5 * s + 4, -2.5 * s + 4, 5 * s, 5 * s);
+      ctx.strokeStyle = '#4c4d48';
+      ctx.lineWidth = Math.max(0.25, 0.45 / ppm);
+      ctx.strokeRect(-2.5 * s, -2.5 * s, 5 * s, 5 * s); // ствол
+      ctx.beginPath(); ctx.moveTo(-2.5 * s, -2.5 * s); ctx.lineTo(2.5 * s, 2.5 * s); ctx.moveTo(2.5 * s, -2.5 * s); ctx.lineTo(-2.5 * s, 2.5 * s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -sp - 1.5); ctx.lineTo(0, sp + 1.5); ctx.lineWidth = Math.max(0.3, 0.9 / ppm); ctx.stroke(); // траверса
+      ctx.restore();
+    }
+  }
   // Фидеры 10 кВ: столбы и провод
   for (const tp of p.tps) {
     const pts = tp.poles;

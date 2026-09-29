@@ -20,6 +20,9 @@ import { RES, RES_NAMES } from './sim/logistics.js';
 import { daylight } from './power.js';
 import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, applyWorldEvent } from './net.js';
 
+import { DWUI } from './dwui.js';
+import { drawDW, drawDWPreview } from './render/dwdraw.js';
+
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const canvas = $('map');
@@ -29,6 +32,7 @@ const mctx = mini.getContext('2d');
 
 // Игровые объекты создаются при старте партии
 let world = null, chunks = null, sim = null, cfg = null;
+let dwui = null; // интерфейс режима «Война дронов»
 let role = 'single'; // single | host | guest
 let net = null;
 
@@ -175,7 +179,7 @@ function startGame(c) {
   $('loading').style.opacity = 1;
   $('loading').textContent = 'Генерация местности…';
   setTimeout(() => {
-    world = generateWorld(c.seed);
+    world = generateWorld(c.seed, c.mode === 'drones' ? 'dronewar' : 'front');
     chunks = new ChunkCache(world);
     sim = new Sim(world);
     sim.setupGame(c);
@@ -188,15 +192,31 @@ function startGame(c) {
     b.className = controlSide;
     resize();
     // Камера — у своих позиций
-    const sp = sim.game.reserve[controlSide].spawn;
-    cam.x = (sp.x + sim.game.prepLimit(controlSide)) / 2; cam.y = sp.y;
-    cam.zoom = 0.35 * dpr;
+    if (c.mode === 'drones') {
+      const cap = world.settlements.find((q) => q.type === 'city' && q.side === controlSide && q.capital);
+      cam.x = (cap.x + sim.game.frontX) / 2; cam.y = cap.y; cam.zoom = 0.1 * dpr;
+    } else {
+      const sp = sim.game.reserve[controlSide].spawn;
+      cam.x = (sp.x + sim.game.prepLimit(controlSide)) / 2; cam.y = sp.y;
+      cam.zoom = 0.35 * dpr;
+    }
     mini.width = 540;
     mini.height = Math.round(540 * world.H / world.W);
     for (let cy = 0; cy * chunks.worldSize(0) < world.H; cy++)
       for (let cx = 0; cx * chunks.worldSize(0) < world.W; cx++) chunks.render(0, cx, cy);
-    buildRoster();
     const enemy = controlSide === 'blue' ? 'red' : 'blue';
+    if (c.mode === 'drones') {
+      dwui = new DWUI({ sim, side: controlSide, issue, log, focus: (x, y, zm) => focus(x, y, zm * dpr), screenToWorld, view });
+      $('prep-text').innerHTML = 'Разверните ПВО: мобильные группы, РЛС, РЭБ, посты. Удары дронами — после окончания развёртывания.';
+      log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
+      log('Защищайте ТЭС, подстанции, мосты и склады; ремонтируйте их. Проиграет тот, чья энергосистема рухнет без денег на восстановление.');
+      log('Слева: «Энергосистема», «ПВО» (поставить средства), «Удары» (пуск дронов), «Ремонт».');
+      $('loading').style.opacity = 0;
+      lastNow = performance.now();
+      requestAnimationFrame(frame);
+      return;
+    }
+    buildRoster();
     log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
     if (c.mode === 'assault') log(c.attacker === controlSide ? 'Ваша задача: прорвать четыре линии обороны противника по очереди.' : 'Ваша задача: удержать хотя бы одну из четырёх линий обороны до конца времени. За отход на следующую линию дают подкрепления.');
     log('Войска заказываются во вкладке «Резерв» слева и прибывают на пункт сбора.');
@@ -280,6 +300,8 @@ const COMMANDS_IMPL = {
   evac: (ids) => { for (const u of unitsById(ids)) sim.orderEvac(u); },
   drone: (id, kind, x, y, target) => { const u = unitsById([id])[0]; const r = sim.drones.launch(u, kind, x, y, target); if (r) sim.msg(r, u?.side); },
   recall: (ids) => { for (const u of unitsById(ids)) sim.drones.recall(u); },
+  // «Война дронов»: действие игры с проверками внутри; ошибка — сообщением стороне
+  dw: (action, side, ...args) => { const r = sim.game?.[action]?.(side, ...args); if (typeof r === 'string') sim.msg(r, side); },
 };
 function execCommand(name, args) {
   const fn = COMMANDS_IMPL[name];
@@ -298,6 +320,7 @@ canvas.addEventListener('pointerdown', (e) => {
   closeMenu();
   canvas.setPointerCapture(e.pointerId);
   if (e.button === 2) {
+    if (dwui) { dwui.rclick(e.clientX, e.clientY); return; }
     if (orderMode === 'dig') { finishDig(); return; }
     if (orderMode?.startsWith('build:')) { setOrderMode(null); return; }
     // Двойной ПКМ — напрямик
@@ -307,8 +330,8 @@ canvas.addEventListener('pointerdown', (e) => {
     orderAt(e.clientX, e.clientY, dbl);
     return;
   }
-  const box = e.shiftKey && !orderMode;
-  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, box, touch: e.pointerType === 'touch' };
+  const box = e.shiftKey && !orderMode && !dwui;
+  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, box, touch: e.pointerType === 'touch', shift: e.shiftKey };
   if (box) ui.box = { x0: e.clientX * dpr, y0: e.clientY * dpr, x1: e.clientX * dpr, y1: e.clientY * dpr };
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -326,7 +349,7 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerup', (e) => {
   if (!drag || drag.id !== e.pointerId) return;
   if (drag.box) { boxSelect(ui.box, e.ctrlKey || e.metaKey); ui.box = null; }
-  else if (drag.moved < 6) clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch);
+  else if (drag.moved < 6) { if (dwui) dwui.click(e.clientX, e.clientY, drag.shift); else clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch); }
   drag = null;
 });
 canvas.addEventListener('pointerleave', () => { mouse = null; $('hint').style.display = 'none'; });
@@ -524,6 +547,7 @@ addEventListener('keydown', (e) => {
   const c = e.code;
   if (c === 'Escape') {
     if ($('help').classList.contains('show')) toggleHelp(false);
+    else if (dwui) dwui.cancel();
     else if (orderMode) setOrderMode(null);
     else if (ui.soldier) { ui.soldier = null; buildCard(); }
     else { ui.selected.clear(); selectionChanged(); }
@@ -1038,6 +1062,8 @@ function updateHint() {
   const [x, y] = screenToWorld(mouse[0], mouse[1]);
   const units = selectedUnits();
   let text = '';
+  if (dwui) text = dwui.hint(mouse[0], mouse[1]) || '';
+  else
   if (orderMode === 'fire') {
     const g = units.find((u) => u.def.caliber);
     if (g) {
@@ -1135,7 +1161,11 @@ function updateScoreboard() {
   const light = daylight(sim.time);
   const sun = light > 0.6 ? '☀' : light > 0.1 ? '◐' : '☾';
   let mid = '';
-  if (g.mode === 'zones') mid = `<span class="b">${Math.floor(g.score.blue)}</span> : <span class="r">${Math.floor(g.score.red)}</span> <span class="m">/ 500</span>`;
+  if (g.mode === 'drones') {
+    const S = g.sides[controlSide], E = g.sides[controlSide === 'blue' ? 'red' : 'blue'];
+    const col = (v) => (v > 0.8 ? 'var(--ok)' : v > 0.4 ? '#f0c34a' : 'var(--bad)');
+    mid = `<span class="m">свет</span> <span style="color:${col(S.supply)}">${(S.supply * 100).toFixed(0)}%</span> <span class="m">· очки</span> <b>${Math.floor(S.points)}</b> <span class="m">(+${S.income.toFixed(0)}/мин) · у противника</span> <span style="color:${col(E.supply)}">${(E.supply * 100).toFixed(0)}%</span>`;
+  } else if (g.mode === 'zones') mid = `<span class="b">${Math.floor(g.score.blue)}</span> : <span class="r">${Math.floor(g.score.red)}</span> <span class="m">/ 500</span>`;
   else if (g.mode === 'assault') { const att = g.cfg.attacker; mid = `<span class="m">прорвано линий</span> <span class="${att === 'blue' ? 'b' : 'r'}">${g.linesTaken || 0}/4</span>`; }
   else {
     const t = g.territory(), i = g.initTerr || t;
@@ -1157,7 +1187,10 @@ function showEnd() {
     const sol = us.flatMap((u) => u.soldiers || []);
     return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>погибло ${sol.filter((s) => s.dead && !s.evac).length}</td><td>эвакуировано ${sol.filter((s) => s.evac).length + (sim.stats[side].evac || 0)}</td><td>потеряно техники ${us.filter((u) => !u.soldiers && u.dead).length}</td></tr>`;
   };
-  $('end-stats').innerHTML = row('blue') + row('red');
+  if (g.mode === 'drones') {
+    const r2 = (side) => { const S = g.sides[side]; return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>пущено ${S.stats.launched}, попаданий ${S.stats.hits}</td><td>сбито чужих ${S.stats.shot}</td><td>ремонтов ${S.stats.repairs}, потеряно ПВО ${S.stats.lostAD}</td></tr>`; };
+    $('end-stats').innerHTML = r2('blue') + r2('red');
+  } else $('end-stats').innerHTML = row('blue') + row('red');
   $('end-screen').classList.add('show');
   paused = true;
 }
@@ -1190,7 +1223,7 @@ function drawMinimap() {
     }
   const dark = 1 - daylight(sim.time);
   if (dark > 0.05) { mctx.fillStyle = `rgba(6,10,26,${0.6 * dark})`; mctx.fillRect(0, 0, mini.width, mini.height); }
-  for (const line of sim.game?.lines || []) {
+  for (const line of dwui ? [] : sim.game?.lines || []) {
     for (const sec of line.sectors) {
       mctx.strokeStyle = sec.owner ? SIDES[sec.owner].fill : '#e8e2cc';
       mctx.globalAlpha = sec.locked && line.k !== (sim.game.linesTaken || 0) ? 0.4 : 1;
@@ -1206,6 +1239,27 @@ function drawMinimap() {
     mctx.strokeStyle = z.owner ? FACTIONS[z.owner].fill : '#ddd';
     mctx.lineWidth = 2;
     mctx.beginPath(); mctx.arc(z.x * miniScale, z.y * miniScale, Math.max(4, z.r * miniScale), 0, Math.PI * 2); mctx.stroke();
+  }
+  if (dwui) {
+    const g = sim.game;
+    mctx.strokeStyle = 'rgba(255,90,70,0.6)'; mctx.lineWidth = 1;
+    mctx.beginPath(); mctx.moveTo(g.frontX * miniScale, 0); mctx.lineTo(g.frontX * miniScale, mini.height); mctx.stroke();
+    for (const o of g.objects) {
+      if (o.kind === 'import' || o.kind === 'bridge') continue;
+      const bad = o.comps.some((c) => c.state !== 'ok');
+      mctx.fillStyle = bad ? (o.comps.some((c) => c.state === 'destroyed') ? '#ef5a4a' : '#f0c34a') : SIDES[o.side].fill;
+      mctx.strokeStyle = '#000';
+      mctx.fillRect(o.x * miniScale - 4, o.y * miniScale - 4, 8, 8); mctx.strokeRect(o.x * miniScale - 4, o.y * miniScale - 4, 8, 8);
+    }
+    for (const d of g.visibleDrones(controlSide)) {
+      mctx.fillStyle = d.side === controlSide ? SIDES[d.side].fill : '#ff4a3a';
+      mctx.fillRect(d.x * miniScale - 2, d.y * miniScale - 2, 4, 4);
+    }
+    for (const a of g.visibleAD(controlSide)) {
+      if (a.dead || a.type === 'acoustic') continue;
+      mctx.fillStyle = a.side === controlSide ? '#cfe0ff' : '#ff9d8f';
+      mctx.beginPath(); mctx.arc(a.x * miniScale, a.y * miniScale, 2.5, 0, Math.PI * 2); mctx.fill();
+    }
   }
   const fog = fogSide();
   for (const d of [...sim.log.depots, ...sim.medpoints.blue, ...sim.medpoints.red]) {
@@ -1337,6 +1391,7 @@ function frameBody(now) {
   if (role === 'guest') {
     // Гость: плавное движение между снимками, свой расчёт тумана войны
     interpolate(sim, dtReal);
+    if (sim.game?.interpolate) sim.game.interpolate(dtReal);
     sim.time += dtReal;
     visTimer += dtReal;
     if (visTimer > 1) { visTimer = 0; sim.vision.update(true); }
@@ -1425,6 +1480,23 @@ function frameBody(now) {
   const fog = fogSide();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawInteriors(ctx, world, sim, view, interiorsForce, ui.underground);
+  if (dwui) {
+    drawNight(ctx, world, sim, view, 1 - daylight(sim.time));
+    drawDWPreview(ctx, sim, view, controlSide, dwui.state, mouse ? screenToWorld(mouse[0], mouse[1]) : null);
+    drawDW(ctx, sim, view, controlSide, dwui.state);
+    drawArtillery(ctx, sim, view);
+    drawLabels();
+    uiTimer += dtReal;
+    if (uiTimer > 0.25) {
+      uiTimer = 0;
+      $('clock').textContent = fmtTime(sim.time);
+      dwui.update();
+      drawMinimap();
+      updateScale();
+      updateScoreboard();
+    }
+    return;
+  }
   drawFront(ctx, sim.game, view);
   drawFortOverlay(ctx, world, view, fortView, dig);
   drawNight(ctx, world, sim, view, 1 - daylight(sim.time));

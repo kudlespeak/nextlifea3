@@ -29,7 +29,7 @@ function apply(ev) {
 self.onmessage = (e) => {
   const m = e.data;
   if (m.t === 'init') {
-    world = generateWorld(m.seed);
+    world = generateWorld(m.seed, m.layout);
     // Заглушка симуляции: explodeWorld пишет сообщения и эффекты — здесь они не нужны
     const stub = { world, fires: [], events: [], msg() {}, time: 0, puppet: true };
     art = new Artillery(stub);

@@ -26,6 +26,10 @@ export const CALIBERS = {
   r122: { name: '122-мм реактивный снаряд', blast: 5, lethal: 20, danger: 75, frags: 900, crater: 2.0, speed: 700, sigma: 0.013, minR: 3000, maxR: 20000, dmg: 2 },
   grenade: { name: 'Ручная граната', blast: 1.5, lethal: 6, danger: 18, frags: 180, crater: 0.2, dmg: 0.05 },
   atgm: { name: 'ПТУР', blast: 2, lethal: 6, danger: 20, frags: 150, crater: 0.4, dmg: 0.6 },
+  dw3: { name: 'БЧ барражирующего боеприпаса', blast: 1.8, lethal: 7, danger: 25, frags: 220, crater: 0.5, dmg: 0.35 },
+  dw20: { name: 'БЧ ударного БПЛА 20 кг', blast: 3.6, lethal: 15, danger: 60, frags: 700, crater: 1.7, dmg: 1.3 },
+  dw50: { name: 'БЧ ударного БПЛА 50 кг', blast: 6, lethal: 24, danger: 90, frags: 1300, crater: 2.8, dmg: 2.6 },
+  dw105: { name: 'БЧ ударного БПЛА 105 кг', blast: 8, lethal: 32, danger: 120, frags: 2100, crater: 3.9, dmg: 3.6 },
   152: { name: '152-мм ОФС', blast: 7, lethal: 28, danger: 100, frags: 1700, crater: 3.2, speed: 560, sigma: 0.006, minR: 1500, maxR: 20000, dmg: 3 },
 };
 

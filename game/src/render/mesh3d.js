@@ -401,7 +401,7 @@ export function spriteFor(key, build, angle, zoomPx, opts, frameNo) {
   const step = (Math.PI * 2) / NA;
   let ai = Math.round(angle / step) % NA;
   if (ai < 0) ai += NA;
-  const lod = lodFor(zoomPx);
+  const lod = Math.min(lodFor(zoomPx), opts?.maxLod || 99);
   const k = `${key}|${lod}|${ai}`;
   let s = cache.get(k);
   if (!s) {

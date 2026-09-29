@@ -1,0 +1,442 @@
+// 3D-модели режима «Война дронов»: узлы инфраструктуры (с состояниями: исправен / повреждён /
+// разрушен, укрытия 1 и 2 уровня), ПВО, пусковые и летящие дроны. Координаты — метры,
+// x — вдоль оси объекта, y — поперёк, z — вверх; начало — центр узла на земле.
+
+import { Model, mat, hex, fbm, vnoise, mix } from './mesh3d.js';
+
+const set = (o, c) => { o[0] = c[0]; o[1] = c[1]; o[2] = c[2]; };
+const rect = (x0, x1, y0, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+// Материалы
+const STEEL = mat('#6c7068');
+const GALV = mat('#9ea39f', { spec: 0.2 }); // оцинковка порталов ОРУ
+const TRGREY = mat('#6f7a74', { fn(o, x, y, z) { mix(o, [40, 45, 42], vnoise(x * 2, y * 2, z * 2) * 0.2); } });
+const PORC = mat('#b58a64', { fn(o, x, y, z) { if ((z * 6) % 1 < 0.35) mix(o, [60, 40, 25], 0.35); } }); // фарфоровые изоляторы
+const CONCRETE = mat('#9a978d', { fn(o, x, y, z) { mix(o, [70, 68, 62], vnoise(x * 0.8, y * 0.8, z * 0.8) * 0.3); } });
+const CONC_DK = mat('#7b7870', { fn(o, x, y, z) { mix(o, [50, 48, 44], vnoise(x * 0.8, y * 0.8, z * 0.8) * 0.35); } });
+const BRICK = mat('#8d5b44', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && ((z * 3.4) % 1 < 0.12)) mix(o, [200, 190, 170], 0.3); } });
+const SOOT = mat('#262320', { fn(o, x, y, z) { mix(o, [80, 60, 40], vnoise(x * 1.5, y * 1.5, z * 1.5) * 0.3); } });
+const RUST = mat('#5b4637');
+const GABION = mat('#8a8575', { fn(o, x, y, z) { const v = vnoise(x * 5, y * 5, z * 5); mix(o, v > 0.5 ? [120, 115, 100] : [60, 58, 50], 0.5); if (((x + y) * 4) % 1 < 0.08 || (z * 4) % 1 < 0.08) mix(o, [40, 40, 38], 0.6); } });
+const EARTH = mat('#6d6a45', { fn(o, x, y, z) { mix(o, [90, 80, 50], vnoise(x * 0.5, y * 0.5, z) * 0.4); } });
+const COAL = mat('#232220', { fn(o, x, y, z) { mix(o, [60, 58, 55], vnoise(x * 3, y * 3, z * 3) * 0.3); } });
+const WHITE = mat('#d8d6cc', { fn(o, x, y, z) { mix(o, [150, 148, 140], vnoise(x * 0.3, y * 0.3, z * 0.3) * 0.25); } });
+const TANKW = mat('#c9c8bf', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && ((Math.atan2(y, x) * 8) % 1 < 0.05)) mix(o, [90, 90, 85], 0.4); } });
+const GLASS = mat('#2a3842', { spec: 0.7, ao: false });
+const ROOF = mat('#6a6d6b', { fn(o, x, y) { if ((x * 0.5) % 1 < 0.06) mix(o, [40, 40, 40], 0.3); } });
+const BLACK = mat('#141414');
+
+// ------------------------------------------------------------ Трансформатор
+function transformer(M, w, h, st, big) {
+  const H = big ? 4.6 : 3.4;
+  if (st === 'destroyed') {
+    // Разорванный бак, выгоревший, осел набок
+    M.loft([[0, rect(-w / 2, w / 2, -h / 2, h / 2)], [H * 0.55, rect(-w / 2 + 0.6, w / 2 - 0.2, -h / 2 + 0.4, h / 2 - 0.7)]], SOOT);
+    M.box(-w / 2 - 0.8, -w / 2 + 1.2, -h / 2 - 0.5, h / 2 + 0.4, 0, 1.2, RUST);
+    M.seg([w * 0.2, 0, H * 0.5], [w * 0.4, h * 0.6, 0.3], 0.4, 0.4, SOOT); // упавший ввод
+    return;
+  }
+  const tank = st === 'damaged' ? SOOT : TRGREY;
+  M.box(-w / 2 + 0.6, w / 2 - 0.6, -h / 2 + 1.1, h / 2 - 1.1, 0.3, H, tank);
+  // Радиаторы по бокам (рёбра)
+  const fins = mat('#5f6964', { fn(o, x) { if ((x * 3) % 1 < 0.4) mix(o, [25, 28, 26], 0.5); } });
+  for (const sg of [1, -1]) M.box(-w / 2 + 1, w / 2 - 1, sg > 0 ? h / 2 - 1.1 : -h / 2, sg > 0 ? h / 2 : -h / 2 + 1.1, 0.6, H - 0.4, st === 'damaged' ? SOOT : fins);
+  // Расширитель (консерватор) сверху и вводы с изоляторами
+  M.cylX(0, H + 0.7, 0.45, 0.45, -w / 2 + 0.8, -w / 2 + 3, STEEL, 10);
+  M.seg([-w / 2 + 1.2, 0, H], [-w / 2 + 1.2, 0, H + 0.7], 0.2, 0.2, STEEL);
+  const n = big ? 3 : 3;
+  for (let i = 0; i < n; i++) {
+    if (st === 'damaged' && i === 1) continue; // отбитый ввод
+    const x = -w / 2 + 3.5 + i * ((w - 5) / (n - 1)) * 0.7;
+    M.cylZ(x, -0.6, 0.22, 0.14, H, H + (big ? 3.4 : 2.2), PORC, 8);
+    M.cylZ(x + 0.6, 0.8, 0.16, 0.1, H, H + 1.4, PORC, 8);
+  }
+  M.box(-w / 2, -w / 2 + 0.6, -0.8, 0.8, 0.2, 1.6, mat('#48504c')); // шкаф охлаждения
+  // Маслоприёмник (гравий) и фундамент
+  M.box(-w / 2 - 0.3, w / 2 + 0.3, -h / 2 - 0.3, h / 2 + 0.3, 0, 0.3, CONC_DK);
+}
+function shelter(M, w, h, level, big) {
+  const H = (big ? 4.6 : 3.4) + 1.2;
+  if (level === 1) {
+    // Габионы по периметру (кроме ввода сверху)
+    for (const [x0, x1, y0, y1] of [[-w / 2 - 2, w / 2 + 2, -h / 2 - 2, -h / 2 - 0.8], [-w / 2 - 2, w / 2 + 2, h / 2 + 0.8, h / 2 + 2], [-w / 2 - 2, -w / 2 - 0.8, -h / 2 - 2, h / 2 + 2], [w / 2 + 0.8, w / 2 + 2, -h / 2 - 2, h / 2 + 2]])
+      M.box(x0, x1, y0, y1, 0, H * 0.75, GABION);
+  } else if (level >= 2) {
+    // Бетонный «саркофаг» с перекрытием: сверху видно плиту, вводы выведены вбок
+    M.box(-w / 2 - 2.2, w / 2 + 2.2, -h / 2 - 2.2, h / 2 + 2.2, 0, H + 0.6, CONCRETE, mat('#8d8a80', { fn(o, x, y) { if (((x + 20) * 0.5) % 1 < 0.05 || ((y + 20) * 0.5) % 1 < 0.05) mix(o, [50, 50, 45], 0.4); } }));
+    for (let i = 0; i < 3; i++) M.cylZ(-w / 2 + 2 + i * 2, h / 2 + 2.6, 0.18, 0.12, 0, H + 2.5, PORC, 8);
+  }
+}
+
+// ------------------------------------------------------------ ОРУ
+function switchyard(M, w, h, st, kv330) {
+  const H = kv330 ? 17 : 11;
+  const rows = Math.max(2, Math.round(h / (kv330 ? 20 : 9)));
+  const cols = Math.max(3, Math.round(w / (kv330 ? 24 : 14)));
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.15, mat('#9b978a', { fn(o, x, y) { mix(o, [110, 105, 95], vnoise(x * 2, y * 2, 0) * 0.3); } }));
+  const dead = st === 'destroyed';
+  // Порталы (решётчатые стойки + траверса) и выключатели под ними
+  for (let r = 0; r < rows; r++) {
+    const y = -h / 2 + ((r + 0.5) * h) / rows;
+    const broken = (c) => (dead && (c + r) % 2 === 0) || (st === 'damaged' && (c * 7 + r * 3) % 5 === 0);
+    for (let c = 0; c <= cols; c++) {
+      const x = -w / 2 + (c * w) / cols;
+      if (broken(c)) { M.seg([x, y, 0.3], [x + H * 0.7, y + 1.5, 0.6], 0.5, 0.5, dead ? SOOT : GALV); continue; }
+      M.seg([x, y - 0.5, 0], [x, y - 0.3, H], 0.45, 0.45, GALV);
+      M.seg([x, y + 0.5, 0], [x, y + 0.3, H], 0.45, 0.45, GALV);
+    }
+    if (!dead) M.seg([-w / 2, y, H], [w / 2, y, H], 0.35, 0.6, GALV);
+    for (let c = 0; c < cols; c++) {
+      const x = -w / 2 + ((c + 0.5) * w) / cols;
+      if (broken(c)) continue;
+      M.box(x - 1.2, x + 1.2, y - 0.6, y + 0.6, 0, 1.4, CONC_DK);
+      for (const dy of [-0.35, 0, 0.35]) M.cylZ(x, y + dy * (kv330 ? 4 : 2.4), 0.2, 0.16, 1.4, kv330 ? 7 : 4.5, PORC, 6);
+      M.seg([x - 3, y - 2, 0], [x - 3, y - 2, kv330 ? 6 : 4], 0.18, 0.18, GALV); // разъединитель
+    }
+  }
+  // Сборные шины вдоль ОРУ
+  if (!dead) for (const dy of [-1.5, 0, 1.5]) M.seg([-w / 2, -h / 2 + 2 + dy, H * 0.7], [w / 2, -h / 2 + 2 + dy, H * 0.7], 0.12, 0.12, mat('#8c8f8a'));
+}
+
+// ------------------------------------------------------------ Здания
+function building(M, w, h, H, st, wall = BRICK, roof = ROOF) {
+  if (st === 'destroyed') {
+    M.loft([[0, rect(-w / 2, w / 2, -h / 2, h / 2)], [H * 0.35, rect(-w / 2 + 1, w / 2 - 2, -h / 2 + 1, h / 2 - 1.5)]], SOOT);
+    for (let i = 0; i < 5; i++) M.box(-w / 2 + (i * w) / 5, -w / 2 + (i * w) / 5 + 1.2, -h / 2, -h / 2 + 1, 0, H * (0.5 + 0.1 * (i % 3)), wall);
+    return;
+  }
+  const win = mat(wall.c, { fn(o, x, y, z, n) {
+    wall.fn?.(o, x, y, z, n);
+    if (Math.abs(n[2]) < 0.5 && ((z - 1) % 3.3) > 1 && ((z - 1) % 3.3) < 2.4 && (((Math.abs(n[0]) > 0.5 ? y : x) * 0.4) % 1) < 0.5 && z < H - 1) set(o, st === 'damaged' ? [20, 18, 16] : [52, 66, 78]);
+  } });
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, H, win, st === 'damaged' ? SOOT : roof);
+}
+
+// Машинный зал энергоблока: высокий корпус, котельная, пилоны
+function tppUnit(M, w, h, st) {
+  const H = 34;
+  if (st === 'destroyed') {
+    M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 12, SOOT);
+    for (let i = 0; i < 6; i++) M.box(-w / 2 + i * (w / 6), -w / 2 + i * (w / 6) + 2, -h / 2, h / 2, 0, H * (0.4 + 0.1 * (i % 3)), CONC_DK);
+    return;
+  }
+  const wall = mat('#a8a497', { fn(o, x, y, z, n) {
+    mix(o, [120, 118, 110], vnoise(x * 0.2, y * 0.2, z * 0.2) * 0.2);
+    if (Math.abs(n[2]) < 0.5 && z > 8 && z < H - 3 && ((Math.abs(n[0]) > 0.5 ? y : x) * 0.25) % 1 < 0.55) set(o, st === 'damaged' ? [25, 22, 20] : [70, 88, 100]);
+  } });
+  M.box(-w / 2, w / 2, -h / 2, h / 2 - 22, 0, H, wall, st === 'damaged' ? SOOT : ROOF); // машинный зал
+  M.box(-w / 2 + 4, w / 2 - 4, h / 2 - 22, h / 2, 0, H + 14, mat('#8f8b80'), st === 'damaged' ? SOOT : mat('#767470')); // котельная (выше)
+  for (let i = 0; i < 4; i++) M.box(-w / 2 + 8 + i * ((w - 16) / 3) - 2, -w / 2 + 8 + i * ((w - 16) / 3) + 2, h / 2 - 20, h / 2 - 16, H + 14, H + 18, STEEL);
+}
+function chimney(M, st) {
+  const H = st === 'destroyed' ? 45 : 120;
+  const bands = mat('#b6b0a4', { fn(o, x, y, z) { if (st !== 'destroyed' && z > H - 22 && ((z / 5.5) | 0) % 2 === 0) set(o, [176, 58, 46]); mix(o, [60, 55, 50], Math.max(0, (z - H + 8) / 8) * 0.8); } });
+  M.cylZ(0, 0, 9, 5, 0, H, bands, 16);
+  M.cylZ(0, 0, 11, 10.5, 0, 3, CONCRETE, 16);
+}
+function coolingTower(M, st) {
+  // Гиперболоид: сечения с сужением на 3/4 высоты
+  const H = st === 'destroyed' ? 40 : 76, R0 = 38;
+  const rings = [];
+  for (let i = 0; i <= 8; i++) {
+    const z = (i / 8) * H;
+    const t = z / 76;
+    const r = R0 * (0.62 + 0.38 * ((t - 0.78) / 0.78) ** 2);
+    const ring = [];
+    for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2; ring.push([Math.cos(a) * r, Math.sin(a) * r]); }
+    rings.push([z, ring]);
+  }
+  const shell = mat('#b9b5aa', { fn(o, x, y, z) { mix(o, [110, 108, 100], vnoise(x * 0.15, y * 0.15, z * 0.1) * 0.3); if (z > H - 10) mix(o, [90, 88, 82], 0.3); } });
+  M.loft(rings, shell, mat('#4a5054'), false);
+  if (st === 'destroyed') for (let i = 0; i < 8; i++) { const a = i * 0.8; M.box(Math.cos(a) * 30 - 4, Math.cos(a) * 30 + 4, Math.sin(a) * 30 - 3, Math.sin(a) * 30 + 3, 0, 4 + (i % 3) * 3, CONC_DK); }
+}
+function coalYard(M, w, h, st) {
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.3, mat('#3b3934'));
+  for (let i = 0; i < 3; i++) M.dome(-w / 2 + (i + 0.5) * (w / 3), 0, 0.3, w / 7, h * 0.4, st === 'destroyed' ? 3 : 9, st === 'ok' ? COAL : SOOT, 3, 14);
+  // Конвейерная галерея к котельной
+  M.seg([-w / 2, -h / 2 + 4, 6], [-w / 2 - 60, -h / 2 - 40, 26], 3, 3, mat('#8a877d'));
+}
+function oilTank(M, w, st) {
+  const r = w / 2, H = 12;
+  if (st === 'destroyed') {
+    M.cylZ(0, 0, r, r * 0.95, 0, 5, SOOT, 20);
+    M.seg([-r, 0, 5], [r * 0.3, r * 0.4, 1], 0.6, 0.3, RUST);
+    return;
+  }
+  M.cylZ(0, 0, r, r, 0, H, st === 'damaged' ? SOOT : TANKW, 20, mat('#a9a8a0', { fn(o, x, y) { if ((Math.atan2(y, x) * 4 + 8) % 1 < 0.04) mix(o, [60, 60, 55], 0.5); } }));
+  M.dome(0, 0, H, r, r, 1.5, mat('#b4b3aa'), 2, 20);
+  M.seg([r * 0.7, -r * 0.7, 0], [r * 0.95, -r * 0.3, H], 0.4, 0.4, STEEL); // лестница
+  // Обвалование (земляной вал) — общее для площадки, у каждого — кольцо
+  M.cylZ(0, 0, r + 4, r + 3.4, 0, 1.2, EARTH, 20, EARTH);
+}
+function bunker(M, w, h, st) {
+  if (st === 'destroyed') {
+    M.dome(0, 0, 0, w * 0.55, h * 0.6, 1.2, SOOT, 3, 14);
+    for (let i = 0; i < 6; i++) M.box(-w / 2 + i * 3, -w / 2 + i * 3 + 1.8, -h / 2 + (i % 2) * 5, -h / 2 + (i % 2) * 5 + 1.3, 0, 1 + (i % 3) * 0.4, CONC_DK);
+    return;
+  }
+  M.dome(0, 0, 0, w * 0.6, h * 0.75, 4.2, st === 'damaged' ? SOOT : EARTH, 4, 16);
+  M.box(w * 0.45, w * 0.62, -2.5, 2.5, 0, 4, CONCRETE); // портал с воротами
+  M.box(w * 0.62, w * 0.64, -1.8, 1.8, 0, 3.2, mat('#4d5238'));
+}
+function hangar(M, w, h, st) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 2, SOOT); return; }
+  const rings = [];
+  const n = 8;
+  for (let i = 0; i <= n; i++) {
+    const a = Math.PI * (i / n);
+    rings.push([Math.sin(a) * h * 0.45, rect(-w / 2, w / 2, -Math.cos(a) * h / 2 - 0.01, -Math.cos(a) * h / 2 + 0.01)]);
+  }
+  // Полуцилиндр вдоль x — как набор коробок-«ламелей»
+  for (let i = 0; i < n; i++) {
+    const a0 = Math.PI * (i / n), a1 = Math.PI * ((i + 1) / n);
+    const y0 = -Math.cos(a0) * h / 2, y1 = -Math.cos(a1) * h / 2;
+    M.plate([[-w / 2, y0, Math.sin(a0) * h * 0.45], [w / 2, y0, Math.sin(a0) * h * 0.45], [w / 2, y1, Math.sin(a1) * h * 0.45], [-w / 2, y1, Math.sin(a1) * h * 0.45]], st === 'damaged' ? SOOT : mat('#7d8577', { fn(o, x) { if ((x * 0.8) % 1 < 0.08) mix(o, [40, 44, 40], 0.4); } }), [0, -Math.cos((a0 + a1) / 2) * 0.9, Math.sin((a0 + a1) / 2)]);
+  }
+  void rings;
+}
+function workshop(M, w, h, st) {
+  // Цех с шедовой кровлей (зенитные фонари «пилой»)
+  const H = 12;
+  building(M, w, h, H, st, mat('#a39e90'), mat('#6c706a'));
+  if (st === 'destroyed') return;
+  const n = Math.max(3, Math.round(w / 10));
+  for (let i = 0; i < n; i++) {
+    const x0 = -w / 2 + (i * w) / n, x1 = x0 + w / n;
+    if (st === 'damaged' && i % 3 === 1) continue;
+    M.loft([[H, rect(x0, x1, -h / 2 + 1, h / 2 - 1)], [H + 3.5, rect(x1 - 0.8, x1 - 0.1, -h / 2 + 1, h / 2 - 1)]], mat('#7a7d78'), GLASS);
+  }
+}
+function launcherTruck(M, side, st) {
+  // Пусковая: грузовик с наклонной направляющей и дроном на ней (у Кардагора — «Герань», у Велнарии — FP-1)
+  const cm = mat(side === 'red' ? '#59603f' : '#4f5c3a');
+  if (st === 'destroyed') { M.box(-5, 5, -1.2, 1.2, 0, 1.5, SOOT); return; }
+  for (const x of [-3.5, -2.2, 3.2]) for (const sg of [1, -1]) M.cylY(x, 0.5, 0.5, sg > 0 ? 0.8 : -1.2, sg > 0 ? 1.2 : -0.8, BLACK, 10);
+  M.box(-5.5, 2.6, -1.2, 1.2, 0.9, 1.4, cm);
+  M.box(2.6, 4.6, -1.2, 1.2, 0.9, 3.0, cm);
+  M.box(4.58, 4.62, -1, 1, 2, 2.8, GLASS);
+  M.seg([-5.8, 0, 1.6], [1.8, 0, 4.2], 0.5, 0.35, STEEL); // направляющая
+  if (st === 'ok') {
+    const D = new Model();
+    (side === 'red' ? droneShahed : droneFP1)(D, 0.8);
+    Model.transform(D, -2.2, 0, 3.2, 0);
+    // наклон — грубо: приподнять нос
+    for (const f of D.parts.flat()) for (const p of f.v) p[2] += (p[0] + 2.2) * 0.33;
+    M.merge(D);
+  }
+}
+
+// ------------------------------------------------------------ Дроны (в полёте)
+function droneShahed(M, k = 1, color = '#8a8f8a') {
+  const body = mat(color, { fn(o, x, y, z) { mix(o, [60, 62, 60], vnoise(x * 3, y * 3, z * 3) * 0.2); } });
+  // Треугольное крыло 2.5 м, фюзеляж, законцовки-кили, толкающий винт
+  M.loft([[0.15 * k, [[1.4 * k, 0], [-1.4 * k, 1.25 * k], [-1.6 * k, 1.25 * k], [-1.6 * k, -1.25 * k], [-1.4 * k, -1.25 * k]]], [0.3 * k, [[1.35 * k, 0], [-1.35 * k, 1.2 * k], [-1.55 * k, 1.2 * k], [-1.55 * k, -1.2 * k], [-1.35 * k, -1.2 * k]]]], body);
+  M.cylX(0, 0.35 * k, 0.22 * k, 0.24 * k, -1.6 * k, 1.1 * k, body, 10);
+  M.dome(1.1 * k, 0, 0.35 * k - 0.2 * k, 0.35 * k, 0.2 * k, 0.2 * k, body, 2, 10);
+  for (const sg of [1, -1]) M.loft([[0.3 * k, rect(-1.6 * k, -1.2 * k, sg * 1.2 * k - 0.03, sg * 1.2 * k + 0.03)], [0.8 * k, rect(-1.6 * k, -1.45 * k, sg * 1.2 * k - 0.03, sg * 1.2 * k + 0.03)]], body);
+  M.plate([[-1.7 * k, -0.02, 0.05 * k], [-1.7 * k, 0.02, 0.05 * k], [-1.7 * k, 0.02, 0.65 * k], [-1.7 * k, -0.02, 0.65 * k]], BLACK, [-1, 0, 0]);
+}
+function droneGeran3(M) {
+  droneShahed(M, 1, '#2b2d2c');
+  M.cylX(0, 0.62, 0.18, 0.2, -1.8, -0.4, mat('#555855'), 10); // ТРД сверху
+}
+function droneFP1(M, k = 1) {
+  const body = mat('#b0b4ad', { fn(o, x, y, z) { mix(o, [80, 84, 80], vnoise(x * 3, y * 3, z * 3) * 0.2); } });
+  M.cylX(0, 0.35 * k, 0.2 * k, 0.16 * k, -1.8 * k, 1.5 * k, body, 10);
+  M.dome(1.5 * k, 0, 0.35 * k - 0.16 * k, 0.3 * k, 0.16 * k, 0.16 * k, body, 2, 8);
+  M.box(0.1 * k, 0.6 * k, -2.2 * k, 2.2 * k, 0.48 * k, 0.55 * k, body); // прямое крыло
+  M.box(-1.8 * k, -1.5 * k, -0.7 * k, 0.7 * k, 0.38 * k, 0.42 * k, body); // стабилизатор
+  M.loft([[0.4 * k, rect(-1.8 * k, -1.4 * k, -0.03, 0.03)], [0.9 * k, rect(-1.8 * k, -1.65 * k, -0.03, 0.03)]], body);
+  M.plate([[-1.85 * k, -0.02, 0.0], [-1.85 * k, 0.02, 0.0], [-1.85 * k, 0.02, 0.7 * k], [-1.85 * k, -0.02, 0.7 * k]], BLACK, [-1, 0, 0]);
+}
+function droneLyutyi(M) {
+  const body = mat('#c7c9c2');
+  M.cylX(0, 0.45, 0.28, 0.2, -2.0, 1.4, body, 10);
+  M.box(-0.2, 0.5, -3.3, 3.3, 0.72, 0.8, body); // верхнеплан
+  M.seg([-0.2, 0, 0.55], [-0.2, 0, 0.75], 0.15, 0.3, body);
+  M.box(-2.3, -1.9, -0.9, 0.9, 0.9, 0.95, body); // Т-образное оперение
+  M.loft([[0.45, rect(-2.3, -1.7, -0.03, 0.03)], [0.95, rect(-2.3, -2.05, -0.03, 0.03)]], body);
+  M.plate([[-2.05, -0.02, 0.1], [-2.05, 0.02, 0.1], [-2.05, 0.02, 0.8], [-2.05, -0.02, 0.8]], BLACK, [-1, 0, 0]);
+}
+function droneFP2(M) {
+  const body = mat('#8e9489');
+  M.cylX(0, 0.5, 0.32, 0.26, -2.0, 1.8, body, 12);
+  M.dome(1.8, 0, 0.24, 0.45, 0.26, 0.26, body, 2, 10);
+  M.box(-0.2, 0.55, -2.6, 2.6, 0.55, 0.62, body);
+  for (const sg of [1, -1]) M.loft([[0.5, rect(-2.0, -1.5, sg * 0.4 - 0.03, sg * 0.4 + 0.03)], [1.1, rect(-2.0, -1.75, sg * 0.45 - 0.03, sg * 0.45 + 0.03)]], body);
+  M.box(-2.0, -1.6, -0.5, 0.5, 0.5, 0.55, body);
+  M.plate([[-2.05, -0.02, 0.05], [-2.05, 0.02, 0.05], [-2.05, 0.02, 0.95], [-2.05, -0.02, 0.95]], BLACK, [-1, 0, 0]);
+}
+function droneBober(M) {
+  const body = mat('#9aa08f');
+  // Утка с треугольным крылом
+  M.cylX(0, 0.3, 0.16, 0.14, -1.3, 1.3, body, 8);
+  M.loft([[0.28, [[0.2, 0], [-1.2, 1.3], [-1.3, 1.3], [-1.3, -1.3], [-1.2, -1.3]]], [0.33, [[0.15, 0], [-1.15, 1.25], [-1.25, 1.25], [-1.25, -1.25], [-1.15, -1.25]]]], body);
+  M.box(0.9, 1.1, -0.5, 0.5, 0.33, 0.36, body);
+  M.loft([[0.3, rect(-1.3, -0.9, -0.03, 0.03)], [0.8, rect(-1.3, -1.15, -0.03, 0.03)]], body);
+}
+function droneGerbera(M) {
+  droneShahed(M, 0.72, '#d9d6c8');
+}
+function droneLancet(M, k = 1) {
+  const body = mat('#6d7560');
+  M.cylX(0, 0.2, 0.08, 0.08, -0.7 * k, 0.8 * k, body, 8);
+  M.dome(0.8 * k, 0, 0.12, 0.12, 0.08, 0.08, body, 2, 8);
+  // Две крестообразные группы крыльев (X-X)
+  for (const x of [0.35 * k, -0.45 * k]) for (const a of [0.785, -0.785]) {
+    const c = Math.cos(a), s = Math.sin(a);
+    M.plate([[x - 0.14, 0, 0.2], [x + 0.14, 0, 0.2], [x + 0.08, c * 0.6, 0.2 + s * 0.6], [x - 0.14, c * 0.6, 0.2 + s * 0.6]], body, [0, -s, c]);
+    M.plate([[x - 0.14, 0, 0.2], [x + 0.14, 0, 0.2], [x + 0.08, -c * 0.6, 0.2 + s * 0.6], [x - 0.14, -c * 0.6, 0.2 + s * 0.6]], body, [0, s, c]);
+  }
+}
+function droneOrlan(M) {
+  const body = mat('#d4d2c6');
+  M.cylX(0, 0.3, 0.15, 0.12, -0.6, 0.8, body, 8);
+  M.box(-0.1, 0.25, -1.55, 1.55, 0.45, 0.5, body); // высокоплан
+  M.seg([-0.6, 0, 0.3], [-1.3, 0, 0.35], 0.05, 0.05, body); // хвостовая балка
+  M.box(-1.45, -1.25, -0.4, 0.4, 0.35, 0.38, body);
+  M.loft([[0.36, rect(-1.45, -1.25, -0.02, 0.02)], [0.65, rect(-1.45, -1.38, -0.02, 0.02)]], body);
+  M.plate([[-0.62, -0.02, 0.05], [-0.62, 0.02, 0.05], [-0.62, 0.02, 0.55], [-0.62, -0.02, 0.55]], BLACK, [-1, 0, 0]);
+}
+function droneLeleka(M) {
+  const body = mat('#8b907f');
+  // Летающее крыло
+  M.loft([[0.1, [[0.6, 0], [-0.1, 1.95], [-0.35, 1.95], [-0.35, -1.95], [-0.1, -1.95]]], [0.2, [[0.55, 0], [-0.1, 1.9], [-0.3, 1.9], [-0.3, -1.9], [-0.1, -1.9]]]], body);
+  M.dome(0.1, 0, 0.18, 0.5, 0.18, 0.15, body, 2, 8);
+}
+function droneInterceptor(M, side) {
+  const body = mat(side === 'blue' ? '#3c4046' : '#4b4f3c');
+  // «Пуля»: вытянутый корпус с четырьмя винтами (взлёт вертикальный, полёт носом вперёд)
+  M.cylX(0, 0.25, 0.09, 0.07, -0.35, 0.45, body, 8);
+  M.dome(0.45, 0, 0.18, 0.12, 0.07, 0.07, body, 2, 8);
+  for (const [x, y] of [[0.2, 0.22], [0.2, -0.22], [-0.25, 0.22], [-0.25, -0.22]]) { M.seg([x * 0.3, y * 0.3, 0.25], [x, y, 0.27], 0.03, 0.02, BLACK); M.cylZ(x, y, 0.12, 0.12, 0.27, 0.28, mat('#1a1a1a'), 10); }
+}
+const DRONE_BUILD = {
+  shahed: (M) => droneShahed(M), geran3: droneGeran3, gerbera: droneGerbera, fp1: (M) => droneFP1(M), fp2: droneFP2, lyutyi: droneLyutyi, bober: droneBober,
+  lancet: (M) => droneLancet(M), warmate: (M) => droneLancet(M, 0.8), orlan: droneOrlan, leleka: droneLeleka, sting: (M) => droneInterceptor(M, 'blue'), elka: (M) => droneInterceptor(M, 'red'),
+};
+export function buildDrone(type) { const M = new Model(); (DRONE_BUILD[type] || droneShahed)(M); return M; }
+
+// ------------------------------------------------------------ Узлы по типу
+export function buildComp(k, w, h, st, shelterLevel, side) {
+  const M = new Model();
+  switch (k) {
+    case 'at': case 'gsu': transformer(M, w, h, st, true); if (shelterLevel && st !== 'destroyed') shelter(M, w, h, shelterLevel, true); break;
+    case 'tr': transformer(M, w, h, st, false); if (shelterLevel && st !== 'destroyed') shelter(M, w, h, shelterLevel, false); break;
+    case 'oru': switchyard(M, w, h, st, w > 100); break;
+    case 'ctrl': building(M, w, h, 7, st); break;
+    case 'unit': tppUnit(M, w, h, st); break;
+    case 'chimney': chimney(M, st); break;
+    case 'tower': coolingTower(M, st); break;
+    case 'coal': coalYard(M, w, h, st); break;
+    case 'tank': oilTank(M, w, st); break;
+    case 'pump': building(M, w, h, 5, st, mat('#b3ada0')); break;
+    case 'rack': M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.2, CONC_DK); for (let i = 0; i < 6; i++) M.seg([-w / 2 + i * (w / 5), 0, 0], [-w / 2 + i * (w / 5), 0, 6], 0.4, 0.4, st === 'destroyed' ? SOOT : STEEL); if (st !== 'destroyed') M.box(-w / 2, w / 2, -1.2, 1.2, 6, 6.5, STEEL); break;
+    case 'bunker': bunker(M, w, h, st); if (shelterLevel && st !== 'destroyed') M.box(-w / 2 - 1, w / 2 + 1, h / 2 + 0.2, h / 2 + 1.5, 0, 3, GABION); break;
+    case 'store': hangar(M, w, h, st); break;
+    case 'shop': workshop(M, w, h, st); break;
+    case 'launcher': launcherTruck(M, side, st); break;
+    default: M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 3, CONCRETE);
+  }
+  return M;
+}
+
+// ------------------------------------------------------------ ПВО
+function pickup(M, side) {
+  const cm = mat(side === 'blue' ? '#56603f' : '#5b6340', { fn(o, x, y, z) { mix(o, [90, 80, 60], Math.max(0, 0.8 - z) * 0.5); } });
+  for (const x of [-1.6, 1.5]) for (const sg of [1, -1]) M.cylY(x, 0.4, 0.4, sg > 0 ? 0.65 : -0.95, sg > 0 ? 0.95 : -0.65, mat('#1b1b1a'), 10);
+  M.box(-2.6, 2.6, -0.9, 0.9, 0.55, 1.05, cm);
+  M.box(0.6, 2.6, -0.88, 0.88, 1.05, 1.3, cm); // капот
+  M.loft([[1.05, rect(-0.6, 0.8, -0.85, 0.85)], [1.8, rect(-0.5, 0.45, -0.8, 0.8)]], cm);
+  M.plate([[0.81, -0.75, 1.1], [0.81, 0.75, 1.1], [0.47, 0.72, 1.75], [0.47, -0.72, 1.75]], GLASS, [1, 0, 0.5]);
+  M.box(-2.6, -0.65, -0.9, 0.9, 1.05, 1.25, mat('#3f4431')); // борта кузова
+  M.box(-2.5, -0.75, -0.8, 0.8, 0.95, 1.0, mat('#2f3228'));
+}
+function mogTurret(M) {
+  // Спаренный пулемёт на тумбе и прожектор
+  M.cylZ(0, 0, 0.12, 0.1, 1.0, 1.7, mat('#2b2d27'), 8);
+  M.seg([-0.4, 0.08, 1.8], [1.1, 0.08, 1.85], 0.07, 0.07, BLACK);
+  M.seg([-0.4, -0.08, 1.8], [1.1, -0.08, 1.85], 0.07, 0.07, BLACK);
+  M.box(-0.2, 0.2, -0.25, 0.25, 1.65, 1.95, mat('#3c4031'));
+  M.cylX(0.35, 2.05, 0.18, 0.2, -0.1, 0.35, mat('#2a2c28'), 10, mat('#fff7d6', { ao: false, glow: 40 }));
+}
+function gepard(M) {
+  const cm = mat('#4d5b3a', { fn(o, x, y, z) { const v = fbm(x * 0.5, y * 0.5, z * 0.5); if (v < 0.37) set(o, [95, 77, 54]); else if (v > 0.67) set(o, [39, 40, 31]); } });
+  for (let i = 0; i < 7; i++) for (const sg of [1, -1]) M.cylY(-2.8 + i * 0.95, 0.4, 0.36, sg > 0 ? 1.15 : -1.65, sg > 0 ? 1.65 : -1.15, mat('#262522'), 10);
+  for (const sg of [1, -1]) M.box(-3.4, 3.4, sg > 0 ? 1.15 : -1.65, sg > 0 ? 1.65 : -1.15, 0.75, 0.85, mat('#2a2a25'));
+  M.loft([[0.4, rect(-3.5, 3.1, -1.15, 1.15)], [1.0, rect(-3.6, 3.6, -1.6, 1.6)], [1.45, rect(-3.6, 2.4, -1.6, 1.6)]], cm);
+}
+function gepardTurret(M) {
+  const cm = mat('#56633f');
+  M.box(-1.6, 1.2, -1.2, 1.2, 1.45, 2.6, cm);
+  for (const sg of [1, -1]) { M.box(-0.6, 0.8, sg * 1.2 - 0.25, sg * 1.2 + 0.25, 1.9, 2.4, cm); M.cylX(sg * 1.2, 2.15, 0.07, 0.06, 0.8, 4.2, mat('#2c2e27'), 8); }
+  M.box(0.8, 1.6, -0.5, 0.5, 2.3, 3.0, cm); // РЛС сопровождения
+  M.cylX(0, 2.65, 0.45, 0.45, 1.6, 1.65, mat('#3a3f33'), 12);
+  M.seg([-1.3, 0, 2.6], [-1.3, 0, 3.3], 0.2, 0.2, mat('#2e3129'));
+  M.box(-1.5, -1.1, -1.1, 1.1, 3.3, 3.9, mat('#454c3a')); // антенна обзорной РЛС
+}
+function pantsirHull(M) {
+  const cm = mat('#56603c');
+  for (const x of [-3.2, -1.8, 1.6, 3.0]) for (const sg of [1, -1]) M.cylY(x, 0.6, 0.6, sg > 0 ? 0.9 : -1.35, sg > 0 ? 1.35 : -0.9, mat('#1c1c1a'), 12);
+  M.box(-4.6, 2.2, -1.25, 1.25, 1.0, 1.5, cm);
+  M.box(2.2, 4.6, -1.25, 1.25, 1.0, 3.0, cm);
+  M.plate([[4.61, -1.0, 2.0], [4.61, 1.0, 2.0], [4.61, 1.0, 2.8], [4.61, -1.0, 2.8]], GLASS, [1, 0, 0]);
+}
+function pantsirTurret(M) {
+  const cm = mat('#5f6843');
+  M.box(-1.4, 1.4, -1.0, 1.0, 1.5, 2.9, cm);
+  for (const sg of [1, -1]) {
+    M.box(-1.0, 1.6, sg * 1.35 - 0.35, sg * 1.35 + 0.35, 2.0, 2.7, cm); // пакет ракет
+    M.cylX(sg * 1.2, 2.45, 0.05, 0.05, 1.2, 3.2, mat('#2c2e27'), 6);
+    M.cylX(sg * 1.5, 2.45, 0.05, 0.05, 1.2, 3.2, mat('#2c2e27'), 6);
+  }
+  M.box(-1.2, -0.4, -0.9, 0.9, 2.9, 3.9, mat('#3d4433')); // РЛС обнаружения
+  M.cylX(0, 2.3, 0.5, 0.5, 1.4, 1.5, mat('#3a3f33'), 12);
+}
+function ewTruck(M, side) {
+  pickupBig(M, side);
+  M.seg([-2, 0, 2.5], [-2, 0, 9], 0.25, 0.25, mat('#8c8f8a'));
+  for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2; M.box(-2 + Math.cos(a) * 0.4 - 0.1, -2 + Math.cos(a) * 0.4 + 0.1, Math.sin(a) * 0.4 - 0.5, Math.sin(a) * 0.4 + 0.5, 7.5, 9.2, mat('#d9d6cc')); }
+  for (let i = 0; i < 6; i++) M.seg([-3.5 + i * 0.5, 1.1, 2.6], [-3.5 + i * 0.5, 1.1, 4.2], 0.05, 0.05, BLACK);
+}
+function pickupBig(M, side) {
+  const cm = mat(side === 'blue' ? '#56603f' : '#5b6340');
+  for (const x of [-2.8, -1.6, 2.2]) for (const sg of [1, -1]) M.cylY(x, 0.55, 0.55, sg > 0 ? 0.8 : -1.2, sg > 0 ? 1.2 : -0.8, mat('#1c1c1a'), 12);
+  M.box(-4, 1.4, -1.2, 1.2, 1.0, 2.6, cm);
+  M.box(1.4, 3.6, -1.2, 1.2, 1.0, 2.8, cm);
+  M.plate([[3.61, -1.0, 1.9], [3.61, 1.0, 1.9], [3.61, 1.0, 2.6], [3.61, -1.0, 2.6]], GLASS, [1, 0, 0]);
+}
+function radarTurret(M) {
+  // Вращающаяся антенна: решётка на мачте
+  M.seg([0, 0, 2.6], [0, 0, 5], 0.35, 0.35, mat('#6f736b'));
+  M.box(-0.3, 0.3, -2.6, 2.6, 4.6, 7.2, mat('#5c6356', { fn(o, x, y, z) { if (((y + 3) * 3) % 1 < 0.15 || ((z * 3) % 1) < 0.15) mix(o, [25, 28, 24], 0.45); } }));
+}
+function acousticPost(M) {
+  M.seg([0, 0, 0], [0, 0, 6], 0.12, 0.12, mat('#8a8d88'));
+  for (const a of [0, 2.1, 4.2]) M.seg([0, 0, 0], [Math.cos(a) * 1.4, Math.sin(a) * 1.4, 0], 0.06, 0.06, mat('#6a6d68'));
+  M.cylZ(0, 0, 0.25, 0.1, 6, 6.6, mat('#d4d0c4'), 8);
+  M.plate([[-0.6, 0.4, 3.6], [0.6, 0.4, 3.6], [0.6, 0.9, 4.4], [-0.6, 0.9, 4.4]], mat('#1d2a44', { spec: 0.6 }), [0, -0.7, 0.7]);
+  M.box(-0.3, 0.3, -0.3, 0.3, 1.2, 1.8, mat('#5b604c'));
+}
+function icptTeam(M, side) {
+  pickup(M, side);
+  // Стартовая рама с перехватчиками в кузове
+  for (let i = 0; i < 4; i++) M.box(-2.4 + i * 0.45, -2.1 + i * 0.45, -0.6, 0.6, 1.3, 1.45, mat('#2e3129'));
+  for (let i = 0; i < 3; i++) { const Dm = new Model(); droneInterceptor(Dm, side); Model.transform(Dm, -2.2 + i * 0.5, 0, 1.2, Math.PI / 2); M.merge(Dm); }
+}
+export function buildAD(type, side, part) {
+  const M = new Model();
+  if (part === 'turret') {
+    if (type === 'mog') mogTurret(M);
+    else if (type === 'spaag') (side === 'blue' ? gepardTurret : pantsirTurret)(M);
+    else if (type === 'radar') radarTurret(M);
+    return M;
+  }
+  if (type === 'mog') pickup(M, side);
+  else if (type === 'spaag') (side === 'blue' ? gepard : pantsirHull)(M);
+  else if (type === 'ew') ewTruck(M, side);
+  else if (type === 'radar') pickupBig(M, side);
+  else if (type === 'acoustic') acousticPost(M);
+  else if (type === 'icpt') icptTeam(M, side);
+  return M;
+}
+void hex;

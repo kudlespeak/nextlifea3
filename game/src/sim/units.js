@@ -140,6 +140,9 @@ function formationOffset(i, column = false) {
   return [-row * 4.5, (i % 2 ? -1 : 1) * row * 3.8];
 }
 
+import { DroneWar } from './dronewar.js';
+import { DroneWarAI } from './dwai.js';
+
 export class Sim {
   constructor(world) {
     this.world = world;
@@ -174,6 +177,12 @@ export class Sim {
     this.cfg = cfg;
     this.time = (cfg.startHour ?? 5.5) * 3600;
     const rng = new Rng((this.world.seed ^ 0xa11) >>> 0);
+    if (cfg.mode === 'drones') {
+      // «Война дронов»: наземных войск нет — только тыл, ПВО и дроны
+      this.game = new DroneWar(this, cfg);
+      this.ais = (cfg.aiSides || []).map((side) => new DroneWarAI(this, side, cfg.difficulty));
+      return;
+    }
     this.game = new GameMode(this, cfg);
     this.game.deploy(rng);
     this.ais = (cfg.aiSides || []).map((side) => new AI(this, side, cfg.mode, cfg.difficulty));
