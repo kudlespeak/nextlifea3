@@ -95,39 +95,41 @@ export class LocalGrid {
     const s = this.nearestFree(ax, ay), t = this.nearestFree(bx, by);
     if (s < 0 || t < 0) return null;
     const W = this.w, H = this.h, N = W * H;
-    const g = new Float32Array(N).fill(Infinity);
-    const prev = new Int32Array(N).fill(-1);
-    const closed = new Uint8Array(N);
+    // Рабочие массивы — одни на сетку (несколько бойцов по одной сетке), сброс «штампом»
+    if (!this.g) { this.g = new Float32Array(N); this.prevA = new Int32Array(N); this.seenA = new Uint16Array(N); this.closedA = new Uint16Array(N); this.stamp = 0; }
+    const st = ++this.stamp;
+    const g = this.g, prev = this.prevA, seen = this.seenA, closedA = this.closedA;
     const tx = t % W, ty = (t / W) | 0;
     const heap = new MinHeap();
     const h = (i) => {
       const dx = Math.abs((i % W) - tx), dy = Math.abs(((i / W) | 0) - ty);
-      return Math.max(dx, dy) + 0.4142 * Math.min(dx, dy);
+      return (Math.max(dx, dy) + 0.4142 * Math.min(dx, dy)) * 1.6; // «жадный» A*: в разы меньше перебора, путь почти тот же
     };
-    g[s] = 0;
+    g[s] = 0; seen[s] = st; prev[s] = -1;
     heap.push(s, h(s));
     const DX = [1, -1, 0, 0, 1, 1, -1, -1], DY = [0, 0, 1, -1, 1, -1, 1, -1];
     const B = this.blocked;
     let found = false, expanded = 0;
     while (heap.size) {
       const cur = heap.pop();
-      if (closed[cur]) continue;
-      closed[cur] = 1;
+      if (closedA[cur] === st) continue;
+      closedA[cur] = st;
       if (cur === t) { found = true; break; }
-      if (++expanded > 250000) break;
+      if (++expanded > 40000) break; // цель недостижима — не перебираем всю сетку
       const cx = cur % W, cy = (cur / W) | 0;
       for (let k = 0; k < 8; k++) {
         const nx = cx + DX[k], ny = cy + DY[k];
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const ni = ny * W + nx;
-        if (B[ni] || closed[ni]) continue;
+        if (B[ni] || closedA[ni] === st) continue;
         let step = 1;
         if (k >= 4) {
           if (B[cy * W + nx] || B[ny * W + cx]) continue;
           step = 1.4142;
         }
         const ng = g[cur] + step;
-        if (ng < g[ni]) {
+        if (seen[ni] !== st || ng < g[ni]) {
+          seen[ni] = st;
           g[ni] = ng;
           prev[ni] = cur;
           heap.push(ni, ng + h(ni));

@@ -41,6 +41,7 @@ export class Artillery {
   // Приказ на огонь: rounds выстрелов на орудие, fuse — 'ground' | 'air'
   orderFire(units, x, y, { rounds = 3, fuse = 'ground' } = {}) {
     const res = [];
+    if (this.sim.game?.prep) return ['Идёт подготовка — огонь откроете после начала боя'];
     for (const u of units) {
       const cal = CALIBERS[u.def.caliber];
       if (!cal) continue;
@@ -94,8 +95,11 @@ export class Artillery {
     const x = f.x + ax * er - ay * ed, y = f.y + ay * er + ax * ed;
     const tof = d / cal.speed + (u.def.caliber < 100 ? 8 : 4);
     this.shells.push({ x0: u.x, y0: u.y, x, y, tLaunch: sim.time, tImpact: sim.time + tof, caliber: u.def.caliber, fuse: f.fuse, side: u.side });
-    this.effects.push({ type: 'muzzle', x: u.x, y: u.y, h: u.heading, t: performance.now() });
-    u.heading = Math.atan2(ay, ax);
+    // Орудие на прицепе стреляет назад по ходу тягача — поворачиваем «корму» к цели
+    u.heading = Math.atan2(ay, ax) + (u.type === 'arty' ? Math.PI : 0);
+    const bx = u.type === 'arty' ? -9 : 0;
+    this.effects.push({ type: 'muzzle', x: u.x + Math.cos(u.heading) * bx, y: u.y + Math.sin(u.heading) * bx, h: Math.atan2(ay, ax), t: performance.now() });
+    u.recoil = sim.time;
     u.ammo--;
     f.rounds--;
     f.next = sim.time + u.def.reload;
@@ -175,12 +179,13 @@ export class Artillery {
     const cal = CALIBERS[caliber];
     const air = fuse === 'air';
     if (sim.puppet) return { killed: 0, wounded: 0 };
+    for (const m of sim.log.hitDepot(x, y, cal.blast)) sim.msg(m);
 
     // ---------- Люди ----------
     let killed = 0, wounded = 0;
     const affected = new Set();
     for (const u of sim.units) {
-      if (u.dead) continue;
+      if (u.dead || u.embarked) continue;
       if (!u.soldiers) {
         // Техника: близкий разрыв — уничтожена, в радиусе — повреждена
         const d = Math.hypot(u.x - x, u.y - y);
@@ -313,6 +318,20 @@ export class Artillery {
     this.sim.events.push({ type: 'forts', bbox: w.bbox });
     this.sim.events.push({ type: 'net', ev: { k: 'wreck', id: u.id, x: u.x, y: u.y, a: u.heading, t: type } });
     this.sim.msg(`${u.label}: уничтожен`);
+    // Десант в подбитой машине: часть гибнет, остальные ранены и выбираются наружу
+    for (const p of [...(u.passengers || [])]) {
+      const rng = this.sim.rng;
+      for (const s of p.soldiers) {
+        if (s.dead) continue;
+        const r = rng.next();
+        if (r < 0.35) { s.dead = true; s.hp = 0; s.mode = 'dead'; }
+        else if (r < 0.75) { s.hp = Math.min(s.hp, rng.float(8, 29)); s.wounded = 2; s.treated = false; }
+        else { s.hp = Math.min(s.hp, 60); s.wounded = 1; }
+      }
+      this.sim.disembark(p, true);
+      this.sim.checkUnit(p);
+      this.sim.msg(`${p.label}: машина подбита, десант понёс потери`, p.side);
+    }
   }
 }
 

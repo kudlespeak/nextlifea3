@@ -11,9 +11,10 @@ export const T_NAMES = ['степь', 'поле', 'пашня', 'посадка'
 // Скорость (м/с) по классу местности для каждого типа движителя
 export const MOVE = {
   //         OPEN CROP PLOW TREE DIRT ROAD WATR BLDG URBN RAIL RAVN
-  foot:    [1.4, 1.25, 0.95, 0.9, 1.5, 1.55, 0, 0, 1.4, 1.2, 0.8],
-  wheeled: [9, 7, 3.5, 1.2, 12, 20, 0, 0, 7, 2.5, 2.5],
-  tracked: [10, 9, 6.5, 2.5, 11, 14, 0, 0, 6, 4, 4.5],
+  // Пехота — ускоренный марш (игровой темп), техника по полю заметно медленнее, чем по дороге
+  foot:    [2.5, 2.2, 1.7, 1.5, 2.7, 2.8, 0, 0, 2.4, 1.9, 1.4],
+  wheeled: [6.5, 5, 2.6, 1, 11, 19, 0, 0, 6, 2, 2],
+  tracked: [8, 6.5, 5, 2.2, 10, 13, 0, 0, 5.5, 3.5, 4],
 };
 
 // Множитель «цены» клетки в скрытном режиме: открытое — дорого, укрытия — дёшево
@@ -148,10 +149,11 @@ export class NavGrid {
 
   // ---------- A* ----------
   // Цена клетки = время прохождения (с). Возвращает { path, time } или null.
-  findPath(sx, sy, tx, ty, move, stealth = false) {
+  // direct — кратчайший путь по расстоянию (напрямик, не выбирая дорог)
+  findPath(sx, sy, tx, ty, move, stealth = false, direct = false) {
     const sp = MOVE[move];
     const res = this.res;
-    const cost = sp.map((s, c) => (s > 0 ? (res / s) * (stealth ? STEALTH[c] : 1) : Infinity));
+    const cost = sp.map((s, c) => (s > 0 ? (direct ? res / sp[T.OPEN] : (res / s) * (stealth ? STEALTH[c] : 1)) : Infinity));
     let minCost = Infinity;
     for (const c of cost) minCost = Math.min(minCost, c);
 
@@ -214,21 +216,34 @@ export class NavGrid {
     const pts = cells.map((i) => [((i % W) + 0.5) * res, (((i / W) | 0) + 0.5) * res]);
     pts[0] = s;
     pts[pts.length - 1] = t;
-    return { path: this.smooth(pts, cells, cost), time: g[goal] };
+    const path = this.smooth(pts, cells, cost);
+    // Время — по реальным скоростям (для напрямик/скрытно цена клетки другая)
+    let time = g[goal];
+    if (direct || stealth) {
+      const real = sp.map((s) => (s > 0 ? res / s : Infinity));
+      time = 0;
+      for (let i = 1; i < path.length; i++) time += this.segmentCost(path[i - 1], path[i], real);
+    }
+    return { path, time };
   }
 
-  // Спрямление: пропускаем точки, если прямой отрезок идёт только по тем же
-  // классам местности, что и исходный кусок пути (дорога остаётся дорогой)
+  // Спрямление («натягивание нити»): отрезок i→j берём, если по прямой проходимо
+  // и не дольше, чем по исходной ломаной (дорога остаётся дорогой, поле — полем)
   smooth(pts, cells, cost) {
     if (pts.length < 3) return pts;
+    const res = this.res;
+    const cum = [0];
+    for (let k = 1; k < cells.length; k++) {
+      const diag = (cells[k] % this.w) !== (cells[k - 1] % this.w) && ((cells[k] / this.w) | 0) !== ((cells[k - 1] / this.w) | 0);
+      cum.push(cum[k - 1] + cost[this.cls[cells[k]]] * (diag ? 1.4142 : 1));
+    }
     const out = [pts[0]];
     let i = 0;
     while (i < pts.length - 1) {
       let best = i + 1;
-      const classes = new Set([this.cls[cells[i]]]);
-      for (let j = i + 1; j < Math.min(pts.length, i + 48); j++) {
-        classes.add(this.cls[cells[j]]);
-        if (this.segmentOk(pts[i], pts[j], classes, cost)) best = j;
+      for (let j = i + 2; j < Math.min(pts.length, i + 60); j++) {
+        const c = this.segmentCost(pts[i], pts[j], cost);
+        if (c <= (cum[j] - cum[i]) * 1.02 + res * 0.2) best = j;
       }
       out.push(pts[best]);
       i = best;
@@ -236,14 +251,16 @@ export class NavGrid {
     return out;
   }
 
-  segmentOk(a, b, classes, cost) {
+  segmentCost(a, b, cost) {
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const n = Math.ceil(L / (this.res * 0.4));
-    for (let k = 1; k < n; k++) {
-      const c = this.classAt(a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n);
-      if (cost[c] === Infinity || !classes.has(c)) return false;
+    const n = Math.max(1, Math.ceil(L / (this.res * 0.35)));
+    let c = 0;
+    for (let k = 0; k < n; k++) {
+      const q = cost[this.classAt(a[0] + ((b[0] - a[0]) * (k + 0.5)) / n, a[1] + ((b[1] - a[1]) * (k + 0.5)) / n)];
+      if (q === Infinity) return Infinity;
+      c += q;
     }
-    return true;
+    return (c / n) * (L / this.res);
   }
 }
 

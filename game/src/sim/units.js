@@ -14,6 +14,8 @@ import { Combat } from './combat.js';
 import { Drones } from './drones.js';
 import { GameMode } from './modes.js';
 import { AI } from './ai.js';
+import { RoadGraph } from './roads.js';
+import { Logistics } from './logistics.js';
 
 // Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
 export const POSES = {
@@ -39,12 +41,12 @@ export const UNIT_TYPES = {
   inf:   { name: 'Пехотное отделение', short: 'Пехота', move: 'foot', symbol: 'inf', men: 9, spacing: 55, accel: 1.5, turn: 3, dig: 12 },
   eng:   { name: 'Инженерно-сапёрное отделение', short: 'Сапёры', move: 'foot', symbol: 'eng', men: 8, spacing: 55, accel: 1.5, turn: 3, dig: 30 },
   btm:   { name: 'Траншейная машина (БТМ)', short: 'БТМ', move: 'tracked', symbol: 'engmech', men: 2, spacing: 50, accel: 1.4, turn: 1.0, dig: 350 },
-  ifv:   { name: 'БМП', short: 'БМП', move: 'tracked', symbol: 'mech', men: 9, spacing: 50, accel: 2.0, turn: 1.4 },
-  apc:   { name: 'БТР', short: 'БТР', move: 'wheeled', symbol: 'motor', men: 10, spacing: 50, accel: 2.2, turn: 1.0 },
+  ifv:   { name: 'БМП', short: 'БМП', move: 'tracked', symbol: 'mech', men: 9, spacing: 50, accel: 2.0, turn: 1.4, seats: 9 },
+  apc:   { name: 'БТР', short: 'БТР', move: 'wheeled', symbol: 'motor', men: 10, spacing: 50, accel: 2.2, turn: 1.0, seats: 10 },
   tank:  { name: 'Танк', short: 'Танк', move: 'tracked', symbol: 'armor', men: 3, spacing: 55, accel: 1.8, turn: 1.2 },
   arty:  { name: 'Гаубица 152 мм (буксир.)', short: 'Гаубица', move: 'wheeled', symbol: 'arty', men: 7, spacing: 60, accel: 1.2, turn: 0.8, caliber: 152, reload: 10, setup: 90, ammo: 40 },
   mortar: { name: 'Миномётный расчёт 82 мм', short: 'Миномёт', move: 'foot', symbol: 'mortar', men: 4, spacing: 50, accel: 1.5, turn: 3, caliber: 82, reload: 5, setup: 30, ammo: 60 },
-  truck: { name: 'Грузовик снабжения', short: 'Грузовик', move: 'wheeled', symbol: 'supply', men: 2, spacing: 45, accel: 1.6, turn: 0.9, carry: 8 },
+  truck: { name: 'Грузовик снабжения', short: 'Грузовик', move: 'wheeled', symbol: 'supply', men: 2, spacing: 45, accel: 1.6, turn: 0.9, carry: 8, seats: 18 },
   uav:   { name: 'Расчёт БПЛА', short: 'БПЛА', move: 'foot', symbol: 'uav', men: 3, spacing: 50, accel: 1.5, turn: 3 },
   medevac: { name: 'Санитарная машина', short: 'Санитарка', move: 'wheeled', symbol: 'medic', men: 2, spacing: 45, accel: 1.8, turn: 1.0, carry: 6 },
 };
@@ -98,6 +100,8 @@ export class Unit {
     this.cargo = 0; // раненые на борту
     this.underFire = 0;
     this.firedAt = 0;
+    this.embarked = null; // машина, в которой едет отделение
+    this.passengers = []; // десант (для машин)
     if (ROLES[type]) {
       this.soldiers = ROLES[type].map((role, i) => {
         const [ox, oy] = formationOffset(i);
@@ -117,9 +121,10 @@ export class Unit {
   }
 }
 
-// Строй «клин» относительно направления движения
-function formationOffset(i) {
+// Строй «клин» относительно направления движения; на дороге — колонна по двое
+function formationOffset(i, column = false) {
   if (i === 0) return [0, 0];
+  if (column) return [-Math.ceil(i / 2) * 3.2, (i % 2 ? -1 : 1) * 1.3];
   const row = Math.ceil(i / 2);
   return [-row * 4.5, (i % 2 ? -1 : 1) * row * 3.8];
 }
@@ -130,6 +135,7 @@ export class Sim {
     const t0 = performance.now();
     this.nav = new NavGrid(world);
     this.navTime = performance.now() - t0;
+    this.roads = new RoadGraph(world);
     this.trenches = new TrenchGraph(world);
     this.units = [];
     this.time = 5 * 3600 + 30 * 60; // 05:30, первый день
@@ -142,6 +148,7 @@ export class Sim {
     this.vision = new Vision(this);
     this.combat = new Combat(this);
     this.drones = new Drones(this);
+    this.log = new Logistics(this);
     this.medpoints = { blue: null, red: null };
     this.stats = { blue: { kia: 0, wia: 0, evac: 0, lostVeh: 0 }, red: { kia: 0, wia: 0, evac: 0, lostVeh: 0 } };
     this.puppet = false; // в сетевой игре у гостя симуляция только отображает присланное состояние
@@ -180,15 +187,15 @@ export class Sim {
     pats.forEach((p, i) => {
       const c = carriers[i % Math.max(1, carriers.length)];
       const route = this.footRoute(p.x, p.y, dest.x, dest.y);
-      const delay = c ? Math.hypot(c.x - p.x, c.y - p.y) / 1.5 + 2 : 0;
+      const delay = c ? Math.hypot(c.x - p.x, c.y - p.y) / 2 + 2 : 0;
       p.path = [{ x: p.x, y: p.y, under: p.under }, ...route.map(([x, y]) => ({ x, y, under: false }))];
-      p.pathIdx = 1; p.mode = 'path'; p.speed = 0.7; p.startAt = this.time + delay; p.face = null;
+      p.pathIdx = 1; p.mode = 'path'; p.speed = 1.0; p.startAt = this.time + delay; p.face = null;
       p.evacMove = true; p.evacUnit = u; p.evacDest = dest;
       if (c) {
         c.path = [{ x: c.x, y: c.y, under: c.under }, { x: p.x + 0.7, y: p.y, under: p.under }, ...route.map(([x, y]) => ({ x: x + 0.7, y, under: false }))];
-        c.pathIdx = 1; c.mode = 'path'; c.speed = 1.2; c.startAt = 0; c.face = null; c.afterPath = 'follow';
+        c.pathIdx = 1; c.mode = 'path'; c.speed = 1.6; c.startAt = 0; c.face = null; c.afterPath = 'follow';
         // Носильщик ждёт у раненого, чтобы идти вместе
-        c.path[1].wait = Math.max(0, delay - Math.hypot(c.x - p.x, c.y - p.y) / 1.2);
+        c.path[1].wait = Math.max(0, delay - Math.hypot(c.x - p.x, c.y - p.y) / 1.6);
       }
     });
     u.state = 'moving';
@@ -239,6 +246,7 @@ export class Sim {
   spawn(side, type, x, y, label) {
     const p = this.nav.nearestPassable(x, y, UNIT_TYPES[type].move) || [x, y];
     const u = new Unit(side, type, p[0], p[1], label);
+    this.log.init(u);
     this.units.push(u);
     return u;
   }
@@ -250,9 +258,14 @@ export class Sim {
   // ================= Приказы =================
 
   // Движение группе строем. Отменяет текущие задачи.
-  orderMove(units, tx, ty, { stealth = false } = {}) {
+  orderMove(units, tx, ty, { stealth = false, direct = false } = {}) {
+    // Отделение в машине по приказу «идти» спешивается и идёт само
+    for (const u of units) if (u.embarked) this.disembark(u);
     if (!units.length) return;
     for (const u of units) this.resetTask(u);
+    // Смешанная группа (пехота + техника) идёт вместе — техника не отрывается
+    const mixed = units.some((u) => u.def.move === 'foot') && units.some((u) => u.def.move !== 'foot');
+    for (const u of units) u.speedCap = mixed && u.def.move !== 'foot' ? MOVE.foot[T.ROAD] * 1.05 : 0;
     let cx = 0, cy = 0;
     for (const u of units) { cx += u.x; cy += u.y; }
     cx /= units.length; cy /= units.length;
@@ -270,12 +283,20 @@ export class Sim {
       const inRow = Math.min(cols, n - row * cols);
       const off = ((i % cols) - (inRow - 1) / 2) * spacing;
       u.stealth = stealth;
+      u.direct = direct;
       this.moveSingle(u, tx + px * off - dx * row * spacing, ty + py * off - dy * row * spacing);
     });
   }
 
   // Движение одного отряда без сброса задачи (внутреннее)
+  // Во время подготовки — только своя половина карты
+  prepBlocked(u, x) {
+    const g = this.game;
+    return !!g?.prep && g.clampPrep(u.side, x) !== x;
+  }
+
   moveSingle(u, x, y) {
+    if (this.game?.prep) x = this.game.clampPrep(u.side, x);
     if (u.soldiers && u.mode !== 'field') this.regroup(u);
     if (u.soldiers) for (const s of u.soldiers) if (s.mode === 'dig' || s.mode === 'hold') s.mode = 'follow';
     u.state = 'planning';
@@ -294,7 +315,7 @@ export class Sim {
         s.path = exit;
         s.pathIdx = 1;
         s.mode = 'path';
-        s.speed = 1.6;
+        s.speed = 2.2;
         s.face = null;
         s.startAt = 0;
         s.afterPath = 'follow';
@@ -352,9 +373,63 @@ export class Sim {
     }
   }
 
+  // ================= Десант =================
+  seatsFree(v) {
+    if (!v.def.seats || v.dead) return 0;
+    const used = v.passengers.reduce((a, p) => a + this.act(p).length + p.soldiers.filter((q) => !q.dead && q.wounded === 2).length, 0);
+    return v.def.seats - used;
+  }
+
+  // Посадка: отделение идёт к машине и садится; машина ждёт на месте
+  orderBoard(u, v) {
+    if (!u.soldiers || u.embarked || !v || v.dead || v.side !== u.side) return false;
+    const need = u.soldiers.filter((q) => !q.dead).length;
+    if (this.seatsFree(v) < need) { this.msg(`${v.label}: нет мест для ${u.label} (свободно ${this.seatsFree(v)})`, u.side); return false; }
+    this.resetTask(u);
+    if (Math.hypot(u.x - v.x, u.y - v.y) < 30) { this.embark(u, v); return true; }
+    u.pending = { type: 'board', v };
+    u.stealth = false; u.direct = false;
+    this.moveSingle(u, v.x - Math.cos(v.heading) * 6, v.y - Math.sin(v.heading) * 6);
+    return true;
+  }
+
+  embark(u, v) {
+    if (v.dead || this.seatsFree(v) < u.soldiers.filter((q) => !q.dead).length) { this.msg(`${u.label}: посадка невозможна`, u.side); return; }
+    if (u.mode !== 'field') { u.mode = 'field'; }
+    u.embarked = v;
+    v.passengers.push(u);
+    u.path = null; u.state = 'idle'; u.speed = 0; u.task = null; u.pending = null;
+    this.queue = this.queue.filter((q) => q.unit !== u);
+    for (const s of u.soldiers) { s.path = null; if (!s.dead) s.mode = 'follow'; s.x = v.x; s.y = v.y; s.under = false; s.building = null; s.slot = null; }
+    this.msg(`${u.label}: посадка в ${v.label}`, u.side);
+  }
+
+  // Высадка у кормы машины
+  disembark(u, quiet = false) {
+    const v = u.embarked;
+    if (!v) return;
+    v.passengers = v.passengers.filter((p) => p !== u);
+    u.embarked = null;
+    const bx = v.x - Math.cos(v.heading) * 7, by = v.y - Math.sin(v.heading) * 7;
+    const p = this.nav.nearestPassable(bx, by, 'foot') || [bx, by];
+    u.x = p[0]; u.y = p[1]; u.heading = v.heading; u.mode = 'field'; u.state = 'idle';
+    u.soldiers.forEach((s, i) => {
+      if (s.dead) return;
+      const a = v.heading + Math.PI + (i - 4) * 0.35;
+      s.x = u.x + Math.cos(a) * (1 + (i % 3)); s.y = u.y + Math.sin(a) * (1 + (i % 3));
+      s.mode = 'follow'; s.heading = v.heading;
+    });
+    if (!quiet) this.msg(`${u.label}: высадка`, u.side);
+  }
+
+  orderUnload(v) {
+    for (const p of [...v.passengers]) this.disembark(p);
+  }
+
   // Занять траншею у точки: бойцы расходятся по ячейкам лицом к противнику
   orderOccupy(u, x, y) {
     if (!u.soldiers) return false;
+    if (this.prepBlocked(u, x)) { this.msg('Подготовка: за линию разграничения выдвигаться нельзя', u.side); return true; }
     this.trenches.ensure();
     const node = this.trenches.nearest(x, y, 10, true);
     if (node < 0) return false;
@@ -414,12 +489,12 @@ export class Sim {
       const slot = free.splice(bi, 1)[0];
       const item = g.nodes[slot].item;
       const e = item?.enemy || enemy;
-      this.soldierTo(u, s, slot, { speed: 1.6, face: Math.atan2(e[1], e[0]) });
+      this.soldierTo(u, s, slot, { speed: 2.2, face: Math.atan2(e[1], e[0]) });
     }
   }
 
   // Путь бойца к узлу графа траншей: по земле до ближайшего входа, дальше по траншеям
-  soldierTo(u, s, targetNode, { speed = 1.5, face = null, startAt = 0 } = {}) {
+  soldierTo(u, s, targetNode, { speed = 2.0, face = null, startAt = 0 } = {}) {
     const g = this.trenches;
     const from = g.nearest(s.x, s.y, 3) >= 0 ? g.nearest(s.x, s.y, 3) : g.nearest(s.x, s.y, 80, true);
     const pts = [{ x: s.x, y: s.y, under: s.under }];
@@ -445,6 +520,7 @@ export class Sim {
   // Зачистить траншею до точки: колонной, с остановками на поворотах и развилках
   orderClear(u, x, y) {
     if (!u.soldiers) return false;
+    if (this.prepBlocked(u, x)) { this.msg('Подготовка: за линию разграничения выдвигаться нельзя', u.side); return false; }
     this.trenches.ensure();
     const target = this.trenches.nearest(x, y, 12, true);
     if (target < 0) return false;
@@ -482,8 +558,8 @@ export class Sim {
       s.path = [{ x: s.x, y: s.y, under: s.under }, ...pts.map((p) => ({ ...p }))];
       s.pathIdx = 1;
       s.mode = 'path';
-      s.speed = 1.0;
-      s.startAt = this.time + k * 2.4;
+      s.speed = 1.3;
+      s.startAt = this.time + k * 2.0;
       s.face = null;
     });
     u.mode = 'trench';
@@ -507,7 +583,7 @@ export class Sim {
     const a = g.nearest(s.x, s.y, 3);
     const b = g.nearest(x, y, 5);
     const target = this.buildingAt(x, y);
-    if (a >= 0 && b >= 0 && !target) this.soldierTo(u, s, b, { speed: 1.5 });
+    if (a >= 0 && b >= 0 && !target) this.soldierTo(u, s, b, { speed: 2.0 });
     else {
       // Сначала выбраться из подвала/траншейного укрытия, затем — точный путь с обходом стен
       const pre = s.under ? this.exitPath(s) || [{ x: s.x, y: s.y, under: s.under }] : [{ x: s.x, y: s.y, under: false }];
@@ -519,7 +595,7 @@ export class Sim {
       s.path = pts;
       s.pathIdx = 1;
       s.mode = 'path';
-      s.speed = 1.5;
+      s.speed = 2.0;
       s.face = null;
       s.startAt = 0;
     }
@@ -544,8 +620,9 @@ export class Sim {
   // Занять здание: бойцы у окон, в первую очередь — смотрящих на противника
   orderGarrison(u, b) {
     if (!u.soldiers || !b?.interior) return false;
+    if (this.prepBlocked(u, b.x)) { this.msg('Подготовка: за линию разграничения выдвигаться нельзя', u.side); return false; }
     this.resetTask(u);
-    if (Math.hypot(u.x - b.x, u.y - b.y) > 120) {
+    if (Math.hypot(u.x - b.x, u.y - b.y) > 35 + Math.max(b.w, b.h) / 2) {
       u.pending = { type: 'garrison', b };
       const d = b.interior.doors.find((q) => q.ext) || { p: [b.x, b.y], n: [0, 0] };
       this.moveSingle(u, d.p[0] + d.n[0] * 6, d.p[1] + d.n[1] * 6);
@@ -573,7 +650,7 @@ export class Sim {
     const bs = b?.interior?.basement;
     if (!u.soldiers || !bs) return false;
     this.resetTask(u);
-    if (Math.hypot(u.x - b.x, u.y - b.y) > 120) {
+    if (Math.hypot(u.x - b.x, u.y - b.y) > 35 + Math.max(b.w, b.h) / 2) {
       u.pending = { type: 'basement', b };
       const d = b.interior.doors.find((q) => q.ext) || { p: [b.x, b.y], n: [0, 0] };
       this.moveSingle(u, d.p[0] + d.n[0] * 6, d.p[1] + d.n[1] * 6);
@@ -615,7 +692,7 @@ export class Sim {
       s.path = pts;
       s.pathIdx = 1;
       s.mode = 'path';
-      s.speed = 1.5;
+      s.speed = 2.0;
       s.face = sl.face;
       s.startAt = 0;
       s.slot = sl.kind;
@@ -662,7 +739,7 @@ export class Sim {
     const t0 = performance.now();
     while (this.queue.length && performance.now() - t0 < budgetMs) {
       const { unit: u, x, y } = this.queue.shift();
-      const r = this.nav.findPath(u.x, u.y, x, y, u.moveClass, u.stealth);
+      const r = this.route(u, x, y);
       if (!r || r.path.length < 2) {
         u.state = 'idle';
         u.path = null;
@@ -670,11 +747,31 @@ export class Sim {
         this.onArrive(u);
         continue;
       }
-      u.path = r.path;
-      u.pathIdx = 1;
+      this.setPath(u, r.path);
       u.eta = r.time;
       u.state = 'moving';
+      u.onRoad = !!r.road;
     }
+  }
+
+  setPath(u, path) {
+    u.path = path;
+    u.pathIdx = 1;
+    u.pathCum = [0];
+    for (let i = 1; i < path.length; i++) u.pathCum.push(u.pathCum[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+  }
+
+  // Выбор маршрута: по дорогам (если не сильно дольше), напрямик или скрытно — по местности
+  route(u, x, y) {
+    const move = u.moveClass;
+    const grid = this.nav.findPath(u.x, u.y, x, y, move, u.stealth, u.direct);
+    if (u.stealth || u.direct || Math.hypot(x - u.x, y - u.y) < 300) return grid;
+    const rd = this.roads.route(u.x, u.y, x, y, move, (ax, ay, bx, by) => this.nav.findPath(ax, ay, bx, by, move));
+    if (!rd) return grid;
+    // Дороги предпочтительнее: техника — если не дольше чем на 35%, пехота — на 10%
+    const k = move === 'foot' ? 1.1 : 1.35;
+    if (!grid || rd.time < grid.time * k) return { ...rd, road: true };
+    return grid;
   }
 
   onArrive(u) {
@@ -687,6 +784,7 @@ export class Sim {
       if (node >= 0) this.doOccupy(u, node);
     } else if (p.type === 'clear') this.orderClear(u, p.x, p.y);
     else if (p.type === 'garrison') this.orderGarrison(u, p.b);
+    else if (p.type === 'board') this.orderBoard(u, p.v);
     else if (p.type === 'basement') this.orderBasement(u, p.b);
   }
 
@@ -699,6 +797,7 @@ export class Sim {
     this.art.update();
     this.drones.update(dt);
     this.combat.update(dt);
+    this.log.update(dt);
     this.game?.update(dt);
     for (const ai of this.ais || []) ai.update();
     // Санитарные машины и транспорт сдают раненых в медпункте
@@ -713,6 +812,21 @@ export class Sim {
     }
     for (const u of this.units) {
       if (u.dead && !u.soldiers) continue;
+      if (u.embarked) {
+        // Десант едет в машине
+        const v = u.embarked;
+        u.x = v.x; u.y = v.y; u.heading = v.heading;
+        for (const s of u.soldiers) if (!s.dead) { s.x = v.x; s.y = v.y; s.heading = v.heading; }
+        continue;
+      }
+      // Идут на посадку: машина рядом — садимся, не дожидаясь конца маршрута
+      if (u.pending?.type === 'board' && Math.hypot(u.x - u.pending.v.x, u.y - u.pending.v.y) < 25) {
+        const v = u.pending.v;
+        u.pending = null;
+        this.embark(u, v);
+        continue;
+      }
+      if (u.pending?.type === 'board' && u.state === 'idle' && !this.queue.some((q) => q.unit === u)) this.orderBoard(u, u.pending.v); // машина уехала — догоняем
       if (u.mode === 'field' && u.state === 'moving') this.moveUnit(u, dt);
       if (u.task?.type === 'dig') this.updateDig(u, dt);
       if (u.soldiers) this.updateSoldiers(u, dt);
@@ -722,26 +836,31 @@ export class Sim {
 
   updateSoldiers(u, dt) {
     const c = Math.cos(u.heading), sn = Math.sin(u.heading);
+    const cl = this.nav.classAt(u.x, u.y);
+    const column = u.state === 'moving' && (cl === T.ROAD || cl === T.DIRT);
     let anyPath = false;
     for (const s of u.soldiers) {
       if (s.dead) { s.pose = 'dead'; continue; }
       if (s.wounded === 2 && !s.evacMove) { s.pose = 'prone'; s.moving = false; continue; }
       if (s.mode === 'follow') {
-        const [ox, oy] = formationOffset(s.idx);
+        const [ox, oy] = formationOffset(s.idx, column);
         const tx = u.x + ox * c - oy * sn, ty = u.y + ox * sn + oy * c;
         const dx = tx - s.x, dy = ty - s.y;
         const d = Math.hypot(dx, dy);
         if (d > 0.2) {
-          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1) * (s.supp > 6 ? 0.5 : 1);
+          const v = Math.min(4, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1) * (s.supp > 6 ? 0.5 : 1);
           const step = Math.min(d, v * dt);
           const nx = s.x + (dx / d) * step, ny = s.y + (dy / d) * step;
           // Сквозь дома не ходим — скользим вдоль стены
           if (!this.solidAt(nx, ny) || this.solidAt(s.x, s.y)) { s.x = nx; s.y = ny; }
           else if (!this.solidAt(nx, s.y)) s.x = nx;
           else if (!this.solidAt(s.x, ny)) s.y = ny;
-          s.heading = Math.atan2(dy, dx);
-          s.moving = true;
-        } else if (u.state !== 'moving') s.heading = u.heading;
+          // Разворот плавный, а не мгновенный
+          const want = Math.atan2(dy, dx);
+          s.heading += Math.atan2(Math.sin(want - s.heading), Math.cos(want - s.heading)) * Math.min(1, dt * 8);
+          s.moving = step > 0.02 * dt * 60 || u.state === 'moving';
+          s.walk = (s.walk || 0) + step;
+        } else if (u.state !== 'moving') s.heading += Math.atan2(Math.sin(u.heading - s.heading), Math.cos(u.heading - s.heading)) * Math.min(1, dt * 4);
       } else if (s.mode === 'dig') {
         const dx = s.tx - s.x, dy = s.ty - s.y;
         const d = Math.hypot(dx, dy);
@@ -797,6 +916,7 @@ export class Sim {
       } else {
         s.x += (dx / d) * step;
         s.y += (dy / d) * step;
+        s.walk = (s.walk || 0) + step;
         remaining = 0;
       }
     }
@@ -896,55 +1016,90 @@ export class Sim {
     }
   }
 
+  // Движение по маршруту: «чистое преследование» точки впереди на пути.
+  // Техника едет по своему курсу и поворачивает с ограниченной скоростью — плавные дуги,
+  // без рывков от точки к точке. Пехота (центр отделения) — прямо к точке впереди.
   moveUnit(u, dt) {
     const def = u.def;
-    let remaining = dt;
-    while (remaining > 1e-4 && u.path) {
-      const wp = u.path[u.pathIdx];
-      const dx = wp[0] - u.x, dy = wp[1] - u.y;
-      const d = Math.hypot(dx, dy);
-      const want = Math.atan2(dy, dx);
-      let da = want - u.heading;
-      da = Math.atan2(Math.sin(da), Math.cos(da));
-      const maxTurn = def.turn * remaining;
-      u.heading += Math.max(-maxTurn, Math.min(maxTurn, da));
-
-      let terrain = MOVE[def.move][this.nav.classAt(u.x, u.y)] || MOVE[def.move][T.OPEN] * 0.3;
-      if (u.soldiers) terrain *= Math.min(...u.soldiers.map((q) => (q.stance === 'auto' ? 1 : POSES[q.stance].speed)));
-      const turnPenalty = def.move === 'foot' ? 1 : Math.max(0.25, Math.cos(Math.min(Math.abs(da), 1.5)));
-      const left = d + this.pathLeft(u);
-      const brake = Math.sqrt(2 * def.accel * Math.max(0, left));
-      const target = Math.min(terrain * turnPenalty, brake + 0.3);
-      if (u.speed < target) u.speed = Math.min(target, u.speed + def.accel * remaining);
-      else u.speed = Math.max(target, u.speed - def.accel * 2 * remaining);
-
-      const stepLen = u.speed * remaining;
-      if (stepLen >= d) {
-        u.x = wp[0];
-        u.y = wp[1];
-        remaining -= u.speed > 0 ? d / u.speed : remaining;
-        u.pathIdx++;
-        if (u.pathIdx >= u.path.length) {
-          u.path = null;
-          u.state = 'idle';
-          u.speed = 0;
-          this.onArrive(u);
-          break;
-        }
-      } else {
-        u.x += (dx / d) * stepLen;
-        u.y += (dy / d) * stepLen;
-        remaining = 0;
+    const path = u.path;
+    if (!path) { u.state = 'idle'; return; }
+    const foot = def.move === 'foot';
+    const last = path.length - 1;
+    const end = path[last];
+    const look = foot ? 5 : Math.max(8, Math.min(30, u.speed * 1.6));
+    // Проходим точки, которые уже позади или рядом
+    while (u.pathIdx < last) {
+      const a = path[u.pathIdx - 1], b = path[u.pathIdx];
+      const t = segT(u.x, u.y, a, b);
+      if (t >= 1 || Math.hypot(b[0] - u.x, b[1] - u.y) < look * 0.5) u.pathIdx++;
+      else break;
+    }
+    const left = Math.hypot(path[u.pathIdx][0] - u.x, path[u.pathIdx][1] - u.y) + (u.pathCum[last] - u.pathCum[u.pathIdx]);
+    if (left < Math.max(1.2, u.speed * dt * 1.2)) {
+      u.x = end[0]; u.y = end[1];
+      u.path = null; u.state = 'idle'; u.speed = 0;
+      this.onArrive(u);
+      return;
+    }
+    // Точка впереди на расстоянии look по пути
+    const tgt = lookAhead(u, path, look);
+    const dx = tgt[0] - u.x, dy = tgt[1] - u.y;
+    const want = Math.atan2(dy, dx);
+    let da = Math.atan2(Math.sin(want - u.heading), Math.cos(want - u.heading));
+    // Скорость: местность, поворот, торможение у цели, колонна, общий темп группы
+    let terrain = MOVE[def.move][this.nav.classAt(u.x, u.y)] || MOVE[def.move][T.OPEN] * 0.3;
+    if (u.soldiers) terrain *= Math.min(...u.soldiers.map((q) => (q.stance === 'auto' || q.dead ? 1 : POSES[q.stance].speed)));
+    const turnK = foot ? 1 : Math.max(0.18, Math.cos(Math.min(Math.abs(da), 1.45)));
+    const brake = Math.sqrt(2 * def.accel * Math.max(0, left)) + 0.4;
+    let target = Math.min(terrain * turnK, brake);
+    if (u.speedCap) target = Math.min(target, u.speedCap);
+    if (u.fuel !== undefined && u.fuel <= 0) target = 0;
+    const ahead = this.leaderAhead(u);
+    if (ahead) target = Math.min(target, Math.max(0, ahead.speed * 0.95));
+    if (u.speed < target) u.speed = Math.min(target, u.speed + def.accel * dt);
+    else u.speed = Math.max(target, u.speed - def.accel * 2.5 * dt);
+    if (foot) {
+      u.heading += Math.max(-def.turn * dt, Math.min(def.turn * dt, da));
+      const step = Math.min(u.speed * dt, Math.hypot(dx, dy));
+      const L = Math.hypot(dx, dy) || 1;
+      u.x += (dx / L) * step; u.y += (dy / L) * step;
+    } else {
+      // Поворот ограничен: у колёсной — ещё и радиусом (на месте не развернуться)
+      let yaw = def.turn;
+      if (def.move === 'wheeled') yaw = Math.min(yaw, Math.max(0.35, u.speed / 7));
+      u.heading += Math.max(-yaw * dt, Math.min(yaw * dt, da));
+      const nx = u.x + Math.cos(u.heading) * u.speed * dt, ny = u.y + Math.sin(u.heading) * u.speed * dt;
+      if (this.canStand(u, nx, ny)) { u.x = nx; u.y = ny; }
+      else {
+        // Упёрлись (вода/здание на повороте): подтягиваемся прямо к точке
+        const L = Math.hypot(dx, dy) || 1;
+        u.x += (dx / L) * u.speed * dt * 0.5; u.y += (dy / L) * u.speed * dt * 0.5;
+        u.speed *= 0.7;
       }
     }
-    if (u.state === 'moving') u.eta = this.estimate(u);
+    this.log.burn(u, u.speed * dt);
+    u.odo = (u.odo || 0) + u.speed * dt; // пробег — для анимации гусениц и колёс
+    u.eta = this.estimate(u);
+  }
+
+  // Своя движущаяся машина прямо впереди — держим дистанцию колонны
+  leaderAhead(u) {
+    const c = Math.cos(u.heading), s = Math.sin(u.heading);
+    let best = null, bd = 22;
+    for (const v of this.units) {
+      if (v === u || v.dead || v.side !== u.side || v.embarked || v.mode !== 'field') continue;
+      const dx = v.x - u.x, dy = v.y - u.y;
+      const fwd = dx * c + dy * s;
+      if (fwd <= 2 || fwd > bd || Math.abs(-dx * s + dy * c) > 5) continue;
+      if (v.state !== 'moving') continue;
+      bd = fwd; best = v;
+    }
+    return best && bd < 16 ? best : null;
   }
 
   pathLeft(u) {
-    let L = 0;
-    for (let i = u.pathIdx; i + 1 < u.path.length; i++)
-      L += Math.hypot(u.path[i + 1][0] - u.path[i][0], u.path[i + 1][1] - u.path[i][1]);
-    return L;
+    if (!u.path) return 0;
+    return u.pathCum[u.path.length - 1] - u.pathCum[Math.min(u.pathIdx, u.path.length - 1)];
   }
 
   estimate(u) {
@@ -967,7 +1122,7 @@ export class Sim {
 
   // Мягкое расталкивание отрядов в поле (в траншеях бойцы стоят где поставили)
   separate(dt) {
-    const us = this.units.filter((u) => !u.dead && u.mode === 'field' && u.task?.type !== 'dig');
+    const us = this.units.filter((u) => !u.dead && !u.embarked && u.mode === 'field' && u.task?.type !== 'dig');
     for (let i = 0; i < us.length; i++)
       for (let j = i + 1; j < us.length; j++) {
         const a = us[i], b = us[j];
@@ -1035,6 +1190,33 @@ export class Sim {
       if (node >= 0) this.doOccupy(home, node);
       home.label += ' (на позиции)';
     }
+  }
+}
+
+// Параметр проекции точки на отрезок a→b
+function segT(x, y, a, b) {
+  const vx = b[0] - a[0], vy = b[1] - a[1];
+  const L2 = vx * vx + vy * vy || 1;
+  return ((x - a[0]) * vx + (y - a[1]) * vy) / L2;
+}
+
+// Точка на пути на расстоянии look вперёд от проекции текущего положения
+function lookAhead(u, path, look) {
+  let i = u.pathIdx;
+  const a = path[i - 1], b = path[i];
+  const t = Math.max(0, Math.min(1, segT(u.x, u.y, a, b)));
+  let px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t;
+  let rest = look;
+  while (true) {
+    const q = path[i];
+    const d = Math.hypot(q[0] - px, q[1] - py);
+    if (d >= rest || i === path.length - 1) {
+      const k = Math.min(1, rest / (d || 1));
+      return [px + (q[0] - px) * k, py + (q[1] - py) * k];
+    }
+    rest -= d;
+    px = q[0]; py = q[1];
+    i++;
   }
 }
 

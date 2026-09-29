@@ -32,14 +32,18 @@ const r2 = (v) => Math.round(v * 100) / 100;
 export function makeSnapshot(sim) {
   const units = sim.units.map((u) => {
     const base = [u.id, r1(u.x), r1(u.y), r2(u.heading), u.state, u.mode, u.dead ? 1 : 0, r2(u.hp ?? 1), u.ammo, u.cargo, u.fire ? 1 : 0, r1(u.speed), u.task?.type || '', u.roe, u.firedAt ? r1(u.firedAt) : 0];
-    if (u.soldiers) base.push(u.soldiers.map((s) => [r1(s.x), r1(s.y), r2(s.heading), POSE_IDX.indexOf(s.pose), Math.round(s.hp), (s.dead ? 1 : 0) | (s.under ? 2 : 0) | (s.evac ? 4 : 0) | (s.wounded << 3) | (s.moving ? 32 : 0) | (s.treated ? 64 : 0) | (s.inTrench ? 128 : 0)]));
+    base.push(u.soldiers ? u.soldiers.map((s) => [r1(s.x), r1(s.y), r2(s.heading), POSE_IDX.indexOf(s.pose), Math.round(s.hp), (s.dead ? 1 : 0) | (s.under ? 2 : 0) | (s.evac ? 4 : 0) | (s.wounded << 3) | (s.moving ? 32 : 0) | (s.treated ? 64 : 0) | (s.inTrench ? 128 : 0), r2(s.mag ?? 1)]) : 0);
+    // Десант и снабжение
+    base.push([u.embarked ? u.embarked.id : 0, u.fuel === undefined ? -1 : r2(u.fuel), u.rounds === undefined ? -1 : r2(u.rounds), u.cargoRes ? [Math.round(u.cargoRes.ammo), Math.round(u.cargoRes.shells), Math.round(u.cargoRes.fuel), u.autoSupply ? 1 : 0] : 0, u.aim === undefined ? null : r2(u.aim)]);
     return base;
   });
   const shells = sim.art.shells.map((s) => [r1(s.x0), r1(s.y0), r1(s.x), r1(s.y), r1(s.tLaunch), r1(s.tImpact), s.caliber]);
   const drones = sim.drones.list.filter((d) => !d.dead).map((d) => [d.id, d.side, d.kind, r1(d.x), r1(d.y), r1(d.tx), r1(d.ty), d.state, r2(d.heading), d.op.id]);
   const g = sim.game;
   const snap = { t: 'snap', time: r1(sim.time), units, shells, drones, fires: (sim.fires || []).map((f) => [r1(f.x), r1(f.y), f.r, r1(f.until)]) };
+  snap.depots = sim.log.depots.map((d) => [Math.round(d.stock.ammo), Math.round(d.stock.shells), Math.round(d.stock.fuel), d.alive ? 1 : 0, d.spotted ? 1 : 0]);
   if (g) {
+    snap.prep = g.prep ? 1 : 0; snap.prepEnd = g.prepEnd; snap.ready = g.ready;
     snap.zones = g.zones.map((z) => [z.owner, r2(z.prog), z.blue || 0, z.red || 0, z.contested ? 1 : 0]);
     snap.score = g.score;
     snap.winner = g.winner;
@@ -80,9 +84,23 @@ export function applySnapshot(sim, snap) {
         s.heading = q[2]; s.pose = POSE_IDX[q[3]] || 'stand'; s.hp = q[4];
         const f = q[5];
         s.dead = !!(f & 1); s.under = !!(f & 2); s.evac = !!(f & 4); s.wounded = (f >> 3) & 3; s.moving = !!(f & 32); s.treated = !!(f & 64); s.inTrench = !!(f & 128);
+        s.mag = q[6];
         if (s.dead) s.mode = 'dead';
       });
       u.strength = u.soldiers.filter((s) => !s.dead).length / u.soldiers.length;
+    }
+    const e = a[16];
+    if (e) {
+      const v = e[0] ? byId.get(e[0]) : null;
+      if (v !== (u.embarked || null)) {
+        if (u.embarked) u.embarked.passengers = u.embarked.passengers.filter((p) => p !== u);
+        u.embarked = v;
+        if (v && !v.passengers.includes(u)) v.passengers.push(u);
+      }
+      if (e[1] >= 0) u.fuel = e[1];
+      if (e[2] >= 0) u.rounds = e[2];
+      if (e[3]) { u.cargoRes = { ammo: e[3][0], shells: e[3][1], fuel: e[3][2] }; u.autoSupply = !!e[3][3]; }
+      if (e[4] !== null) u.aim = e[4];
     }
   }
   sim.art.shells = snap.shells.map((s) => ({ x0: s[0], y0: s[1], x: s[2], y: s[3], tLaunch: s[4], tImpact: s[5], caliber: s[6] }));
@@ -98,7 +116,9 @@ export function applySnapshot(sim, snap) {
     g.winner = snap.winner;
     g.reason = snap.reason;
     g.endAt = snap.endAt;
+    g.prep = !!snap.prep; g.prepEnd = snap.prepEnd; g.ready = snap.ready || g.ready;
   }
+  (snap.depots || []).forEach((q, i) => { const d = sim.log.depots[i]; if (!d) return; d.stock = { ammo: q[0], shells: q[1], fuel: q[2] }; d.alive = !!q[3]; d.spotted = !!q[4]; });
 }
 
 export function applyGrid(sim, pkt) {
@@ -112,8 +132,16 @@ export function applyGrid(sim, pkt) {
 export function interpolate(sim, dt) {
   const k = Math.min(1, dt * 8);
   for (const u of sim.units) {
-    if (u.tx !== undefined) { u.x += (u.tx - u.x) * k; u.y += (u.ty - u.y) * k; }
-    if (u.soldiers) for (const s of u.soldiers) if (s.tx !== undefined) { s.x += (s.tx - s.x) * k; s.y += (s.ty - s.y) * k; }
+    if (u.tx !== undefined) {
+      const dx = (u.tx - u.x) * k, dy = (u.ty - u.y) * k;
+      u.x += dx; u.y += dy;
+      u.odo = (u.odo || 0) + Math.hypot(dx, dy);
+    }
+    if (u.soldiers) for (const s of u.soldiers) if (s.tx !== undefined) {
+      const dx = (s.tx - s.x) * k, dy = (s.ty - s.y) * k;
+      s.x += dx; s.y += dy;
+      s.walk = (s.walk || 0) + Math.hypot(dx, dy); // для анимации шага
+    }
   }
 }
 

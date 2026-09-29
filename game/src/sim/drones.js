@@ -24,6 +24,10 @@ export class Drones {
     const sim = this.sim;
     if (!op || op.dead || op.type !== 'uav') return 'Нужен расчёт БПЛА';
     op.dronesLeft = op.dronesLeft || { ...op.def.drones };
+    if (sim.game?.prep) {
+      if (kind !== 'recon') return 'Идёт подготовка — удары после начала боя';
+      x = sim.game.clampPrep(op.side, x);
+    }
     if (!op.dronesLeft[kind]) return `${op.label}: нет дронов типа «${KINDS[kind].name}»`;
     if (Math.hypot(x - op.x, y - op.y) > LINK_RANGE) return `${op.label}: цель дальше дальности связи (7 км)`;
     // Разведчик у этого расчёта уже в воздухе — перенаправляем
@@ -117,7 +121,7 @@ export class Drones {
     for (const d of this.list) {
       if (d.dead || d.state === 'return' && Math.hypot(d.x - d.op.x, d.y - d.op.y) < 50) continue;
       for (const u of sim.units) {
-        if (u.dead || u.side === d.side || !u.soldiers || u.roe === 'hold') continue;
+        if (u.dead || u.embarked || u.side === d.side || !u.soldiers || u.roe === 'hold') continue;
         if (Math.hypot(u.x - d.x, u.y - d.y) > 120) continue;
         const shooters = u.soldiers.filter((s) => !s.dead && !s.under && s.wounded < 2).length;
         const p = (d.kind === 'fpv' ? 0.004 : 0.012) * shooters * dt;

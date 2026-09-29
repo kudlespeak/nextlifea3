@@ -35,6 +35,37 @@ export class GameMode {
     this.reason = '';
     this.grid = null;
     this.nextTick = 0;
+    // Подготовка: бой не идёт, стороны выдвигаются и окапываются на своей половине
+    this.prepEnd = sim.time + (cfg.prep ?? 300);
+    this.prep = (cfg.prep ?? 300) > 0;
+    this.ready = { blue: false, red: false };
+    this.endAt = this.prepEnd + (cfg.duration || 3600);
+  }
+
+  // Граница своей половины на время подготовки (x), с запасом от серой зоны
+  prepLimit(side) {
+    const fx = this.sim.world.frontX;
+    return side === 'blue' ? fx - 250 : fx + 250;
+  }
+  clampPrep(side, x) {
+    if (!this.prep) return x;
+    const L = this.prepLimit(side);
+    return side === 'blue' ? Math.min(x, L) : Math.max(x, L);
+  }
+  setReady(side) {
+    if (!this.prep) return;
+    this.ready[side] = true;
+    const humans = ['blue', 'red'].filter((s) => !(this.cfg.aiSides || []).includes(s));
+    if (humans.every((s) => this.ready[s])) this.startBattle('все готовы');
+    else this.sim.msg(`${FACTIONS[side].short}: готовы к бою`);
+  }
+  startBattle(why) {
+    if (!this.prep) return;
+    this.prep = false;
+    const left = Math.max(0, this.prepEnd - this.sim.time);
+    this.endAt -= left; // время боя не сокращается
+    this.prepEnd = this.sim.time;
+    this.sim.msg(`Подготовка окончена${why ? ` (${why})` : ''} — бой начался!`);
   }
 
   // ---------- Расстановка ----------
@@ -49,6 +80,15 @@ export class GameMode {
     };
     sim.medpoints.blue = { x: base.blue.x - 500, y: base.blue.y + 150 };
     sim.medpoints.red = { x: Math.min(world.W - 200, base.red.x + 500), y: base.red.y - 150 };
+    // Склады — в тылу, у дороги (туда ездят грузовики)
+    for (const side of ['blue', 'red']) {
+      const dir = side === 'blue' ? -1 : 1;
+      const want = [Math.max(150, Math.min(world.W - 150, base[side].x + dir * 700)), base[side].y - dir * 250];
+      const node = sim.roads.near(want[0], want[1], 600).sort((a, c) => sim.roads.dist(a, want[0], want[1]) - sim.roads.dist(c, want[0], want[1]))[0];
+      let p = node !== undefined ? [sim.roads.x[node] + 25, sim.roads.y[node] + 25] : want;
+      p = sim.nav.nearestPassable(p[0], p[1], 'wheeled') || p;
+      sim.log.addDepot(side, p[0], p[1], side === 'blue' ? 'Склад «Тыл-1»' : 'Склад «Базис»');
+    }
     for (const side of ['blue', 'red']) {
       const list = FORCES[side].map((x) => x.slice());
       // В режиме штурма: атакующему больше техники, обороне — пехоты
@@ -143,7 +183,7 @@ export class GameMode {
     const sim = this.sim;
     const infl = new Float32Array(g.w * g.h);
     for (const u of sim.units) {
-      if (u.dead) continue;
+      if (u.dead || u.embarked) continue;
       const power = u.soldiers ? u.soldiers.filter((s) => !s.dead && !s.under).length / 3 : u.type === 'tank' || u.type === 'ifv' ? 2 : 0.5;
       if (power <= 0) continue;
       const R = u.soldiers ? 220 : 280;
@@ -178,6 +218,8 @@ export class GameMode {
   update(dt) {
     const sim = this.sim;
     if (this.winner) return;
+    if (this.prep && sim.time >= this.prepEnd) this.startBattle('время вышло');
+    if (this.prep) return;
     if (sim.time < this.nextTick) return;
     const step = 5;
     this.nextTick = sim.time + step;
@@ -185,7 +227,7 @@ export class GameMode {
     for (const z of this.zones) {
       let b = 0, r = 0;
       for (const u of sim.units) {
-        if (u.dead) continue;
+        if (u.dead || u.embarked) continue;
         const n = u.soldiers ? u.soldiers.filter((s) => !s.dead && !s.under && Math.hypot(s.x - z.x, s.y - z.y) < z.r).length : (Math.hypot(u.x - z.x, u.y - z.y) < z.r ? 2 : 0);
         if (u.side === 'blue') b += n; else r += n;
       }

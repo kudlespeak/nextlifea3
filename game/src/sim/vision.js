@@ -49,7 +49,7 @@ export class Vision {
       const nightK = 1 - dark * (1 - FACTIONS[side].night);
       const obs = [];
       for (const u of sim.units) {
-        if (u.side !== side || u.dead) continue;
+        if (u.side !== side || u.dead || u.embarked) continue;
         if (u.soldiers && !u.soldiers.some((s) => !s.dead && !s.under)) continue;
         obs.push({ x: u.x, y: u.y, r: (u.soldiers ? SIGHT.foot : SIGHT.vehicle) * nightK, air: false, unit: u });
       }
@@ -58,9 +58,14 @@ export class Vision {
         obs.push({ x: d.x, y: d.y, r: SIGHT.drone * (1 - dark * 0.1), air: true });
       }
       this.observers[side] = obs;
+      // Чужие склады: обнаружены, если рядом был наблюдатель
+      for (const d of sim.log?.depots || []) {
+        if (d.side === side || d.spotted) continue;
+        if (obs.some((o) => Math.hypot(o.x - d.x, o.y - d.y) < o.r * 0.8)) d.spotted = true;
+      }
       const now = new Set();
       for (const t of sim.units) {
-        if (t.side !== enemy || t.dead) continue;
+        if (t.side !== enemy || t.dead || t.embarked) continue;
         const k = this.conceal(t, dark, nightK);
         if (k <= 0) continue;
         const litT = dark > 0.3 && this.lit(t.x, t.y);

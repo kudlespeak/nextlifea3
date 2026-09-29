@@ -161,6 +161,17 @@
     #scoreboard { display: flex; align-items: center; gap: 10px; font: 700 14px "PT Sans Narrow", sans-serif; background: rgba(0,0,0,0.25); border: 1px solid var(--line); border-radius: 9px; padding: 4px 10px; white-space: nowrap; }
     #scoreboard .b { color: var(--blue); } #scoreboard .r { color: var(--red); }
     #scoreboard .m { color: var(--muted); font-weight: 400; }
+    #prep-bar { top: 70px; left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 14px; padding: 8px 10px 8px 16px; border-color: rgba(242,193,78,0.5); }
+    #prep-bar.show { display: flex; }
+    #prep-bar b { font: 700 16px "PT Sans Narrow", sans-serif; color: var(--accent-2); letter-spacing: 0.04em; }
+    #prep-bar small { color: var(--muted); font-size: 12.5px; max-width: 420px; }
+    #prep-bar .big { padding: 7px 18px; font-size: 15px; }
+    .cmd.more { color: var(--muted); }
+    .supply { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+    .supply .it { display: flex; align-items: center; gap: 5px; }
+    .supply .bar { width: 54px; }
+    .pass { font-size: 12.5px; color: var(--muted); }
+    .pass b { color: var(--text); }
     #end-screen { position: fixed; inset: 0; z-index: 15; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); }
     #end-screen.show { display: flex; }
     #end-screen .box { width: min(560px, calc(100vw - 30px)); padding: 22px 26px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 14px; text-align: center; }
@@ -212,7 +223,7 @@
       <div class="menu" id="menu">
         <button id="btn-menu" title="Меню"><svg class="i"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
         <div class="menu-list">
-          <button id="btn-strike"><svg class="i"><path d="M12 2l2 6 6-2-4 5 5 4h-6l-1 6-3-5-5 3 2-6-5-3 6-1z"/></svg>Удар 152 мм по клику (тест) <kbd>B</kbd></button>
+          <button id="btn-strike"><svg class="i"><path d="M12 2l2 6 6-2-4 5 5 4h-6l-1 6-3-5-5 3 2-6-5-3 6-1z"/></svg>Удар 152 мм по клику (тест)</button>
           <button id="btn-dig-test"><svg class="i"><path d="M3 14l4-4 4 4 4-4 4 4 2-2"/></svg>Траншея мгновенно (тест)</button>
           <button id="btn-new"><svg class="i"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3M18 3v4h-4M6 21v-4h4"/></svg>Новая карта</button>
           <div id="info" style="font-size:11px;color:var(--muted);padding:4px 6px"></div>
@@ -245,6 +256,11 @@
       <div class="cmds" id="cmds"></div>
     </div>
   </section>
+
+  <div id="prep-bar" class="panel">
+    <div><b>ПОДГОТОВКА К БОЮ · <span id="prep-time">5:00</span></b><br /><small>Выдвигайтесь, занимайте траншеи и здания, окапывайтесь. Стрельба запрещена, за линию разграничения не заходить.</small></div>
+    <button class="big" id="btn-ready">К БОЮ ▶</button>
+  </div>
 
   <div id="log" class="panel"></div>
 
@@ -281,6 +297,7 @@
           <div class="opt-row" id="opt-fog"></div>
           <div class="opt-row" id="opt-diff"></div>
           <div class="opt-row" id="opt-dur"></div>
+          <div class="opt-row" id="opt-prep"></div>
           <div class="opt-row"><span>Карта (seed)</span><input class="txt" id="opt-seed" /><button id="seed-rnd">Случайная</button></div>
         </div>
         <div class="mcard" id="mp-card" style="grid-column: 1 / -1; display:none">
@@ -311,41 +328,43 @@
     <div class="box">
       <button id="help-close">✕</button>
       <h2>Как играть</h2>
-      <div style="color:var(--muted)">Прототип: карта, подразделения, окопы, здания, артиллерия. Вы управляете стороной, отмеченной в левом верхнем углу.</div>
-      <h3>Камера</h3>
+      <div style="color:var(--muted)">Почти всё делается двумя кнопками мыши: <b>ЛКМ</b> — выбрать, <b>ПКМ</b> — приказ по смыслу того, куда кликнули.</div>
+      <h3>Главное</h3>
       <table>
-        <tr><td>ЛКМ + тянуть · <kbd>WASD</kbd></td><td>двигать карту</td></tr>
-        <tr><td>Колесо · щипок</td><td>приблизить / отдалить. Вблизи видны бойцы, техника и планировки зданий</td></tr>
-        <tr><td>Клик по миникарте</td><td>перейти в точку</td></tr>
-      </table>
-      <h3>Выбор и приказы</h3>
-      <table>
-        <tr><td>ЛКМ по подразделению</td><td>выбрать (<kbd>Ctrl</kbd> — добавить). Или в списке слева; двойной клик — показать на карте</td></tr>
-        <tr><td><kbd>Shift</kbd> + рамка · <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>выбрать группу / всех</td></tr>
-        <tr><td>ПКМ по земле</td><td>двигаться строем по самому быстрому маршруту</td></tr>
-        <tr><td>ПКМ по траншее</td><td>пехота занимает позицию, бойцы расходятся по ячейкам</td></tr>
-        <tr><td>ПКМ по зданию</td><td>пехота занимает здание, бойцы — у окон</td></tr>
-        <tr><td>Панель команд внизу</td><td>каждая кнопка подписана, горячая клавиша — в углу кнопки</td></tr>
-        <tr><td>Боец вручную</td><td>выберите отделение → кликните по бойцу на карте или по его карточке → ПКМ — куда идти</td></tr>
+        <tr><td>ЛКМ по отряду</td><td>выбрать (<kbd>Ctrl</kbd> — добавить, <kbd>Shift</kbd> + рамка — группа, <kbd>Ctrl</kbd>+<kbd>A</kbd> — все). Или в списке слева</td></tr>
+        <tr><td>ПКМ по земле</td><td>идти. Техника и колонны сами выбирают дороги — так быстрее</td></tr>
+        <tr><td><b>Двойной ПКМ</b></td><td>идти <b>напрямик</b>, не выбирая дорог (по полю медленнее)</td></tr>
+        <tr><td>ПКМ по траншее / зданию</td><td>пехота занимает позицию: бойцы расходятся по ячейкам или к окнам</td></tr>
+        <tr><td>ПКМ по своей БМП, БТР, грузовику</td><td>пехота <b>садится в машину</b>. Высадка — кнопка «Высадить» у машины или любой приказ «идти» отделению</td></tr>
+        <tr><td>ПКМ по противнику</td><td>у расчёта БПЛА — FPV-удар по цели</td></tr>
+        <tr><td>Кнопки внизу</td><td>только нужное для выбранного; редкие приказы — под «Ещё»</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>отменить режим / снять выбор</td></tr>
       </table>
-      <h3>Артиллерия</h3>
+      <h3>Подготовка</h3>
       <table>
-        <tr><td><kbd>F</kbd> «Огонь»</td><td>выберите миномёт или гаубицу → клик по цели. На карте показаны кольца дальности и эллипс рассеяния. Число выстрелов и взрыватель (контакт / воздушный подрыв) — в карточке</td></tr>
-        <tr><td>Осколки</td><td>урон зависит от расстояния, позы и укрытия. Стены и деревья гасят осколки. Воздушный подрыв опасен для открытых траншей, перекрытие защищает. В подвале и блиндаже безопасно, пока их не пробьёт прямое попадание крупного калибра</td></tr>
+        <tr><td>Начало партии</td><td>несколько минут без стрельбы: выдвиньте войска, займите позиции, выройте траншеи. За линию разграничения заходить нельзя. «К бою ▶» — начать раньше</td></tr>
       </table>
-      <h3>Бой, медицина, дроны</h3>
+      <h3>Логистика</h3>
       <table>
-        <tr><td>Стрелковый бой</td><td>идёт сам: бойцы стреляют по обнаруженному противнику. Режим огня — кнопка <kbd>Q</kbd>: свободно / только в ответ / не стрелять</td></tr>
-        <tr><td>Подавление</td><td>под плотным огнём бойцы ложатся и хуже стреляют</td></tr>
-        <tr><td><kbd>R</kbd> «Эвакуация»</td><td>тяжелораненых выносят к санитарной машине, транспорту или в медпункт. Медик отделения сам перевязывает раненых; без помощи тяжелораненый погибает за ~6 минут</td></tr>
-        <tr><td>Дроны</td><td>расчёт БПЛА: <kbd>J</kbd> разведчик (видит сверху, ночью — тепловизор), <kbd>K</kbd> FPV-удар (клик по цели), <kbd>U</kbd> сброс гранат, <kbd>Y</kbd> вернуть</td></tr>
-        <tr><td>Туман войны</td><td>противник виден, только если его заметили ваши бойцы, техника или дроны; полупрозрачные метки — где его видели последний раз</td></tr>
-        <tr><td>Ночь</td><td>темно, обзор меньше (у Велнарии ночные приборы лучше). Свет — фонари и окна запитанных домов; разрушьте подстанцию или провода — район погаснет</td></tr>
+        <tr><td>Запасы</td><td>у бойцов кончаются патроны, у техники — снаряды и топливо, у артиллерии — выстрелы. Полоски в карточке</td></tr>
+        <tr><td>Склад</td><td>в тылу; пополняет всех, кто рядом, и получает подвоз из тыла. Можно накрыть артиллерией</td></tr>
+        <tr><td>Грузовики</td><td>в режиме «Автоснабжение» сами возят груз со склада тем, кому нужнее (под огонь не лезут). Любой ваш приказ грузовику выключает режим</td></tr>
       </table>
-      <h3>Время</h3>
+      <h3>Артиллерия и дроны</h3>
       <table>
-        <tr><td><kbd>Пробел</kbd> · <kbd>1</kbd>–<kbd>4</kbd></td><td>пауза · скорость 1×, 5×, 20×, 60×</td></tr>
+        <tr><td><kbd>F</kbd> «Огонь»</td><td>миномёт или гаубица → клик по цели. Кольца дальности и эллипс рассеяния показаны на карте</td></tr>
+        <tr><td>Дроны</td><td><kbd>J</kbd> разведчик, <kbd>K</kbd> FPV-удар, <kbd>B</kbd> сброс гранат, <kbd>Y</kbd> вернуть</td></tr>
+      </table>
+      <h3>Бой</h3>
+      <table>
+        <tr><td>Стрельба</td><td>идёт сама по обнаруженному противнику; под огнём бойцы ложатся. Медик сам перевязывает, <kbd>R</kbd> — эвакуация тяжелораненых</td></tr>
+        <tr><td>Туман войны, ночь</td><td>противник виден, только если его заметили. Ночью темно; разбейте подстанцию — район погаснет</td></tr>
+      </table>
+      <h3>Камера и время</h3>
+      <table>
+        <tr><td>ЛКМ + тянуть · <kbd>WASD</kbd> · колесо</td><td>двигать и приближать карту</td></tr>
+        <tr><td><kbd>Пробел</kbd> · <kbd>1</kbd>–<kbd>4</kbd></td><td>пауза · скорость (только одиночная игра)</td></tr>
+        <tr><td><kbd>L</kbd> <kbd>O</kbd> <kbd>I</kbd></td><td>подписи · схема окопов · планировки зданий</td></tr>
       </table>
     </div>
   </div>
