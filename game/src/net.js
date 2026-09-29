@@ -41,6 +41,7 @@ export function makeSnapshot(sim) {
   const drones = sim.drones.list.filter((d) => !d.dead).map((d) => [d.id, d.side, d.kind, r1(d.x), r1(d.y), r1(d.tx), r1(d.ty), d.state, r2(d.heading), d.op.id]);
   const g = sim.game;
   const snap = { t: 'snap', time: r1(sim.time), units, shells, drones, fires: (sim.fires || []).map((f) => [r1(f.x), r1(f.y), f.r, r1(f.until)]) };
+  snap.intel = { blue: sim.intel.blue.map((m) => [m.kind, r1(m.x), r1(m.y), Math.round(m.r), r1(m.t), r1(m.until), m.label]), red: sim.intel.red.map((m) => [m.kind, r1(m.x), r1(m.y), Math.round(m.r), r1(m.t), r1(m.until), m.label]) };
   snap.smokes = (sim.smokes || []).map((s) => [r1(s.x), r1(s.y), s.r, r1(s.t0), r1(s.until)]);
   snap.depots = sim.log.depots.map((d) => [Math.round(d.stock.ammo), Math.round(d.stock.shells), Math.round(d.stock.fuel), d.alive ? 1 : 0, d.spotted ? 1 : 0]);
   if (g) {
@@ -124,6 +125,7 @@ export function applySnapshot(sim, snap) {
     g.endAt = snap.endAt;
     g.prep = !!snap.prep; g.prepEnd = snap.prepEnd; g.ready = snap.ready || g.ready;
   }
+  if (snap.intel) for (const side of ['blue', 'red']) sim.intel[side] = snap.intel[side].map((q) => ({ kind: q[0], x: q[1], y: q[2], r: q[3], t: q[4], until: q[5], label: q[6] }));
   if (snap.smokes) { sim.smokes.length = 0; for (const q of snap.smokes) sim.smokes.push({ x: q[0], y: q[1], r: q[2], t0: q[3], until: q[4] }); }
   (snap.depots || []).forEach((q, i) => { const d = sim.log.depots[i]; if (!d) return; d.stock = { ammo: q[0], shells: q[1], fuel: q[2] }; d.alive = !!q[3]; d.spotted = !!q[4]; });
 }

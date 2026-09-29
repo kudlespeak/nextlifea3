@@ -160,6 +160,7 @@ export class Sim {
     this.log = new Logistics(this);
     this.auto = new Autonomy(this);
     this.medpoints = { blue: null, red: null };
+    this.intel = { blue: [], red: [] }; // разведданные стороны: засечённые батареи и т.п.
     this.stats = { blue: { kia: 0, wia: 0, evac: 0, lostVeh: 0 }, red: { kia: 0, wia: 0, evac: 0, lostVeh: 0 } };
     this.puppet = false;
     this.unitTypes = UNIT_TYPES; // в сетевой игре у гостя симуляция только отображает присланное состояние
@@ -811,6 +812,7 @@ export class Sim {
     this.auto.update();
     this.log.update(dt);
     this.game?.update(dt);
+    for (const side of ['blue', 'red']) this.intel[side] = this.intel[side].filter((m) => m.until > this.time);
     for (const ai of this.ais || []) ai.update();
     // Санитарные машины и транспорт сдают раненых в медпункте
     for (const v of this.units) {

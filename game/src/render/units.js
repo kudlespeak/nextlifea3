@@ -731,25 +731,6 @@ export function drawCombatFx(ctx, sim, view, fogSide) {
       ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
     }
   }
-  // Медпункты
-  for (const side of ['blue', 'red']) {
-    const m = sim.medpoints?.[side];
-    if (!m || (fogSide && side !== fogSide)) continue;
-    const [x, y] = toS(m.x, m.y);
-    ctx.fillStyle = 'rgba(245,245,240,0.95)';
-    ctx.fillRect(x - 11 * dpr, y - 9 * dpr, 22 * dpr, 18 * dpr);
-    ctx.fillStyle = '#d33';
-    ctx.fillRect(x - 2.5 * dpr, y - 7 * dpr, 5 * dpr, 14 * dpr);
-    ctx.fillRect(x - 7 * dpr, y - 2.5 * dpr, 14 * dpr, 5 * dpr);
-    ctx.font = `700 ${11 * dpr}px "PT Sans", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.lineWidth = 3 * dpr;
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-    ctx.strokeText('Медпункт', x, y + 11 * dpr);
-    ctx.fillStyle = '#fff';
-    ctx.fillText('Медпункт', x, y + 11 * dpr);
-  }
   // Дроны
   for (const d of sim.drones?.list || []) {
     if (d.dead) continue;

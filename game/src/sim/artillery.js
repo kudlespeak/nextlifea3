@@ -105,6 +105,16 @@ export class Artillery {
     u.recoil = sim.time;
     u.ammo--;
     f.rounds--;
+    // Контрбатарейная разведка противника засекает огневую позицию (с ошибкой ~100–250 м)
+    const enemy = u.side === 'blue' ? 'red' : 'blue';
+    const intel = sim.intel[enemy];
+    const known = intel.find((m) => m.kind === 'battery' && Math.hypot(m.tx - u.x, m.ty - u.y) < 400);
+    const err = cal.speed > 300 ? 120 : 220;
+    if (known) { known.until = sim.time + 240; known.t = sim.time; }
+    else {
+      intel.push({ kind: 'battery', x: u.x + sim.rng.float(-err, err), y: u.y + sim.rng.float(-err, err), r: err * 1.4, tx: u.x, ty: u.y, t: sim.time, until: sim.time + 240, label: u.def.caliber > 100 || u.def.caliber === 'r122' ? 'Батарея противника' : 'Миномёт противника' });
+      sim.msg(`Засечена огневая позиция: ${u.def.caliber > 100 || u.def.caliber === 'r122' ? 'артиллерия' : 'миномёт'} противника`, enemy);
+    }
     f.next = sim.time + u.def.reload;
   }
 

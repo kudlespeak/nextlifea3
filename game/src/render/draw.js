@@ -2,7 +2,7 @@
 // Всё рисуется в мировых координатах (метрах), масштаб ppm = пикселей на метр.
 
 import { fbm, hash2 } from '../rng.js';
-import { offsetLine } from '../geom.js';
+import { offsetLine, resample } from '../geom.js';
 import { CROPS } from '../mapgen.js';
 import { M } from '../spatial.js';
 
@@ -109,6 +109,7 @@ export function drawChunk(ctx, world, b, ppm) {
   for (const f of world.fields.query(q)) drawField(ctx, f, b, ppm);
   drawAreas(ctx, world, b, q, ppm);
   drawLowFreq(ctx, world, b, ppm);
+  if (ppm >= 2) drawMicro(ctx, world, b, ppm);
   drawWater(ctx, world, b, q, ppm);
   const scars = world.scars.query(q);
   for (const s of scars) if (s.kind === 'burn') drawBurn(ctx, s);
@@ -162,6 +163,39 @@ function lowFreqImage(G, fn, b) {
     }
   g.putImageData(img, 0, 0);
   return lfCanvas;
+}
+
+// Мелкая фактура вблизи: пучки травы, стерня, комья земли (штрихи двух тонов одной заливкой)
+function drawMicro(ctx, world, b, ppm) {
+  const step = ppm >= 8 ? 0.3 : ppm >= 4 ? 0.5 : 0.9;
+  const len = step * 0.9;
+  const light = new Path2D(), dark = new Path2D(), dots = new Path2D();
+  const mask = world.mask;
+  const skip = M.ROAD | M.WATER | M.BUILD;
+  const x0 = Math.floor(b.x0 / step) * step, y0 = Math.floor(b.y0 / step) * step;
+  for (let y = y0; y < b.y1; y += step) {
+    const iy = Math.round(y / step);
+    for (let x = x0; x < b.x1; x += step) {
+      const ix = Math.round(x / step);
+      const h = hash2(ix, iy, 991);
+      if (h < 0.35) continue;
+      const px = x + hash2(ix, iy, 13) * step, py = y + hash2(ix, iy, 29) * step;
+      if (mask.has(px, py, skip)) continue;
+      if (h > 0.93) { dots.moveTo(px + len * 0.2, py); dots.arc(px, py, len * 0.2, 0, Math.PI * 2); continue; }
+      const a = hash2(ix, iy, 7) * Math.PI;
+      const dx = Math.cos(a) * len * 0.5, dy = Math.sin(a) * len * 0.5;
+      const path = h < 0.64 ? dark : light;
+      path.moveTo(px - dx, py - dy); path.lineTo(px + dx, py + dy);
+    }
+  }
+  ctx.lineWidth = step * 0.16;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(40,44,18,0.22)';
+  ctx.stroke(dark);
+  ctx.strokeStyle = 'rgba(214,206,150,0.2)';
+  ctx.stroke(light);
+  ctx.fillStyle = 'rgba(60,48,30,0.22)';
+  ctx.fill(dots);
 }
 
 // Крупные светлые/тёмные разводы поверх полей (влажность, рельеф)
@@ -260,6 +294,23 @@ function drawField(ctx, f, b, ppm) {
   ctx.strokeStyle = 'rgba(95,90,55,0.55)';
   ctx.stroke();
   ctx.restore();
+}
+
+// Забор вокруг участка: штакетник / сетка / профлист, столбы
+function fence(ctx, poly, h) {
+  const kind = h < 0.4 ? 'picket' : h < 0.75 ? 'mesh' : 'sheet';
+  ctx.beginPath();
+  pathPoly(ctx, poly);
+  if (kind === 'sheet') { ctx.lineWidth = 0.14; ctx.strokeStyle = h < 0.88 ? '#6f7a6a' : '#7a5a44'; ctx.stroke(); }
+  else if (kind === 'picket') { ctx.lineWidth = 0.12; ctx.strokeStyle = '#8a7556'; ctx.setLineDash([0.08, 0.1]); ctx.stroke(); ctx.setLineDash([]); }
+  else { ctx.lineWidth = 0.05; ctx.strokeStyle = 'rgba(160,165,160,0.8)'; ctx.stroke(); }
+  // Столбы
+  ctx.fillStyle = '#4a3c2c';
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const L = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    for (let t = 0; t < L; t += 2.5) ctx.fillRect(p[0] + ((q[0] - p[0]) * t) / L - 0.06, p[1] + ((q[1] - p[1]) * t) / L - 0.06, 0.12, 0.12);
+  }
 }
 
 // ---------- Площадные объекты ----------
@@ -395,6 +446,21 @@ function drawArea(ctx, a, b, ppm) {
         ctx.lineWidth = 0.25;
         ctx.strokeStyle = 'rgba(55,45,30,0.55)';
         ctx.stroke();
+        if (ppm >= 3) fence(ctx, a.poly, hash2(Math.round(a.bbox.x0), Math.round(a.bbox.y0), 3));
+      }
+      if ((a.kind === 'yard' || a.kind === 'farmyard') && ppm >= 2) {
+        // Утоптанная земля у построек, тропинки, забор
+        ctx.save();
+        ctx.clip();
+        const cx = (a.bbox.x0 + a.bbox.x1) / 2, cy = (a.bbox.y0 + a.bbox.y1) / 2;
+        const R = Math.hypot(a.bbox.x1 - a.bbox.x0, a.bbox.y1 - a.bbox.y0) * 0.35;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+        g.addColorStop(0, 'rgba(150,132,98,0.35)');
+        g.addColorStop(1, 'rgba(150,132,98,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(a.bbox.x0, a.bbox.y0, a.bbox.x1 - a.bbox.x0, a.bbox.y1 - a.bbox.y0);
+        ctx.restore();
+        if (ppm >= 3) fence(ctx, a.poly, hash2(Math.round(a.bbox.x0), Math.round(a.bbox.y1), 5));
       }
       if (a.kind === 'urban') {
         ctx.lineWidth = 50;
@@ -933,6 +999,33 @@ function drawBuilding(ctx, bd, ppm) {
     ctx.restore();
     facet(ctx, p, 0.3, 0.3, 0.12);
   }
+  // Потёртости кровли: подтёки, мох, ржавчина, заплатки — вблизи
+  if (ppm >= 2 && bd.w * bd.h > 12) {
+    ctx.save();
+    ctx.beginPath();
+    pathPoly(ctx, p);
+    ctx.clip();
+    const seed = Math.floor(bd.x * 5 + bd.y * 11);
+    const n = Math.min(14, 3 + Math.floor(bd.w * bd.h / 25));
+    for (let i = 0; i < n; i++) {
+      const u = (hash2(i, 11, seed) - 0.5) * bd.w, v = (hash2(i, 12, seed) - 0.5) * bd.h;
+      const k = hash2(i, 13, seed);
+      const [x, y] = W(u, v);
+      ctx.fillStyle = k < 0.35 ? 'rgba(40,36,28,0.16)' : k < 0.6 ? 'rgba(96,110,60,0.18)' : k < 0.8 ? 'rgba(130,78,40,0.16)' : 'rgba(255,250,235,0.12)';
+      if (k > 0.9) { // заплатка из другого листа
+        ctx.save(); ctx.translate(x, y); ctx.rotate(bd.angle);
+        ctx.fillStyle = 'rgba(170,172,168,0.45)'; ctx.fillRect(-0.8, -0.5, 1.6, 1.0);
+        ctx.restore();
+      } else { ctx.beginPath(); ctx.ellipse(x, y, 0.6 + k * 1.6, 0.4 + k * 0.9, bd.angle + k, 0, Math.PI * 2); ctx.fill(); }
+    }
+    ctx.restore();
+    // Спутниковая тарелка / антенна на части домов
+    if ((bd.style === 'gable' || bd.style === 'flat') && hash2(seed, 1, 99) < 0.35 && ppm >= 3) {
+      const [x, y] = W(bd.w * 0.25, -bd.h * 0.3);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(x + 0.3, y + 0.3, 0.35, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#d9d8d2'; ctx.beginPath(); ctx.arc(x, y, 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   // Разрушенная кровля
   if (bd.ruined) {
     ctx.save();
@@ -955,7 +1048,93 @@ function drawBuilding(ctx, bd, ppm) {
 
 // ---------- Деревья ----------
 // Вблизи (ppm >= 2) кроны над окопами становятся полупрозрачными, чтобы было видно позиции.
+// Породы для детальной отрисовки: [основной, светлый, тёмный], форма кроны
+const SPECIES = [
+  { c: ['#56642f', '#8a984c', '#303a1c'], lobes: 6, spread: 0.5 }, // акация — светлая, ажурная
+  { c: ['#34452a', '#5b7443', '#1c2616'], lobes: 4, spread: 0.3 }, // тополь — тёмный, плотный
+  { c: ['#465832', '#71864b', '#26321b'], lobes: 5, spread: 0.42 }, // дуб
+  { c: ['#4d5d2c', '#7f8f46', '#2b3519'], lobes: 5, spread: 0.45 }, // клён / ясень
+  { c: ['#3c4a2e', '#627049', '#222b19'], lobes: 3, spread: 0.25 }, // кустарник
+];
+
+function drawTreesDetailed(ctx, world, b, ppm) {
+  const q = { x0: b.x0 - 12, y0: b.y0 - 12, x1: b.x1 + 12, y1: b.y1 + 12 };
+  const mask = world.mask;
+  const fine = ppm >= 4;
+  const list = [];
+  world.trees.forEach(q, (arr, i) => { if (arr[i + 2] > 0.01) list.push([arr[i], arr[i + 1], arr[i + 2], arr[i + 3]]); });
+  // Подлесок и сухая трава под посадкой — мягкие пятна
+  ctx.fillStyle = 'rgba(70,78,40,0.35)';
+  ctx.beginPath();
+  for (const [x, y, r] of list) { ctx.moveTo(x + r * 1.3, y); ctx.arc(x, y, r * 1.3, 0, Math.PI * 2); }
+  ctx.fill();
+  // Тени — одной заливкой
+  ctx.fillStyle = 'rgba(14,18,8,0.5)';
+  ctx.beginPath();
+  for (const [x, y, r] of list) { const s2 = r * 0.8; ctx.moveTo(x + s2 + r, y + s2); ctx.ellipse(x + s2, y + s2, r, r * 0.9, 0, 0, Math.PI * 2); }
+  ctx.fill();
+  for (const [x, y, r, shade] of list) {
+    const h = hash2(Math.round(x * 3), Math.round(y * 3), 17);
+    const faded = ppm >= 2 && mask.has(x, y, M.FORT);
+    ctx.globalAlpha = faded ? (ppm >= 4 ? 0.3 : 0.5) : 1;
+    if (shade >= 4) {
+      // Сгоревшее / сухое: голые ветви
+      ctx.strokeStyle = shade === 4 ? '#2a2622' : '#6a6152';
+      ctx.lineWidth = Math.max(0.08, r * 0.08);
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) { const a = k * 1.05 + h * 6; ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); }
+      ctx.stroke();
+      ctx.fillStyle = shade === 4 ? '#1d1a17' : '#4a4337';
+      ctx.beginPath(); ctx.arc(x, y, r * 0.25, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    const sp = SPECIES[r < 2.2 ? 4 : Math.floor(h * 4)];
+    const tint = shade * 0.04; // посечённые осколками — темнее
+    // Крона: несколько «шапок» вокруг центра
+    const lobes = [];
+    for (let k = 0; k < sp.lobes; k++) {
+      const a = (k / sp.lobes) * Math.PI * 2 + h * 5;
+      const d = r * sp.spread * (0.7 + hash2(k, 3, Math.round(x * 7 + y)) * 0.6);
+      lobes.push([x + Math.cos(a) * d, y + Math.sin(a) * d, r * (0.55 + hash2(k, 4, Math.round(x + y * 5)) * 0.2)]);
+    }
+    lobes.push([x, y, r * 0.62]);
+    ctx.fillStyle = sp.c[2];
+    ctx.beginPath();
+    for (const [lx, ly, lr] of lobes) { ctx.moveTo(lx + lr, ly); ctx.arc(lx, ly, lr, 0, Math.PI * 2); }
+    ctx.fill();
+    ctx.fillStyle = sp.c[0];
+    ctx.beginPath();
+    for (const [lx, ly, lr] of lobes) { ctx.moveTo(lx - lr * 0.12 + lr * 0.85, ly - lr * 0.12); ctx.arc(lx - lr * 0.12, ly - lr * 0.12, lr * 0.85, 0, Math.PI * 2); }
+    ctx.fill();
+    // Блики с северо-запада
+    ctx.fillStyle = sp.c[1];
+    ctx.globalAlpha *= 0.75 - tint;
+    ctx.beginPath();
+    for (const [lx, ly, lr] of lobes) { ctx.moveTo(lx - lr * 0.35 + lr * 0.45, ly - lr * 0.35); ctx.arc(lx - lr * 0.35, ly - lr * 0.35, lr * 0.45, 0, Math.PI * 2); }
+    ctx.fill();
+    ctx.globalAlpha = faded ? (ppm >= 4 ? 0.3 : 0.5) : 1;
+    if (fine) {
+      // Листва: мелкие светлые и тёмные пятна
+      for (let k = 0; k < 10; k++) {
+        const a = hash2(k, 7, Math.round(x * 11 + y)) * Math.PI * 2, d = Math.sqrt(hash2(k, 8, Math.round(x + y * 11))) * r * 0.9;
+        ctx.fillStyle = k % 2 ? sp.c[1] : sp.c[2];
+        ctx.globalAlpha = (faded ? 0.25 : 0.55);
+        ctx.beginPath(); ctx.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, r * 0.12, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (shade > 0 && shade < 4) {
+      // Посечённые: сквозь крону видны ветви
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = '#3a3226';
+      ctx.lineWidth = r * 0.06;
+      ctx.beginPath(); ctx.moveTo(x - r * 0.6, y); ctx.lineTo(x + r * 0.5, y + r * 0.2); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawTrees(ctx, world, b, ppm) {
+  if (ppm >= 1.5) return drawTreesDetailed(ctx, world, b, ppm);
   const q = { x0: b.x0 - 12, y0: b.y0 - 12, x1: b.x1 + 12, y1: b.y1 + 12 };
   const detailed = ppm >= 0.5;
   const minR = 0.75 / ppm;
@@ -1067,6 +1246,115 @@ function spoilColor(age, alpha = 1) {
   return `rgba(${r},${g},${bl},${alpha})`;
 }
 
+// Точки вдоль ломаной с шагом step и нормалью (влево от направления)
+function samplesWithNormals(line, step) {
+  const pts = resample(line, step);
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const L = Math.hypot(dx, dy) || 1;
+    out.push([pts[i], [-dy / L, dx / L]]);
+  }
+  return out;
+}
+
+// Бруствер: комья выброшенного грунта, светлые сверху, с тенью; старые — с травой
+function parapetLumps(ctx, t, sign, ppm) {
+  const step = ppm >= 4 ? 0.45 : 0.8;
+  const tones = [spoilColor(t.age, 1), spoilColor(Math.max(0, t.age - 0.25), 1), spoilColor(t.age + 0.25, 1)];
+  for (const [p, n] of samplesWithNormals(t.line, step)) {
+    const seed = Math.round(p[0] * 13) * 7 + Math.round(p[1] * 13);
+    for (const side of sign ? [sign, -sign] : [1, -1]) {
+      const front = side === sign;
+      const base = sign ? (front ? 1.7 : 1.2) : 1.5;
+      const k = hash2(seed, side > 0 ? 1 : 2, 3);
+      const off = base + (k - 0.5) * (front ? 1.4 : 0.8);
+      const r = (front ? 0.45 : 0.32) + k * 0.35;
+      const x = p[0] + n[0] * side * off, y = p[1] + n[1] * side * off;
+      ctx.fillStyle = 'rgba(30,24,16,0.28)';
+      ctx.beginPath(); ctx.ellipse(x + 0.12, y + 0.12, r, r * 0.7, k * 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = tones[Math.floor(k * 3) % 3];
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.7, k * 3, 0, Math.PI * 2); ctx.fill();
+      if (ppm >= 4) {
+        ctx.fillStyle = 'rgba(255,240,210,0.18)';
+        ctx.beginPath(); ctx.ellipse(x - r * 0.25, y - r * 0.25, r * 0.45, r * 0.3, k * 3, 0, Math.PI * 2); ctx.fill();
+      }
+      // Старые позиции зарастают
+      if (t.age > 0.4 && k > 0.6) {
+        ctx.fillStyle = 'rgba(88,104,52,0.55)';
+        ctx.beginPath(); ctx.arc(x + r * 0.3, y, r * 0.5, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+  // Мешки с песком у стрелковых ячеек и через каждые ~7 м бруствера
+  if (ppm >= 3 && sign) {
+    const bags = [];
+    if (t.pit) bags.push([t.pit, 1.2, true]);
+    if (t.sub === 'fire') {
+      const pts = samplesWithNormals(t.line, 7);
+      for (let i = 1; i < pts.length - 1; i += 1) bags.push([[pts[i][0][0] + pts[i][1][0] * sign * 0.9, pts[i][0][1] + pts[i][1][1] * sign * 0.9], 0.9, false, pts[i][1]]);
+    }
+    for (const [c, R, ring, n] of bags) {
+      const count = ring ? 9 : 4;
+      for (let k = 0; k < count; k++) {
+        let x, y, a;
+        if (ring) { a = (k / count) * Math.PI * 2; x = c[0] + Math.cos(a) * R; y = c[1] + Math.sin(a) * R; a += Math.PI / 2; }
+        else { const tx = -n[1], ty = n[0]; const o = (k - 1.5) * 0.55; x = c[0] + tx * o; y = c[1] + ty * o; a = Math.atan2(ty, tx); }
+        ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+        ctx.fillStyle = 'rgba(20,16,10,0.35)'; ctx.beginPath(); ctx.roundRect(-0.25 + 0.06, -0.15 + 0.06, 0.5, 0.3, 0.1); ctx.fill();
+        ctx.fillStyle = k % 2 ? '#a39470' : '#958760';
+        ctx.beginPath(); ctx.roundRect(-0.25, -0.15, 0.5, 0.3, 0.1); ctx.fill();
+        ctx.strokeStyle = 'rgba(60,50,30,0.6)'; ctx.lineWidth = 0.03; ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+// Сама траншея вблизи: кромка, освещённая и затенённая стенки, дно, обшивка, настил
+function trenchCut(ctx, t, w, ppm) {
+  // Какая стенка освещена (солнце с северо-запада): смотрим нормаль ломаной
+  const a = t.line[0], b = t.line[t.line.length - 1];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+  const lit = nx * 0.707 + ny * 0.707 > 0 ? 1 : -1; // +нормаль — к юго-востоку: эта стенка смотрит на солнце
+  strokeLine(ctx, t.line, w + 0.45, '#3b3024'); // срез грунта по кромке
+  strokeLine(ctx, t.line, w, '#211a12');
+  strokeLine(ctx, offsetLine(t.line, lit * w * 0.3), w * 0.28, 'rgba(128,104,74,0.6)'); // освещённая стенка
+  strokeLine(ctx, offsetLine(t.line, -lit * w * 0.32), w * 0.22, 'rgba(8,6,4,0.55)'); // тень
+  strokeLine(ctx, t.line, w * 0.34, '#17110b'); // дно
+  if (ppm >= 5) {
+    // Обшивка стен: доски/плетень — короткие поперечные штрихи вдоль обеих стенок
+    ctx.strokeStyle = 'rgba(112,88,58,0.75)';
+    ctx.lineWidth = 0.05;
+    ctx.beginPath();
+    for (const [p, n] of samplesWithNormals(t.line, 0.22)) {
+      for (const sd of [1, -1]) {
+        const o0 = sd * w * 0.36, o1 = sd * w * 0.5;
+        ctx.moveTo(p[0] + n[0] * o0, p[1] + n[1] * o0); ctx.lineTo(p[0] + n[0] * o1, p[1] + n[1] * o1);
+      }
+    }
+    ctx.stroke();
+    // Настил по дну
+    strokeLine(ctx, t.line, w * 0.3, 'rgba(92,72,48,0.9)', [0.1, 0.16]);
+  }
+  if (t.pit) {
+    ctx.fillStyle = '#140f0a';
+    ctx.beginPath(); ctx.arc(t.pit[0], t.pit[1], 0.95, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(128,104,74,0.45)';
+    ctx.beginPath(); ctx.arc(t.pit[0] - 0.2, t.pit[1] - 0.2, 0.6, Math.PI * 0.9, Math.PI * 1.9); ctx.fill();
+  }
+  if (t.niches && ppm >= 2) {
+    ctx.fillStyle = '#0f0b07';
+    for (const nch of t.niches) {
+      ctx.beginPath();
+      ctx.ellipse(nch.p[0] + nch.side * 0.55, nch.p[1] - nch.side * 0.3, 0.5, 0.38, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
 export function drawForts(ctx, world, q, ppm) {
   const items = world.forts.query(q);
   if (!items.length) return;
@@ -1089,6 +1377,7 @@ export function drawForts(ctx, world, q, ppm) {
       strokeLine(ctx, offsetLine(t.line, sign * 1.7), 2.6, spoilColor(t.age, 0.95)); // бруствер к противнику
       strokeLine(ctx, offsetLine(t.line, -sign * 1.2), 1.5, spoilColor(t.age, 0.7)); // тыльный отвал
     } else strokeLine(ctx, t.line, 3.8, spoilColor(t.age, 0.85));
+    if (ppm >= 1.8) parapetLumps(ctx, t, s ? sign : 0, ppm);
   }
   // Насыпи блиндажей и капониров
   for (const f of items) {
@@ -1149,6 +1438,7 @@ export function drawForts(ctx, world, q, ppm) {
   // 2) Сама щель траншеи
   for (const t of trenches) {
     const w = low ? Math.max(1.2, 0.8 / ppm) : t.width;
+    if (!low && ppm >= 1.8) { trenchCut(ctx, t, w, ppm); continue; }
     strokeLine(ctx, t.line, w, '#231c14');
     if (!low) {
       strokeLine(ctx, t.line, w * 0.45, '#140f0a');
@@ -1174,11 +1464,31 @@ export function drawForts(ctx, world, q, ppm) {
     if (!t.covered || low) continue;
     if (t.covered === 'logs') {
       strokeLine(ctx, t.line, t.width + 1.3, '#6c5840');
-      if (ppm >= 3) strokeLine(ctx, t.line, t.width + 1.1, 'rgba(60,45,30,0.9)', [0.18, 0.2]);
-      strokeLine(ctx, t.line, t.width + 0.6, spoilColor(t.age, 0.55));
+      if (ppm >= 3) {
+        // Отдельные брёвна поперёк траншеи, торцы, присыпка грунтом
+        for (const [p, n] of samplesWithNormals(t.line, 0.32)) {
+          const h = hash2(Math.round(p[0] * 10), Math.round(p[1] * 10), 5);
+          const L = (t.width + 1.2) / 2 + h * 0.2;
+          ctx.strokeStyle = h < 0.5 ? '#7a6344' : '#665238';
+          ctx.lineWidth = 0.26;
+          ctx.beginPath(); ctx.moveTo(p[0] - n[0] * L, p[1] - n[1] * L); ctx.lineTo(p[0] + n[0] * L, p[1] + n[1] * L); ctx.stroke();
+          ctx.fillStyle = '#b39a70';
+          ctx.beginPath(); ctx.arc(p[0] + n[0] * L, p[1] + n[1] * L, 0.12, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      strokeLine(ctx, t.line, t.width + 0.4, spoilColor(t.age, 0.45));
     } else {
       strokeLine(ctx, t.line, t.width + 1.8, 'rgba(84,94,56,0.85)');
-      if (ppm >= 3) strokeLine(ctx, t.line, t.width + 1.6, 'rgba(50,58,32,0.6)', [0.25, 0.35]);
+      if (ppm >= 3) {
+        // Маскировочная сеть: ячейки и лоскуты «листвы»
+        strokeLine(ctx, t.line, t.width + 1.6, 'rgba(50,58,32,0.6)', [0.25, 0.35]);
+        for (const [p, n] of samplesWithNormals(t.line, 0.45)) {
+          const h = hash2(Math.round(p[0] * 7), Math.round(p[1] * 7), 9);
+          ctx.fillStyle = h < 0.33 ? 'rgba(104,112,60,0.9)' : h < 0.66 ? 'rgba(70,80,44,0.9)' : 'rgba(120,104,70,0.85)';
+          const o = (h - 0.5) * (t.width + 1.2);
+          ctx.beginPath(); ctx.ellipse(p[0] + n[0] * o, p[1] + n[1] * o, 0.28, 0.16, h * 6, 0, Math.PI * 2); ctx.fill();
+        }
+      }
     }
   }
   // Входы в блиндажи

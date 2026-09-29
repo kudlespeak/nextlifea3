@@ -1,6 +1,7 @@
 // Линия фронта, серая зона, зоны интереса.
 
 import { FACTIONS } from '../sim/factions.js';
+import { tpPowered } from '../power.js';
 
 let tint = null, tintVer = -1, lines = [];
 
@@ -248,5 +249,85 @@ export function drawDepots(ctx, sim, view, fogSide) {
     ctx.strokeText(t, x, yy + s);
     ctx.fillStyle = '#f2eee2';
     ctx.fillText(t, x, yy + s);
+  }
+}
+
+// Значки ключевых объектов и разведданные: подстанции, ТП, склады, медпункты,
+// засечённые батареи противника. Видны на любом масштабе, чтобы объекты легко находить.
+
+function badge(ctx, x, y, dpr, color, glyph, label, sub, dim) {
+  const r = 9 * dpr;
+  ctx.globalAlpha = dim ? 0.55 : 1;
+  ctx.fillStyle = 'rgba(15,17,11,0.85)';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.8 * dpr;
+  ctx.beginPath(); ctx.roundRect(x - r, y - r, r * 2, r * 2, 4 * dpr); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = `700 ${11 * dpr}px "PT Sans", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(glyph, x, y + 0.5 * dpr);
+  if (label) {
+    ctx.font = `700 ${11 * dpr}px "PT Sans Narrow", sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.strokeText(label, x + r + 4 * dpr, y - (sub ? 5 : 0) * dpr);
+    ctx.fillStyle = '#f2eee2';
+    ctx.fillText(label, x + r + 4 * dpr, y - (sub ? 5 : 0) * dpr);
+    if (sub) {
+      ctx.font = `${10 * dpr}px "PT Sans", sans-serif`;
+      ctx.strokeText(sub, x + r + 4 * dpr, y + 7 * dpr);
+      ctx.fillStyle = color;
+      ctx.fillText(sub, x + r + 4 * dpr, y + 7 * dpr);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+export function drawInfra(ctx, world, sim, view, side, fog) {
+  const { cam, canvas, dpr } = view;
+  const z = cam.zoom;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const toS = (x, y) => [(x - cam.x) * z + canvas.width / 2, (y - cam.y) * z + canvas.height / 2];
+  const on = (x, y) => x > -60 && y > -60 && x < canvas.width + 60 && y < canvas.height + 60;
+  const p = world.power;
+  const showLabels = z > 0.25 * dpr;
+  if (p && z < 6 * dpr) {
+    const [mx, my] = toS(p.main.x, p.main.y);
+    const ok = p.main.alive && !p.feedCut;
+    if (on(mx, my)) badge(ctx, mx, my, dpr, ok ? '#ffd24a' : '#ef5a4a', '⚡', showLabels ? 'Подстанция 110 кВ' : '', showLabels ? (p.main.alive ? (p.feedCut ? 'ЛЭП перебита — без питания' : 'работает') : 'разрушена') : '', false);
+    if (z > 0.35 * dpr) p.tps.forEach((tp, i) => {
+      const [x, y] = toS(tp.x, tp.y);
+      if (!on(x, y)) return;
+      const pw = tpPowered(world, i);
+      badge(ctx, x, y, dpr * 0.8, pw ? '#e8c65a' : '#ef5a4a', 'ТП', z > 0.8 * dpr ? (tp.alive ? (pw ? '' : 'обесточена') : 'разрушена') : '', '', !pw);
+    });
+  }
+  // Медпункты своей стороны (и чужие — без тумана)
+  for (const s of ['blue', 'red']) {
+    const m = sim.medpoints?.[s];
+    if (!m || (fog && s !== fog)) continue;
+    const [x, y] = toS(m.x, m.y);
+    if (on(x, y)) badge(ctx, x, y, dpr, '#ff7a7a', '✚', showLabels ? 'Медпункт' : '', '', false);
+  }
+  // Разведданные своей стороны
+  const intel = sim.intel?.[side] || [];
+  for (const m of intel) {
+    const [x, y] = toS(m.x, m.y);
+    if (!on(x, y)) continue;
+    const age = sim.time - m.t;
+    const R = Math.max(10 * dpr, m.r * z);
+    ctx.setLineDash([6 * dpr, 5 * dpr]);
+    ctx.strokeStyle = `rgba(255,110,80,${age < 20 ? 0.95 : 0.6})`;
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x - 6 * dpr, y); ctx.lineTo(x + 6 * dpr, y); ctx.moveTo(x, y - 6 * dpr); ctx.lineTo(x, y + 6 * dpr); ctx.stroke();
+    ctx.font = `700 ${11 * dpr}px "PT Sans Narrow", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    const t = `${m.label} · ${Math.floor(age / 60)}:${String(Math.floor(age % 60)).padStart(2, '0')} назад`;
+    ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.strokeText(t, x, y - R - 4 * dpr);
+    ctx.fillStyle = '#ffb3a3';
+    ctx.fillText(t, x, y - R - 4 * dpr);
   }
 }

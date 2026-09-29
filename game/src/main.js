@@ -12,7 +12,7 @@ import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js'
 import { digTrench } from './forts.js';
 import { drawInteriors, buildingAtScreen } from './render/interiors.js';
 import { drawNight, drawFog } from './render/night.js';
-import { drawFront, drawZones, drawPrep, drawDepots, drawSpawns } from './render/modes.js';
+import { drawFront, drawZones, drawPrep, drawDepots, drawSpawns, drawInfra } from './render/modes.js';
 import { RES, RES_NAMES } from './sim/logistics.js';
 import { daylight } from './power.js';
 import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, applyWorldEvent } from './net.js';
@@ -1373,6 +1373,7 @@ function frame(now) {
   drawPrep(ctx, sim.game, view, controlSide);
   drawDepots(ctx, sim, view, fog);
   drawSpawns(ctx, sim.game, view, fog ? controlSide : null);
+  drawInfra(ctx, world, sim, view, controlSide, fog);
   drawArtyOverlay();
   drawUnits(ctx, sim, view, ui, fog);
   drawCombatFx(ctx, sim, view, fog);
