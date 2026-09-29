@@ -1143,7 +1143,7 @@ function drawMinimap() {
   if (dark > 0.05) { mctx.fillStyle = `rgba(6,10,26,${0.6 * dark})`; mctx.fillRect(0, 0, mini.width, mini.height); }
   for (const line of sim.game?.lines || []) {
     for (const sec of line.sectors) {
-      mctx.strokeStyle = SIDES[sec.owner].fill;
+      mctx.strokeStyle = sec.owner ? SIDES[sec.owner].fill : '#e8e2cc';
       mctx.globalAlpha = sec.locked && line.k !== (sim.game.linesTaken || 0) ? 0.4 : 1;
       mctx.lineWidth = 2;
       mctx.beginPath();
@@ -1270,7 +1270,18 @@ function drawLabels() {
 let lastNow = performance.now();
 let uiTimer = 0, netTimer = 0, gridTimer = 0, visTimer = 0;
 let rosterUnits = 0;
+// Кадр защищён: ошибка в одном слое не должна останавливать игру (иначе «всё пропадает»)
+let frameErrors = 0;
 function frame(now) {
+  try { frameBody(now); }
+  catch (err) {
+    frameErrors++;
+    console.error(err);
+    if (frameErrors <= 3) log(`Сбой отрисовки: ${err.message}. Игра продолжается.`);
+  }
+  requestAnimationFrame(frame);
+}
+function frameBody(now) {
   chunks.frame++;
   const dtReal = Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
   lastNow = now;
@@ -1394,7 +1405,6 @@ function frame(now) {
     if (orderMode === 'fire') updateHint();
     if (sim.units.length !== rosterUnits) { rosterUnits = sim.units.length; buildRoster(); }
   }
-  requestAnimationFrame(frame);
 }
 
 function updateScale() {

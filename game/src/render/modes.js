@@ -79,7 +79,7 @@ function drawLines(ctx, game, view) {
   game.lines.forEach((line, k) => {
     const active = k === (game.linesTaken || 0);
     for (const sec of line.sectors) {
-      const col = sec.owner === att ? FACTIONS[att].fill : FACTIONS[sec.owner].fill;
+      const col = sec.owner ? FACTIONS[sec.owner].fill : '#e8e2cc'; // ничей сектор — светлый
       for (const pass of [0, 1]) {
         ctx.beginPath();
         sec.seg.forEach(([x, y], i) => { const [sx, sy] = toS(x, y); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
