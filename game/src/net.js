@@ -3,7 +3,7 @@
 
 import { Rng } from './rng.js';
 import { digTrench } from './forts.js';
-import { SIDES } from './sim/units.js';
+import { SIDES, Unit } from './sim/units.js';
 
 const POSE_IDX = ['stand', 'crouch', 'prone', 'trench', 'window', 'inside', 'under', 'dead'];
 
@@ -35,6 +35,7 @@ export function makeSnapshot(sim) {
     base.push(u.soldiers ? u.soldiers.map((s) => [r1(s.x), r1(s.y), r2(s.heading), POSE_IDX.indexOf(s.pose), Math.round(s.hp), (s.dead ? 1 : 0) | (s.under ? 2 : 0) | (s.evac ? 4 : 0) | (s.wounded << 3) | (s.moving ? 32 : 0) | (s.treated ? 64 : 0) | (s.inTrench ? 128 : 0), r2(s.mag ?? 1)]) : 0);
     // Десант и снабжение
     base.push([u.embarked ? u.embarked.id : 0, u.fuel === undefined ? -1 : r2(u.fuel), u.rounds === undefined ? -1 : r2(u.rounds), u.cargoRes ? [Math.round(u.cargoRes.ammo), Math.round(u.cargoRes.shells), Math.round(u.cargoRes.fuel), u.autoSupply ? 1 : 0] : 0, u.aim === undefined ? null : r2(u.aim)]);
+    base.push([u.type, u.side, u.label]); // чтобы гость мог создать новое подразделение
     return base;
   });
   const shells = sim.art.shells.map((s) => [r1(s.x0), r1(s.y0), r1(s.x), r1(s.y), r1(s.tLaunch), r1(s.tImpact), s.caliber]);
@@ -70,7 +71,16 @@ export function applySnapshot(sim, snap) {
   sim.time = snap.time;
   const byId = new Map(sim.units.map((u) => [u.id, u]));
   for (const a of snap.units) {
-    const u = byId.get(a[0]);
+    let u = byId.get(a[0]);
+    if (!u && a[17]) {
+      // Новое подразделение (прибыло из резерва на стороне хоста)
+      const [type, side, label] = a[17];
+      u = new Unit(side, type, a[1], a[2], label);
+      u.id = a[0];
+      sim.log.init(u);
+      sim.units.push(u);
+      byId.set(u.id, u);
+    }
     if (!u) continue;
     u.tx = a[1]; u.ty = a[2];
     if (u.x === undefined || Math.hypot(u.x - a[1], u.y - a[2]) > 80) { u.x = a[1]; u.y = a[2]; }
