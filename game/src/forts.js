@@ -12,6 +12,7 @@
 
 import { bboxOf, dist, resample, catmullRom } from './geom.js';
 import { addCraterCluster } from './mapgen.js';
+import { M } from './spatial.js';
 
 // Базовая защита элементов — пригодится для расчёта осколков и прямых попаданий
 // (0 — нет защиты, 1 — полная). Значения ориентировочные, будут уточняться.
@@ -29,6 +30,10 @@ export const DUGOUT_RESIST = { 1: 82, 2: 120, 3: 152, 4: 155 };
 function add(world, item, pad = 3) {
   item.bbox = bboxOf(item.line || item.poly || [[item.x, item.y]], pad + (item.w ? Math.max(item.w, item.h) : 0));
   world.forts.insert(item);
+  // Отметка «здесь позиция» — кроны над ней при приближении становятся прозрачнее
+  if (item.kind === 'trench') world.mask.stampLine(item.line, 12, M.FORT);
+  else if (item.kind === 'dugout' || item.kind === 'capon') world.mask.stampDisc(item.x, item.y, Math.max(item.w, item.h) + 4, M.FORT);
+  world.fortsVersion = (world.fortsVersion || 0) + 1;
   return item;
 }
 
@@ -43,7 +48,8 @@ function zigzag(rng, from, to, step, amp) {
   const pts = [];
   let k = 0;
   for (let t = 0; t <= L; t += step * rng.float(0.8, 1.2), k++) {
-    const o = (k % 2 ? amp : -amp) * rng.float(0.6, 1);
+    // первая точка — точно в начале, чтобы куски траншеи стыковались
+    const o = k === 0 ? 0 : (k % 2 ? amp : -amp) * rng.float(0.6, 1);
     pts.push([from[0] + dx * t + nx * o, from[1] + dy * t + ny * o]);
   }
   pts.push(to.slice());
@@ -64,8 +70,38 @@ function splitCovered(rng, line, pCovered, pNet) {
   return out;
 }
 
+// Траншею нельзя вырыть через асфальт, воду, рельсы и дома — режем на куски
+const NO_DIG = M.ROAD | M.WATER | M.RAIL | M.BUILD;
 function trench(world, props) {
-  return add(world, { kind: 'trench', width: 1.0, depth: 1.8, age: 0.3, ...props });
+  const fine = resample(props.line, 1.2);
+  const runs = [];
+  let cur = [];
+  for (const p of fine) {
+    if (world.mask.has(p[0], p[1], NO_DIG)) {
+      if (cur.length) runs.push(cur);
+      cur = [];
+    } else cur.push(p);
+  }
+  if (cur.length) runs.push(cur);
+  const out = [];
+  for (const run of runs) {
+    if (run.length < 3) continue;
+    // Прореживаем обратно, сохраняя изломы
+    const line = simplify(run);
+    out.push(add(world, { kind: 'trench', width: 1.0, depth: 1.8, age: 0.3, ...props, line }));
+  }
+  return out;
+}
+
+function simplify(pts) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(cross) > 0.15) out.push(b);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }
 
 // ---------- Опорный пункт в лесополосе ----------
@@ -86,23 +122,23 @@ export function buildStrongpoint(world, rng, belt, side, enemy, opts = {}) {
   for (const part of splitCovered(rng, front, light ? 0.05 : 0.15, light ? 0.05 : 0.12)) {
     const niches = [];
     for (let i = 1; i < part.line.length; i += 2) niches.push({ p: part.line[i], side: rng.chance(0.5) ? 1 : -1 });
-    created.push(trench(world, { sub: 'fire', line: part.line, side, covered: part.covered, enemy: n, niches, age }));
+    created.push(...trench(world, { sub: 'fire', line: part.line, side, covered: part.covered, enemy: n, niches, age }));
   }
   // Стрелковые ячейки — выносы вперёд
   for (let t = t0 + rng.float(5, 12); t < t1 - 5; t += rng.float(14, 24)) {
     const a = P(belt, n, t, fo), b = P(belt, n, t + rng.float(-1.5, 1.5), fo + rng.float(2.2, 3.4));
-    created.push(trench(world, { sub: 'cell', line: [a, b], side, pit: b, enemy: n, age }));
+    created.push(...trench(world, { sub: 'cell', line: [a, b], side, pit: b, enemy: n, age }));
   }
   if (light) return created;
 
   // Тыловая траншея вдоль задней опушки
   const rear = resample(catmullRom([P(belt, n, t0 + 10, ro), P(belt, n, (t0 + t1) / 2, ro + rng.float(-1.5, 1.5)), P(belt, n, t1 - 10, ro)], 6), 6);
-  created.push(trench(world, { sub: 'comm', line: rear, side, covered: null, enemy: n, age }));
+  created.push(...trench(world, { sub: 'comm', line: rear, side, covered: null, enemy: n, age }));
 
   // Ходы сообщения поперёк посадки
   for (let t = t0 + rng.float(20, 45); t < t1 - 15; t += rng.float(60, 110)) {
     const line = [P(belt, n, t, fo), P(belt, n, t + rng.float(-5, 5), (fo + ro) / 2 + rng.float(-2, 2)), P(belt, n, t + rng.float(-5, 5), ro)];
-    created.push(trench(world, { sub: 'comm', line: resample(line, 3), side, covered: rng.chance(0.55) ? 'logs' : null, enemy: n, age }));
+    created.push(...trench(world, { sub: 'comm', line: resample(line, 3), side, covered: rng.chance(0.55) ? 'logs' : null, enemy: n, age }));
   }
 
   // Блиндажи у тыловой опушки
@@ -110,6 +146,7 @@ export function buildStrongpoint(world, rng, belt, side, enemy, opts = {}) {
   for (let t = t0 + rng.float(15, 35); t < t1 - 15; t += rng.float(45, 80)) {
     const w = rng.float(3.5, 5.5), h = rng.float(3.5, 5);
     const c = P(belt, n, t, ro + h / 2 + 2.2);
+    if (world.mask.near(c[0], c[1], Math.max(w, h), NO_DIG)) continue;
     const layers = rng.int(2, 4);
     const d = add(world, {
       kind: 'dugout', x: c[0], y: c[1], w, h, angle: Math.atan2(belt.dir[1], belt.dir[0]),
@@ -123,7 +160,7 @@ export function buildStrongpoint(world, rng, belt, side, enemy, opts = {}) {
     const e1 = P(belt, n, t, ro + 0.8);
     const e2 = P(belt, n, t + (rng.chance(0.5) ? 2.5 : -2.5), ro + 0.8);
     const e3 = P(belt, n, t + (rng.chance(0.5) ? 2.5 : -2.5), ro);
-    created.push(trench(world, { sub: 'entrance', line: [e0, e1, e2, e3], side, covered: 'logs', enemy: n, age }));
+    created.push(...trench(world, { sub: 'entrance', line: [e0, e1, e2, e3], side, covered: 'logs', enemy: n, age }));
     d.t = t;
   }
 
@@ -147,6 +184,7 @@ export function buildStrongpoint(world, rng, belt, side, enemy, opts = {}) {
   for (let k = 0; k < nCap; k++) {
     const t = rng.float(t0 + 10, t1 - 10);
     const c = P(belt, n, t, -half - rng.float(12, 25));
+    if (world.mask.near(c[0], c[1], 8, NO_DIG)) continue;
     created.push(add(world, { kind: 'capon', x: c[0], y: c[1], w: 5, h: 9, angle: Math.atan2(n[1], n[0]), side }));
   }
 
@@ -171,6 +209,8 @@ export function buildFortifications(world, rng, frontX) {
     const cand = belts
       .filter((b) => Math.abs(b.dir[1]) > 0.75 && b.len > 180 && Math.abs(b.mid[0] - targetX) < spreadX)
       .filter((b) => b.mid[1] > margin && b.mid[1] < world.H - margin && b.mid[0] > margin && b.mid[0] < world.W - margin)
+      // только настоящие, сплошные посадки в поле — не обрывки в городе и сёлах
+      .filter((b) => b.pts.length >= b.len / 2.5 && !world.mask.has(b.mid[0], b.mid[1], M.CITYZONE | M.VILLAGE | M.SETTLE | M.CITY))
       .sort((a, b) => Math.abs(a.mid[0] - targetX) - Math.abs(b.mid[0] - targetX));
     const out = [];
     for (const b of cand) {
@@ -205,7 +245,7 @@ export function digTrench(world, rng, points, side, enemy) {
     const line = zigzag(rng, points[i - 1], points[i], rng.float(5, 7), 1.3);
     const niches = [];
     for (let k = 1; k < line.length; k += 2) niches.push({ p: line[k], side: rng.chance(0.5) ? 1 : -1 });
-    created.push(trench(world, { sub: 'fire', line, side, covered: null, enemy: n, niches, age: 0 }));
+    created.push(...trench(world, { sub: 'fire', line, side, covered: null, enemy: n, niches, age: 0 }));
   }
   return created;
 }

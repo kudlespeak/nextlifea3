@@ -41,7 +41,7 @@
     #timebar { top: 12px; left: 50%; transform: translateX(-50%); padding: 6px; display: flex; gap: 4px; align-items: center; }
     #clock { font-weight: 700; font-size: 14px; padding: 0 10px; min-width: 132px; text-align: center; font-variant-numeric: tabular-nums; }
     #timebar button { padding: 4px 9px; }
-    #selpanel { bottom: 12px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; flex-direction: column; gap: 6px; width: min(460px, calc(100vw - 24px)); max-height: min(210px, 34vh); }
+    #selpanel { bottom: 12px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; flex-direction: column; gap: 6px; width: min(460px, calc(100vw - 24px)); max-height: min(260px, 40vh); }
     #selpanel .head { display: flex; gap: 6px; align-items: center; }
     #selpanel .head .grow { flex: 1; font-weight: 700; font-size: 13px; }
     #sel-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
@@ -50,6 +50,11 @@
     .unit-row canvas { width: 33px; height: 22px; flex: none; }
     .muted { color: var(--muted); font-size: 12px; }
     .st { color: var(--muted); font-size: 12px; }
+    #toast { top: 64px; left: 50%; transform: translateX(-50%); padding: 7px 14px; font-size: 13px; opacity: 0; transition: opacity 0.4s; pointer-events: none; max-width: calc(100vw - 24px); }
+    .soldiers { display: flex; flex-wrap: wrap; gap: 4px; }
+    .soldier { font-size: 11.5px; padding: 3px 7px; }
+    .soldier.active { background: rgba(255, 242, 122, 0.2); border-color: #fff27a; color: #fff6b0; }
+    #btn-clear.active { background: rgba(255, 157, 107, 0.2); border-color: #ff9d6b; color: #ffc8a8; }
     #btn-stealth.active { background: rgba(140, 220, 120, 0.2); border-color: #9be07f; color: #c5f5b0; }
     @media (max-width: 900px) {
       #top { display: none; }
@@ -83,9 +88,11 @@
   <div id="selpanel" class="panel">
     <div class="head">
       <span id="sel-title" class="grow"></span>
+      <button id="btn-clear" title="C: зачистить траншею — затем клик по точке на траншее">Зачистить</button>
       <button id="btn-stealth" title="G: маршрут скрытно — вдоль посадок, избегая открытых мест">Скрытно</button>
       <button id="btn-stop" title="X: остановиться">Стоп</button>
     </div>
+    <div id="sel-task" class="muted"></div>
     <div id="sel-list"></div>
   </div>
 
@@ -103,9 +110,10 @@
   <div id="bottom" class="panel">
     <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
     <span id="coords">—</span>
-    <span id="help"><kbd>ЛКМ</kbd> выбор/тянуть · <kbd>Shift</kbd>+рамка · <kbd>ПКМ</kbd> приказ · <kbd>G</kbd> скрытно · <kbd>X</kbd> стоп · <kbd>Пробел</kbd> пауза · <kbd>O</kbd> окопы · <kbd>T</kbd> копать · <kbd>B</kbd> артудар</span>
+    <span id="help"><kbd>ЛКМ</kbd> выбор/тянуть · <kbd>Shift</kbd>+рамка · <kbd>ПКМ</kbd> приказ · <kbd>G</kbd> скрытно · <kbd>X</kbd> стоп · <kbd>Пробел</kbd> пауза · <kbd>C</kbd> зачистить · <kbd>O</kbd> окопы · <kbd>T</kbd> копать · <kbd>B</kbd> артудар</span>
   </div>
 
+  <div id="toast" class="panel"></div>
   <div id="loading" class="panel">Прорисовка местности…</div>
 
   <script type="module" src="./src/main.js"></script>

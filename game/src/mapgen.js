@@ -8,6 +8,7 @@ import {
 } from './geom.js';
 import { SpatialIndex, PointBins, Mask, M } from './spatial.js';
 import { buildFortifications } from './forts.js';
+import { seedBattleDamage } from './damage.js';
 
 export const WORLD_W = 6000;
 export const WORLD_H = 4000;
@@ -184,6 +185,9 @@ export function generateWorld(seed) {
 
   // ---------- Окопы, блиндажи, подземные ходы обеих сторон ----------
   buildFortifications(world, rng, frontX);
+
+  // ---------- Следы боёв: гарь, колеи, воронки, подбитая техника ----------
+  seedBattleDamage(world, rng, frontX);
 
   world.genTime = performance.now() - t0;
   return world;
@@ -870,11 +874,12 @@ function seedWarScars(world, rng, cityC) {
   return cx;
 }
 
-export function addCraterCluster(world, rng, x, y, n, spread) {
+// age: 0 — свежая, 1 — старая, заросшая травой
+export function addCraterCluster(world, rng, x, y, n, spread, age = 0) {
   const added = [];
   for (let i = 0; i < n; i++) {
     const r = rng.chance(0.15) ? rng.float(4, 7) : rng.float(1.2, 3.5);
-    const c = { kind: 'crater', x: x + rng.gauss(0, spread), y: y + rng.gauss(0, spread), r, seed: rng.int(0, 1e9) };
+    const c = { kind: 'crater', x: x + rng.gauss(0, spread), y: y + rng.gauss(0, spread), r, seed: rng.int(0, 1e9), age: age * rng.float(0.5, 1) };
     c.pts = [[c.x, c.y]];
     addItem(world.scars, c, r * 2.6);
     added.push(c);

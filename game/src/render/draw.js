@@ -22,7 +22,7 @@ const AREA_COLORS = {
   dam: '#8e8a6e',
 };
 const GARDEN_TONES = [['#6b5b43', '#5f6b3a'], ['#72603f', '#6a7440'], ['#5d5140', '#56663a']];
-const TREE_COLORS = ['#2d3922', '#34422a', '#3c4a2c', '#434b2c'];
+const TREE_COLORS = ['#2d3922', '#34422a', '#3c4a2c', '#434b2c', '#2a2622', '#5c564b']; // 4 — обугленные, 5 — сухие
 const ROAD_RANK = { dirt: 0, village: 1, street: 2, local: 3, avenue: 4, highway: 5 };
 
 let grain = null;
@@ -103,10 +103,12 @@ export function drawChunk(ctx, world, b, ppm) {
   drawWater(ctx, world, b, q, ppm);
   const scars = world.scars.query(q);
   for (const s of scars) if (s.kind === 'burn') drawBurn(ctx, s);
+  for (const s of scars) if (s.kind === 'tracks') drawTracks(ctx, s, ppm);
   drawRails(ctx, world, b, q, ppm);
   drawRoads(ctx, world, b, q, ppm);
   drawForts(ctx, world, q, ppm);
   for (const s of scars) if (s.kind === 'crater') drawCrater(ctx, s, ppm);
+  for (const s of scars) if (s.kind === 'wreck') drawWreck(ctx, s, ppm);
   drawBuildings(ctx, world, q, ppm);
   drawTrees(ctx, world, b, ppm);
 
@@ -450,6 +452,19 @@ function drawBurn(ctx, s) {
 
 function drawCrater(ctx, c, ppm) {
   const { x, y, r } = c;
+  if (c.age > 0.5) {
+    // Старая воронка: оплывшие края, заросла травой
+    const k = 1 - (c.age - 0.5);
+    ctx.fillStyle = `rgba(62,66,38,${0.55 * k})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(40,42,26,${0.5 * k})`;
+    ctx.beginPath();
+    ctx.arc(x + r * 0.1, y + r * 0.1, r * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
   const g = ctx.createRadialGradient(x, y, r * 0.8, x, y, r * 2.6);
   g.addColorStop(0, 'rgba(150,138,112,0.55)');
   g.addColorStop(1, 'rgba(150,138,112,0)');
@@ -715,47 +730,108 @@ function drawBuilding(ctx, bd, ppm) {
 }
 
 // ---------- Деревья ----------
+// Вблизи (ppm >= 2) кроны над окопами становятся полупрозрачными, чтобы было видно позиции.
 function drawTrees(ctx, world, b, ppm) {
   const q = { x0: b.x0 - 12, y0: b.y0 - 12, x1: b.x1 + 12, y1: b.y1 + 12 };
   const detailed = ppm >= 0.5;
   const minR = 0.75 / ppm;
-  const shadow = new Path2D();
-  const crowns = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
-  const light = new Path2D();
-  const dark = new Path2D();
+  const fadeOn = ppm >= 2;
+  const mk = () => ({
+    shadow: new Path2D(), crowns: TREE_COLORS.map(() => new Path2D()), light: new Path2D(), dark: new Path2D(), n: 0,
+  });
+  const normal = mk(), faded = mk();
+  const mask = world.mask;
   world.trees.forEach(q, (arr, i) => {
     const x = arr[i], y = arr[i + 1], r0 = arr[i + 2], shade = arr[i + 3];
+    if (r0 <= 0.01) return; // уничтожено
+    const g = fadeOn && mask.has(x, y, M.FORT) ? faded : normal;
+    g.n++;
     const r = Math.max(r0, minR);
+    const burnt = shade >= 4;
     if (detailed) {
       const s = r * 0.75;
-      shadow.moveTo(x + s + r, y + s);
-      shadow.arc(x + s, y + s, r, 0, Math.PI * 2);
+      g.shadow.moveTo(x + s + r, y + s);
+      g.shadow.arc(x + s, y + s, r, 0, Math.PI * 2);
     }
-    crowns[shade].moveTo(x + r, y);
-    crowns[shade].arc(x, y, r, 0, Math.PI * 2);
-    if (detailed) {
-      light.moveTo(x - r * 0.3 + r * 0.55, y - r * 0.3);
-      light.arc(x - r * 0.3, y - r * 0.3, r * 0.55, 0, Math.PI * 2);
+    g.crowns[shade].moveTo(x + r, y);
+    g.crowns[shade].arc(x, y, r, 0, Math.PI * 2);
+    if (detailed && !burnt) {
+      g.light.moveTo(x - r * 0.3 + r * 0.55, y - r * 0.3);
+      g.light.arc(x - r * 0.3, y - r * 0.3, r * 0.55, 0, Math.PI * 2);
       if (ppm >= 2) {
-        dark.moveTo(x + r * 0.35 + r * 0.4, y + r * 0.35);
-        dark.arc(x + r * 0.35, y + r * 0.35, r * 0.4, 0, Math.PI * 2);
+        g.dark.moveTo(x + r * 0.35 + r * 0.4, y + r * 0.35);
+        g.dark.arc(x + r * 0.35, y + r * 0.35, r * 0.4, 0, Math.PI * 2);
       }
     }
   });
-  if (detailed) {
-    ctx.fillStyle = 'rgba(16,20,8,0.5)';
-    ctx.fill(shadow);
+  const paint = (g, alpha) => {
+    if (!g.n) return;
+    ctx.globalAlpha = alpha;
+    if (detailed) {
+      ctx.fillStyle = 'rgba(16,20,8,0.5)';
+      ctx.fill(g.shadow);
+    }
+    for (let k = 0; k < TREE_COLORS.length; k++) {
+      ctx.fillStyle = TREE_COLORS[k];
+      ctx.fill(g.crowns[k]);
+    }
+    if (detailed) {
+      ctx.fillStyle = 'rgba(128,146,84,0.28)';
+      ctx.fill(g.light);
+      ctx.fillStyle = 'rgba(15,22,8,0.3)';
+      ctx.fill(g.dark);
+    }
+    ctx.globalAlpha = 1;
+  };
+  paint(normal, 1);
+  paint(faded, ppm >= 4 ? 0.28 : 0.5);
+}
+
+// ---------- Колеи ----------
+function drawTracks(ctx, t, ppm) {
+  const k = 1 - t.age * 0.6;
+  if (ppm < 0.9) {
+    strokeLine(ctx, t.line, 4, `rgba(70,60,42,${0.22 * k})`);
+    return;
   }
-  for (let k = 0; k < 4; k++) {
-    ctx.fillStyle = TREE_COLORS[k];
-    ctx.fill(crowns[k]);
+  // Примятая полоса и две колеи гусениц
+  strokeLine(ctx, t.line, t.gauge + 1.4, `rgba(190,178,140,${0.12 * k})`);
+  strokeLine(ctx, offsetLine(t.line, -t.gauge / 2), 0.65, `rgba(58,48,34,${0.5 * k})`);
+  strokeLine(ctx, offsetLine(t.line, t.gauge / 2), 0.65, `rgba(58,48,34,${0.5 * k})`);
+  if (ppm >= 3) {
+    // Отпечатки траков
+    strokeLine(ctx, offsetLine(t.line, -t.gauge / 2), 0.55, `rgba(35,28,20,${0.35 * k})`, [0.12, 0.16]);
+    strokeLine(ctx, offsetLine(t.line, t.gauge / 2), 0.55, `rgba(35,28,20,${0.35 * k})`, [0.12, 0.16]);
   }
-  if (detailed) {
-    ctx.fillStyle = 'rgba(128,146,84,0.28)';
-    ctx.fill(light);
-    ctx.fillStyle = 'rgba(15,22,8,0.3)';
-    ctx.fill(dark);
+}
+
+// ---------- Подбитая техника ----------
+const WRECK_DIMS = { tank: [7, 3.6], ifv: [6.8, 3.2], apc: [7.6, 2.9], truck: [8, 2.5] };
+function drawWreck(ctx, w, ppm) {
+  const [L, W] = WRECK_DIMS[w.type];
+  ctx.save();
+  ctx.translate(w.x, w.y);
+  ctx.rotate(w.angle);
+  ctx.fillStyle = 'rgba(10,10,8,0.45)';
+  ctx.fillRect(-L / 2 + 0.6, -W / 2 + 0.6, L, W);
+  ctx.fillStyle = '#2b2824';
+  ctx.fillRect(-L / 2, -W / 2, L, W);
+  if (ppm >= 1.5) {
+    // Ржавые подпалины, сорванная башня рядом
+    ctx.fillStyle = 'rgba(110,62,38,0.8)';
+    for (let i = 0; i < 5; i++) {
+      const u = (hash2(i, 1, w.seed) - 0.5) * L * 0.8, v = (hash2(i, 2, w.seed) - 0.5) * W * 0.8;
+      ctx.fillRect(u, v, 0.8, 0.6);
+    }
+    if (w.type === 'tank') {
+      ctx.fillStyle = '#34302a';
+      ctx.beginPath();
+      ctx.ellipse(L * 0.4 + 3, W * 0.8 + 1, 1.5, 1.3, 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillRect(L * 0.4 + 4, W * 0.8 + 0.9, 4, 0.25);
+    }
   }
+  ctx.restore();
 }
 
 // ---------- Фортификация ----------

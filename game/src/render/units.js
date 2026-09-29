@@ -64,6 +64,21 @@ export function drawSymbol(ctx, x, y, s, side, symbol, opts = {}) {
       ctx.arc(0, 0, s * 0.13, 0, Math.PI * 2);
       ctx.fill();
       break;
+    case 'eng':
+    case 'engmech': {
+      // Инженерный знак — «мостик» с опорами
+      const ew = iw * 0.75, eh = ih * 0.45;
+      ctx.beginPath();
+      ctx.moveTo(-ew, eh); ctx.lineTo(-ew, -eh); ctx.lineTo(ew, -eh); ctx.lineTo(ew, eh);
+      ctx.moveTo(0, -eh); ctx.lineTo(0, eh * 0.6);
+      ctx.stroke();
+      if (symbol === 'engmech') {
+        ctx.beginPath();
+        ctx.ellipse(0, ih * 0.62, iw * 0.35, ih * 0.2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      break;
+    }
     case 'supply':
       ctx.beginPath();
       ctx.moveTo(-iw, ih * 0.45); ctx.lineTo(iw, ih * 0.45);
@@ -187,6 +202,27 @@ const SPRITES = {
     ctx.fillStyle = OLIVE;
     ctx.fillRect(-7.3, -1.1, 1.3, 2.2);
   },
+  btm(ctx) {
+    // Гусеничный тягач с траншейным рабочим органом сзади
+    shadowRect(ctx, -4.5, -1.6, 9, 3.2);
+    ctx.fillStyle = TRACK;
+    ctx.fillRect(-3, -1.6, 6.6, 0.6);
+    ctx.fillRect(-3, 1.0, 6.6, 0.6);
+    ctx.fillStyle = '#5a5a3c';
+    ctx.fillRect(-2.9, -1.2, 6.4, 2.4);
+    ctx.fillStyle = '#6a6a44';
+    ctx.fillRect(1.6, -1.1, 1.8, 2.2); // кабина
+    ctx.fillStyle = '#2f3a3e';
+    ctx.fillRect(3.0, -0.9, 0.35, 1.8);
+    // Роторный рабочий орган
+    ctx.fillStyle = '#3b3a30';
+    ctx.fillRect(-5.2, -0.55, 2.4, 1.1);
+    ctx.beginPath();
+    ctx.arc(-5.2, 0, 1.2, 0, Math.PI * 2);
+    ctx.strokeStyle = '#2a2922';
+    ctx.lineWidth = 0.35;
+    ctx.stroke();
+  },
   inf(ctx, u, zoom) {
     // Бойцы клином
     const n = Math.max(1, Math.round(u.def.men * u.strength));
@@ -258,6 +294,35 @@ export function drawUnits(ctx, sim, view, ui) {
     ctx.fill();
   }
 
+  // Зачищенные участки траншей
+  for (const c of sim.cleared) {
+    trenchLine(ctx, c.line, toS, SIDES[c.side].fill, 5 * dpr, 0.35);
+  }
+  // Идёт зачистка: пройдено / впереди
+  for (const u of sim.units) {
+    if (u.task?.type !== 'clear') continue;
+    const L = u.task.line;
+    trenchLine(ctx, L.slice(0, u.task.progress + 1), toS, SIDES[u.side].fill, 5 * dpr, 0.5);
+    trenchLine(ctx, L.slice(u.task.progress), toS, '#ff9d6b', 2 * dpr, 0.9, [4 * dpr, 4 * dpr]);
+  }
+  // Работы по рытью: план пунктиром, готовое сплошным, процент
+  ctx.font = `700 ${11 * dpr}px "PT Sans", system-ui, sans-serif`;
+  for (const job of sim.digJobs) {
+    const pts = job.line.map(([x, y]) => ({ x, y }));
+    trenchLine(ctx, pts, toS, '#ffd36b', 2 * dpr, 0.9, [6 * dpr, 4 * dpr]);
+    const k = job.cum.findIndex((c) => c >= job.done);
+    if (k > 0) trenchLine(ctx, pts.slice(0, k + 1), toS, '#ffd36b', 3.5 * dpr, 0.9);
+    const [fx, fy] = toS(...sim.pointAt(job, job.done));
+    const txt = `${Math.round((job.done / job.total) * 100)}% · ${Math.round(job.total)} м`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3 * dpr;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.strokeText(txt, fx + 8 * dpr, fy);
+    ctx.fillStyle = '#ffe9a8';
+    ctx.fillText(txt, fx + 8 * dpr, fy);
+  }
+
   // Маршруты выделенных
   for (const u of sim.units) {
     if (!sel.has(u.id) || !u.path) continue;
@@ -291,7 +356,11 @@ export function drawUnits(ctx, sim, view, ui) {
   if (sprites) {
     for (const u of sim.units) {
       const [sx, sy] = toS(u.x, u.y);
-      if (sx < -80 || sy < -80 || sx > canvas.width + 80 || sy > canvas.height + 80) continue;
+      if (sx < -200 || sy < -200 || sx > canvas.width + 200 || sy > canvas.height + 200) continue;
+      if (u.soldiers) {
+        drawSoldiers(ctx, u, toS, z, dpr, ui);
+        continue;
+      }
       if (sel.has(u.id)) {
         ctx.beginPath();
         ctx.arc(sx, sy, (u.def.move === 'foot' ? 10 : 7) * z, 0, Math.PI * 2);
@@ -385,6 +454,90 @@ export function pickUnit(sim, view, sx, sy, side) {
     }
     const hitR = Math.max(16 * dpr, (sprites ? 8 * cam.zoom : 0));
     if (d < hitR && d < bd) { bd = d; best = u; }
+  }
+  return best;
+}
+
+function trenchLine(ctx, pts, toS, color, width, alpha, dash) {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    const [x, y] = toS(p.x, p.y);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.globalAlpha = alpha;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = width;
+  ctx.strokeStyle = color;
+  if (dash) ctx.setLineDash(dash);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+}
+
+// Бойцы по отдельности: тело, направление оружия, роль
+function drawSoldiers(ctx, u, toS, z, dpr, ui) {
+  const selUnit = ui.selected.has(u.id);
+  const r = Math.max(0.45, 1.6 / z) * z; // в пикселях
+  for (const s of u.soldiers) {
+    const [x, y] = toS(s.x, s.y);
+    const isSel = ui.soldier && ui.soldier.unitId === u.id && ui.soldier.idx === s.idx;
+    ctx.globalAlpha = s.under ? (ui.underground ? 0.95 : 0.3) : 1;
+    if (isSel || selUnit) {
+      ctx.beginPath();
+      ctx.arc(x, y, r * 2.1, 0, Math.PI * 2);
+      ctx.strokeStyle = isSel ? '#fff27a' : 'rgba(184,255,107,0.75)';
+      ctx.lineWidth = (isSel ? 2 : 1.2) * dpr;
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(10,12,6,0.45)';
+    ctx.beginPath();
+    ctx.arc(x + r * 0.35, y + r * 0.35, r, 0, Math.PI * 2);
+    ctx.fill();
+    // Оружие
+    const wl = (s.role === 'Пулемётчик' || s.role === 'Снайпер' ? 1.4 : 1.0) * Math.max(r * 1.6, 0.9 * z);
+    ctx.strokeStyle = '#1c1e16';
+    ctx.lineWidth = Math.max(1, r * 0.35);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(s.heading) * wl, y + Math.sin(s.heading) * wl);
+    ctx.stroke();
+    ctx.fillStyle = '#3c4230';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    // Метка стороны / роли
+    ctx.fillStyle = s.role === 'Командир' ? '#fff' : s.role === 'Медик' ? '#ff6b6b' : SIDES[u.side].color;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    if (s.mode === 'dig' && z > 3) {
+      // Лопата мелькает
+      const t = (performance.now() / 300 + s.idx) % 1;
+      ctx.strokeStyle = '#8a7a5a';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(s.heading + t) * r * 2, y + Math.sin(s.heading + t) * r * 2);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Попадание по бойцу выделенного отряда (для ручного управления)
+export function pickSoldier(sim, view, sx, sy, ui) {
+  const { cam, canvas, dpr } = view;
+  if (cam.zoom < SPRITE_ZOOM) return null;
+  let best = null, bd = Math.max(9 * dpr, 1.8 * cam.zoom);
+  for (const u of sim.units) {
+    if (!u.soldiers || !ui.selected.has(u.id)) continue;
+    for (const s of u.soldiers) {
+      const x = (s.x - cam.x) * cam.zoom + canvas.width / 2, y = (s.y - cam.y) * cam.zoom + canvas.height / 2;
+      const d = Math.hypot(x - sx, y - sy);
+      if (d < bd) { bd = d; best = { unitId: u.id, idx: s.idx }; }
+    }
   }
   return best;
 }

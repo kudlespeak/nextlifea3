@@ -90,6 +90,7 @@ export const M = {
   CITY: 64,
   VILLAGE: 128,
   CITYZONE: 256,
+  FORT: 512, // рядом окопы — деревья вблизи становятся прозрачнее
 };
 
 export class Mask {

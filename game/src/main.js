@@ -3,7 +3,7 @@ import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
 import { Sim, UNIT_TYPES, SIDES } from './sim/units.js';
 import { T_NAMES } from './sim/nav.js';
-import { drawUnits, drawSymbol, emitDust, pickUnit } from './render/units.js';
+import { drawUnits, drawSymbol, emitDust, pickUnit, pickSoldier } from './render/units.js';
 import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js';
 import { digTrench } from './forts.js';
 
@@ -33,6 +33,9 @@ const hud = {
   side: document.getElementById('btn-side'),
   forts: document.getElementById('btn-forts'),
   dig: document.getElementById('btn-dig'),
+  clear: document.getElementById('btn-clear'),
+  toast: document.getElementById('toast'),
+  task: document.getElementById('sel-task'),
 };
 
 const world = generateWorld(seed);
@@ -42,7 +45,8 @@ const sim = new Sim(world);
 sim.deployDefault(new Rng(seed ^ 0xa11));
 
 // Состояние интерфейса управления
-const ui = { selected: new Set(), box: null, marks: [] };
+const ui = { selected: new Set(), box: null, marks: [], soldier: null, underground: false };
+let orderMode = null; // 'clear' — следующий приказ = зачистка траншеи
 let controlSide = 'blue';
 let stealthOrders = false;
 let timeScale = 5;
@@ -151,6 +155,15 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 function clickAt(cx, cy, additive, touch) {
+  // Вблизи можно выбрать отдельного бойца выделенного отделения
+  const sol = pickSoldier(sim, view, cx * dpr, cy * dpr, ui);
+  if (sol) {
+    ui.soldier = sol;
+    refreshPanel();
+    return;
+  }
+  if (orderMode && ui.selected.size) { orderAt(cx, cy); return; }
+  ui.soldier = null;
   const u = pickUnit(sim, view, cx * dpr, cy * dpr, controlSide);
   if (u) {
     if (additive) ui.selected.has(u.id) ? ui.selected.delete(u.id) : ui.selected.add(u.id);
@@ -175,8 +188,58 @@ function orderAt(cx, cy) {
   const units = selectedUnits();
   if (!units.length) return;
   const [x, y] = screenToWorld(cx, cy);
-  sim.orderMove(units, x, y, { stealth: stealthOrders });
   ui.marks.push({ x, y, t: performance.now(), stealth: stealthOrders });
+  // Приказ одному бойцу
+  if (ui.soldier) {
+    const u = sim.units.find((q) => q.id === ui.soldier.unitId);
+    if (u) { sim.orderSoldier(u, ui.soldier.idx, x, y); return; }
+  }
+  const foot = units.filter((u) => u.soldiers);
+  const rest = units.filter((u) => !u.soldiers);
+  if (orderMode === 'clear') {
+    setOrderMode(null);
+    let ok = 0;
+    for (const u of foot) if (sim.orderClear(u, x, y)) ok++;
+    toast(ok ? `Зачистка траншеи: ${ok} отд.` : 'Укажите точку на траншее');
+    return;
+  }
+  // Клик по траншее — пехота занимает позицию, техника просто едет рядом
+  sim.trenches.ensure();
+  const onTrench = sim.trenches.nearest(x, y, 6, true) >= 0;
+  if (onTrench && foot.length) {
+    foot.forEach((u, i) => {
+      // Несколько отделений — занимают соседние участки
+      const off = (i - (foot.length - 1) / 2) * 45;
+      const node = sim.trenches.nodes[sim.trenches.nearest(x, y, 6, true)];
+      const it = node.item;
+      let tx = x, ty = y;
+      if (it?.line && foot.length > 1) {
+        const a = it.line[0], b = it.line[it.line.length - 1];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        tx += ((b[0] - a[0]) / L) * off;
+        ty += ((b[1] - a[1]) / L) * off;
+      }
+      if (!sim.orderOccupy(u, tx, ty)) sim.orderOccupy(u, x, y);
+    });
+    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
+    toast(`Занять траншею: ${foot.length} отд.`);
+    return;
+  }
+  sim.orderMove(units, x, y, { stealth: stealthOrders });
+}
+
+function setOrderMode(m) {
+  orderMode = m;
+  hud.clear.classList.toggle('active', m === 'clear');
+  canvas.style.cursor = m ? 'crosshair' : 'grab';
+}
+
+let toastTimer = 0;
+function toast(text) {
+  hud.toast.textContent = text;
+  hud.toast.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (hud.toast.style.opacity = 0), 3500);
 }
 
 let pinch = null;
@@ -206,7 +269,13 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') toggleLabels();
   if (e.code === 'KeyG') toggleStealth();
   if (e.code === 'KeyX') { sim.stop(selectedUnits()); refreshPanel(); }
-  if (e.code === 'Escape') { if (dig) toggleDig(); else { ui.selected.clear(); refreshPanel(); } }
+  if (e.code === 'Escape') {
+    if (dig) toggleDig();
+    else if (orderMode) setOrderMode(null);
+    else if (ui.soldier) { ui.soldier = null; refreshPanel(); }
+    else { ui.selected.clear(); refreshPanel(); }
+  }
+  if (e.code === 'KeyC') setOrderMode(orderMode === 'clear' ? null : 'clear');
   if (e.code === 'KeyO') cycleFortView();
   if (e.code === 'KeyT') toggleDig();
   if (e.code === 'Enter' && dig) finishDig();
@@ -257,6 +326,7 @@ hud.side.onclick = switchSide;
 switchSide(); switchSide();
 function cycleFortView() {
   fortView = FORT_VIEWS[(FORT_VIEWS.indexOf(fortView) + 1) % FORT_VIEWS.length];
+  ui.underground = fortView === 'underground';
   hud.forts.textContent = FORT_VIEW_NAMES[fortView];
   hud.forts.classList.toggle('active', fortView !== 'off');
 }
@@ -270,12 +340,23 @@ function toggleDig() {
 }
 function finishDig() {
   if (dig.points.length >= 2) {
-    const created = digTrench(world, digRng, dig.points, controlSide, controlSide === 'blue' ? [1, 0] : [-1, 0]);
-    for (const c of created) chunks.invalidate(c.bbox);
+    const diggers = selectedUnits().filter((u) => u.def.dig);
+    if (diggers.length) {
+      const job = sim.orderDig(diggers, dig.points);
+      const rate = diggers.reduce((a, u) => a + u.def.dig, 0);
+      toast(`Рыть траншею ${Math.round(job.total)} м: ${diggers.map((u) => u.label).join(', ')} · ~${fmtEta((job.total / rate) * 3600)} игрового времени`);
+    } else {
+      // Без выбранных копающих — мгновенно (тестовый режим)
+      const created = digTrench(world, digRng, dig.points, controlSide, controlSide === 'blue' ? [1, 0] : [-1, 0]);
+      for (const c of created) chunks.invalidate(c.bbox);
+      toast('Траншея создана мгновенно (тест). Чтобы рыли бойцы — выберите пехоту, сапёров или БТМ.');
+    }
   }
   dig.points = [];
+  toggleDig();
 }
 hud.forts.onclick = cycleFortView;
+hud.clear.onclick = () => setOrderMode(orderMode === 'clear' ? null : 'clear');
 hud.dig.onclick = toggleDig;
 hud.forts.textContent = FORT_VIEW_NAMES[fortView];
 hud.strike.onclick = toggleStrike;
@@ -369,6 +450,11 @@ function frame(now) {
     }
   }
   sim.processQueue(8);
+  for (const ev of sim.events) {
+    if (ev.type === 'forts') chunks.invalidate(ev.bbox);
+    else if (ev.type === 'msg') toast(ev.text);
+  }
+  sim.events.length = 0;
   emitDust(sim, paused ? 0 : dtReal, timeScale);
   dirty = true;
   panelTimer += dtReal;
@@ -536,12 +622,48 @@ function refreshPanel() {
     more.textContent = `и ещё ${units.length - 12}…`;
     hud.selList.appendChild(more);
   }
-  hud.selTitle.textContent = `Выбрано: ${units.length}`;
+  // Одно отделение — список бойцов, можно выбрать любого
+  if (units.length === 1 && units[0].soldiers) {
+    const u = units[0];
+    const box = document.createElement('div');
+    box.className = 'soldiers';
+    for (const sd of u.soldiers) {
+      const b = document.createElement('button');
+      b.className = 'soldier' + (ui.soldier && ui.soldier.unitId === u.id && ui.soldier.idx === sd.idx ? ' active' : '');
+      b.textContent = `${sd.idx + 1}. ${sd.role}`;
+      b.dataset.sid = sd.idx;
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        ui.soldier = ui.soldier && ui.soldier.idx === sd.idx ? null : { unitId: u.id, idx: sd.idx };
+        if (ui.soldier) { cam.x = sd.x; cam.y = sd.y; cam.zoom = Math.max(cam.zoom, 6 * dpr); }
+        refreshPanel();
+      };
+      box.appendChild(b);
+    }
+    hud.selList.appendChild(box);
+  }
+  hud.selTitle.textContent = ui.soldier ? `Боец: ${sim.units.find((q) => q.id === ui.soldier.unitId)?.soldiers[ui.soldier.idx].role}` : `Выбрано: ${units.length}`;
   updatePanel();
 }
 
+const TASK_TEXT = { occupy: 'занимает позицию', clear: 'зачистка траншеи', dig: 'роет траншею', manual: 'ручное управление' };
 function updatePanel() {
   hud.clock.textContent = fmtTime(sim.time);
+  const units = selectedUnits();
+  hud.task.textContent = '';
+  if (units.length === 1) {
+    const u = units[0];
+    let t = u.task ? `Задача: ${TASK_TEXT[u.task.type]}` : u.mode === 'trench' ? 'В траншее' : '';
+    if (u.task?.type === 'dig') t += ` · ${Math.round((u.task.job.done / u.task.job.total) * 100)}%`;
+    if (u.task?.type === 'clear') t += ` · ${Math.round((u.task.progress / Math.max(1, u.task.line.length - 1)) * 100)}%`;
+    if (u.pending) t += ' · выдвигается';
+    hud.task.textContent = t;
+    if (ui.soldier && ui.soldier.unitId === u.id) {
+      const sd = u.soldiers[ui.soldier.idx];
+      const where = sd.under ? 'под землёй' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
+      hud.task.textContent = `${sd.role} · ${sd.mode === 'path' ? 'движется' : 'на месте'} · ${where} · ПКМ — куда идти`;
+    }
+  }
   for (const el of hud.selList.querySelectorAll('.st')) {
     const u = sim.units.find((q) => q.id === Number(el.dataset.id));
     if (!u) continue;
