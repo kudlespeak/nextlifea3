@@ -679,7 +679,18 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
   const selUnit = ui.selected.has(u.id);
   // Пикселей на «метр силуэта»: фигуры чуть крупнее натуры (как принято в тактике сверху),
   // не меньше 15 px — чтобы позу и оружие было видно и при среднем зуме
-  const m = Math.max(z * 2.1, 17 * dpr);
+  // Фигуры чуть крупнее натуры, но в одном масштабе с техникой
+  const m = z * 1.35;
+  if (m < 7 * dpr) {
+    // Издалека — просто точки бойцов
+    for (const s of u.soldiers) {
+      if (s.evac || (s.under && !ui.underground)) continue;
+      const [x, y] = toS(s.x, s.y);
+      ctx.fillStyle = s.dead ? 'rgba(60,20,15,0.7)' : SIDES[u.side].color;
+      ctx.beginPath(); ctx.arc(x, y, Math.max(1.4 * dpr, 0.45 * m), 0, Math.PI * 2); ctx.fill();
+    }
+    return;
+  }
   const camo = FACTIONS[u.side].camo;
   for (const s of u.soldiers) {
     const [x, y] = toS(s.x, s.y);

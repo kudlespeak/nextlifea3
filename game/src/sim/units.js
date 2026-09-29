@@ -1068,14 +1068,27 @@ export class Sim {
       let yaw = def.turn;
       if (def.move === 'wheeled') yaw = Math.min(yaw, Math.max(0.35, u.speed / 7));
       u.heading += Math.max(-yaw * dt, Math.min(yaw * dt, da));
-      const nx = u.x + Math.cos(u.heading) * u.speed * dt, ny = u.y + Math.sin(u.heading) * u.speed * dt;
-      if (this.canStand(u, nx, ny)) { u.x = nx; u.y = ny; }
-      else {
-        // Упёрлись (вода/здание на повороте): подтягиваемся прямо к точке
-        const L = Math.hypot(dx, dy) || 1;
-        u.x += (dx / L) * u.speed * dt * 0.5; u.y += (dy / L) * u.speed * dt * 0.5;
-        u.speed *= 0.7;
+      const step = u.speed * dt;
+      let moved = false;
+      // Прямо по курсу, иначе — объезд препятствия (скользим вдоль стены/берега)
+      for (const off of [0, 0.5, -0.5, 1.0, -1.0]) {
+        const a = u.heading + off;
+        const nx = u.x + Math.cos(a) * step, ny = u.y + Math.sin(a) * step;
+        if (this.canStand(u, nx, ny)) { u.x = nx; u.y = ny; moved = true; if (off) u.speed *= 0.85; break; }
       }
+      if (!moved) u.speed *= 0.5;
+    }
+    // Застрял: долго почти не двигается — ищем новый маршрут от текущего места
+    const prog = Math.hypot(u.x - (u.lastPos?.[0] ?? u.x), u.y - (u.lastPos?.[1] ?? u.y));
+    u.lastPos = [u.x, u.y];
+    u.stuckT = prog < 0.3 * dt ? (u.stuckT || 0) + dt : 0;
+    if (u.stuckT > 6) {
+      u.stuckT = 0;
+      const p = this.nav.nearestPassable(u.x, u.y, def.move);
+      if (p && (p[0] !== u.x || p[1] !== u.y) && !this.canStand(u, u.x, u.y)) { u.x = p[0]; u.y = p[1]; }
+      else if (!this.canStand(u, u.x, u.y)) { u.x += Math.cos(u.heading) * -3; u.y += Math.sin(u.heading) * -3; }
+      this.moveSingle(u, end[0], end[1]);
+      return;
     }
     this.log.burn(u, u.speed * dt);
     u.odo = (u.odo || 0) + u.speed * dt; // пробег — для анимации гусениц и колёс
@@ -1140,7 +1153,9 @@ export class Sim {
   }
 
   canStand(u, x, y) {
-    return MOVE[u.def.move][this.nav.classAt(x, y)] > 0;
+    if (!(MOVE[u.def.move][this.nav.classAt(x, y)] > 0)) return false;
+    // Технике не проехать сквозь дома и сараи
+    return u.def.move === 'foot' || !this.solidAt(x, y);
   }
 
   // Начальная расстановка сторон

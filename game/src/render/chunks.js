@@ -1,21 +1,32 @@
 // Кэш отрисованных чанков по уровням детализации (LOD).
-// Каждый чанк — холст 512×512 px; на уровне с ppm пикселей/метр он покрывает 512/ppm метров.
-// Мелкие уровни (обзор всей карты) не рисуются напрямую — это сотни миллисекунд на чанк
-// и фризы при отдалении камеры. Они собираются уменьшением четырёх чанков следующего уровня,
-// по частям в несколько кадров.
+// Каждый чанк — картинка 512×512 px; на уровне с ppm пикселей/метр он покрывает 512/ppm метров.
+// Чанки рисуются в фоновом потоке (worker.js) — основной поток не ждёт отрисовки, фризов нет.
+// Обзорные уровни 0..2 собираются уменьшением четырёх чанков следующего уровня.
+// Если Web Worker недоступен — рисуем в основном потоке, понемногу за кадр.
 
-import { drawChunk } from './draw.js';
+import { drawChunk, mkCanvas } from './draw.js';
 
 export const CHUNK_PX = 512;
 export const LEVELS = [0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16];
-const COMPOSE_BELOW = 3; // уровни 0..2 — сборка из уровня выше
+const COMPOSE_BELOW = 3;
 const MAX_CACHE = 220;
+const MAX_INFLIGHT = 3;
 
 export class ChunkCache {
   constructor(world) {
     this.world = world;
-    this.cache = new Map(); // key → { canvas, level, cx, cy, used }
+    this.cache = new Map(); // key → { canvas, level, cx, cy, used, stale }
     this.frame = 0;
+    this.tick = 0; // счётчик изменений мира (для устаревших ответов)
+    this.inflight = new Map(); // key → stamp
+    this.worker = null;
+    this.ready = false;
+    try {
+      this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      this.worker.onmessage = (e) => this.onMessage(e.data);
+      this.worker.onerror = () => { this.worker = null; this.inflight.clear(); };
+      this.worker.postMessage({ t: 'init', seed: world.seed });
+    } catch { this.worker = null; }
   }
   worldSize(level) {
     return CHUNK_PX / LEVELS[level];
@@ -32,47 +43,75 @@ export class ChunkCache {
     const s = this.worldSize(level);
     return cx * s < this.world.W && cy * s < this.world.H;
   }
-  // Отрисовать чанк. deadline — performance.now(), после которого сборка откладывается
-  // до следующего кадра (тогда возвращается null).
+  // Событие изменения мира — фоновый поток повторяет его у себя
+  worldEvent(ev) {
+    if (this.worker) this.worker.postMessage({ t: 'ev', ev });
+  }
+  onMessage(m) {
+    if (m.t === 'ready') { this.ready = true; return; }
+    if (m.t !== 'chunk') return;
+    this.inflight.delete(m.key);
+    const [level, cx, cy] = m.key.split(':').map(Number);
+    const old = this.cache.get(m.key);
+    if (old?.canvas?.close) old.canvas.close();
+    // Пока рисовали, мир в этом месте снова изменился — картинка годится, но помечаем устаревшей
+    const stale = !!(old && old.invalidAt > m.stamp);
+    this.cache.set(m.key, { canvas: m.bmp, level, cx, cy, used: this.frame, stale, invalidAt: old?.invalidAt || 0 });
+    this.evict();
+  }
+  // Запросить чанк. Возвращает запись, если она готова (в фоне — сразу null, придёт позже).
   render(level, cx, cy, deadline = Infinity) {
     if (level < COMPOSE_BELOW) return this.compose(level, cx, cy, deadline);
     const size = this.worldSize(level);
-    const old = this.cache.get(this.key(level, cx, cy));
-    const canvas = old?.canvas || document.createElement('canvas');
-    canvas.width = canvas.height = CHUNK_PX; // сброс содержимого
-    const ctx = canvas.getContext('2d');
-    drawChunk(ctx, this.world, { x0: cx * size, y0: cy * size, x1: (cx + 1) * size, y1: (cy + 1) * size }, LEVELS[level]);
-    const entry = { canvas, level, cx, cy, used: this.frame };
-    this.cache.set(this.key(level, cx, cy), entry);
+    const key = this.key(level, cx, cy);
+    const b = { x0: cx * size, y0: cy * size, x1: (cx + 1) * size, y1: (cy + 1) * size };
+    if (this.worker) {
+      if (this.inflight.has(key) || this.inflight.size >= MAX_INFLIGHT) return null;
+      this.inflight.set(key, this.tick);
+      this.worker.postMessage({ t: 'render', key, stamp: this.tick, b, ppm: LEVELS[level], px: CHUNK_PX });
+      return null;
+    }
+    if (performance.now() > deadline) return null;
+    const old = this.cache.get(key);
+    const canvas = old?.canvas || mkCanvas(CHUNK_PX, CHUNK_PX);
+    canvas.width = canvas.height = CHUNK_PX;
+    drawChunk(canvas.getContext('2d'), this.world, b, LEVELS[level]);
+    const entry = { canvas, level, cx, cy, used: this.frame, invalidAt: 0 };
+    this.cache.set(key, entry);
     this.evict();
     return entry;
   }
+  // Можно ли отправить ещё запрос в фон
+  busy() {
+    return this.worker ? this.inflight.size >= MAX_INFLIGHT : false;
+  }
   compose(level, cx, cy, deadline) {
-    // Сначала — все четыре «дочерних» чанка
     const kids = [];
+    let missing = false;
     for (let dy = 0; dy < 2; dy++)
       for (let dx = 0; dx < 2; dx++) {
         const kx = cx * 2 + dx, ky = cy * 2 + dy;
         if (!this.inWorld(level + 1, kx, ky)) continue;
         let e = this.cache.get(this.key(level + 1, kx, ky));
         if (!e || e.stale) {
-          if (performance.now() > deadline) return null;
-          e = this.render(level + 1, kx, ky, deadline);
-          if (!e) return null;
+          const r = this.render(level + 1, kx, ky, deadline);
+          if (r) e = r;
+          else if (!e) { missing = true; continue; }
         }
         e.used = this.frame;
         kids.push([dx, dy, e]);
       }
+    if (missing) return null;
+    // Дети ещё обновляются — подождём свежих, если старая сборка есть
     const old = this.cache.get(this.key(level, cx, cy));
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = CHUNK_PX;
+    if (old && kids.some(([, , e]) => e.stale)) return null;
+    const canvas = mkCanvas(CHUNK_PX, CHUNK_PX);
     const g = canvas.getContext('2d');
     g.imageSmoothingEnabled = true;
     g.imageSmoothingQuality = 'high';
     const h = CHUNK_PX / 2;
     for (const [dx, dy, e] of kids) g.drawImage(e.canvas, dx * h, dy * h, h, h);
-    const entry = { canvas, level, cx, cy, used: this.frame };
-    if (old) old.canvas = null;
+    const entry = { canvas, level, cx, cy, used: this.frame, invalidAt: old?.invalidAt || 0 };
     this.cache.set(this.key(level, cx, cy), entry);
     return entry;
   }
@@ -80,15 +119,19 @@ export class ChunkCache {
     if (this.cache.size <= MAX_CACHE) return;
     // Обзорные уровни и их «источник» (уровень 3) держим всегда
     const entries = [...this.cache.entries()].filter(([, e]) => e.level > COMPOSE_BELOW).sort((a, b) => a[1].used - b[1].used);
-    for (let i = 0; i < entries.length && this.cache.size > MAX_CACHE; i++) this.cache.delete(entries[i][0]);
+    for (let i = 0; i < entries.length && this.cache.size > MAX_CACHE; i++) {
+      entries[i][1].canvas?.close?.();
+      this.cache.delete(entries[i][0]);
+    }
   }
   // Сбросить чанки, пересекающие область (после новых воронок и т.п.)
   invalidate(b) {
+    this.tick++;
     for (const e of this.cache.values()) {
       const size = this.worldSize(e.level);
       const x0 = e.cx * size, y0 = e.cy * size;
       // Старая картинка рисуется, пока не готова новая
-      if (x0 <= b.x1 && x0 + size >= b.x0 && y0 <= b.y1 && y0 + size >= b.y0) e.stale = true;
+      if (x0 <= b.x1 && x0 + size >= b.x0 && y0 <= b.y1 && y0 + size >= b.y0) { e.stale = true; e.invalidAt = this.tick; }
     }
   }
 }

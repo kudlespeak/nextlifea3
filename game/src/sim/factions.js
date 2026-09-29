@@ -73,14 +73,14 @@ export const FACTIONS = {
 // range — м; interval — с между очередями; p100 — вероятность попадания очередью на 100 м по стоящему;
 // fall — во сколько раз падает на каждые 100 м; dmg — урон попадания; supp — подавление; at — противотанковое
 export const WEAPONS = {
-  rifle:  { name: 'Автомат', range: 450, interval: 3, p100: 0.16, fall: 0.62, dmg: 45, supp: 1 },
-  mg:     { name: 'Пулемёт', range: 800, interval: 2.2, p100: 0.2, fall: 0.72, dmg: 50, supp: 3.5, rounds: 3 },
-  gl:     { name: 'Гранатомёт', range: 320, interval: 12, p100: 0.55, fall: 0.6, dmg: 60, supp: 2, at: 0.55, blast: 3 },
-  sniper: { name: 'Снайперская винтовка', range: 1000, interval: 9, p100: 0.75, fall: 0.86, dmg: 95, supp: 1.5 },
+  rifle:  { name: 'Автомат', range: 450, interval: 4.5, p100: 0.11, fall: 0.62, dmg: 45, supp: 1 },
+  mg:     { name: 'Пулемёт', range: 800, interval: 3.2, p100: 0.14, fall: 0.72, dmg: 50, supp: 3.5, rounds: 3 },
+  gl:     { name: 'Гранатомёт', range: 320, interval: 18, p100: 0.55, fall: 0.6, dmg: 60, supp: 2, at: 0.55, blast: 3 },
+  sniper: { name: 'Снайперская винтовка', range: 1000, interval: 13, p100: 0.75, fall: 0.86, dmg: 95, supp: 1.5 },
   // техника
-  cannon: { name: 'Танковая пушка', range: 2500, interval: 8, p100: 0.9, fall: 0.94, dmg: 100, supp: 5, at: 0.9, blast: 5 },
-  autocannon: { name: 'Автоматическая пушка', range: 1800, interval: 3, p100: 0.55, fall: 0.86, dmg: 80, supp: 5, at: 0.35, blast: 2 },
-  hmg:    { name: 'Крупнокалиберный пулемёт', range: 1400, interval: 2.5, p100: 0.35, fall: 0.8, dmg: 70, supp: 4, at: 0.08 },
+  cannon: { name: 'Танковая пушка', range: 2500, interval: 11, p100: 0.9, fall: 0.94, dmg: 100, supp: 5, at: 0.9, blast: 5 },
+  autocannon: { name: 'Автоматическая пушка', range: 1800, interval: 4.5, p100: 0.4, fall: 0.86, dmg: 80, supp: 5, at: 0.35, blast: 2 },
+  hmg:    { name: 'Крупнокалиберный пулемёт', range: 1400, interval: 3.5, p100: 0.25, fall: 0.8, dmg: 70, supp: 4, at: 0.08 },
 };
 
 export const ROLE_WEAPON = {

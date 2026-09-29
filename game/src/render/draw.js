@@ -25,11 +25,20 @@ const GARDEN_TONES = [['#6b5b43', '#5f6b3a'], ['#72603f', '#6a7440'], ['#5d5140'
 const TREE_COLORS = ['#2d3922', '#34422a', '#3c4a2c', '#434b2c', '#2a2622', '#5c564b']; // 4 — обугленные, 5 — сухие
 const ROAD_RANK = { dirt: 0, village: 1, street: 2, local: 3, avenue: 4, highway: 5 };
 
+// Холст и в основном потоке, и в фоновом (Web Worker рисует чанки без DOM)
+export function mkCanvas(w, h) {
+  if (typeof document !== 'undefined') {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+  return new OffscreenCanvas(w, h);
+}
+
 let grain = null;
 function grainPattern(ctx) {
   if (grain) return grain;
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
+  const c = mkCanvas(128, 128);
   const g = c.getContext('2d');
   const img = g.createImageData(128, 128);
   let s = 12345;
@@ -138,7 +147,7 @@ function drawSteppeTexture(ctx, world, b, ppm) {
 }
 
 const lerp = (a, b, t) => a + (b - a) * t;
-const lfCanvas = document.createElement('canvas');
+const lfCanvas = mkCanvas(48, 48);
 
 function lowFreqImage(G, fn, b) {
   lfCanvas.width = lfCanvas.height = G;

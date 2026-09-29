@@ -34,7 +34,7 @@ let orderMode = null; // move | occupy | clear | basement | fire | dig | strike 
 let controlSide = 'blue';
 let stealthOrders = false;
 let showMore = false; // раскрыты редкие команды
-let timeScale = 5;
+let timeScale = 1;
 let paused = false;
 let fortView = 'off';
 let interiorsForce = false;
@@ -155,7 +155,7 @@ $('mp-join').onclick = async () => {
     .on('start', (m) => startGame(m.cfg))
     .on('snap', (m) => { if (sim) { applySnapshot(sim, m); lastSnap = performance.now(); } })
     .on('grid', (m) => { if (sim) applyGrid(sim, m); })
-    .on('ev', (m) => { if (!sim) return; for (const e of m.list) applyWorldEvent(sim, e, (b) => chunks.invalidate(b)); })
+    .on('ev', (m) => { if (!sim) return; for (const e of m.list) { chunks.worldEvent(e); applyWorldEvent(sim, e, (b) => chunks.invalidate(b)); } })
     .on('msg', (m) => { if (sim && (!m.side || m.side === controlSide)) log(m.text); });
   net.send({ t: 'join', code: $('mp-join-code').value.trim() });
 };
@@ -477,7 +477,9 @@ function finishDig() {
       const rate = diggers.reduce((a, u) => a + u.def.dig, 0);
       log(`Приказ: рыть траншею ${Math.round(L)} м · ~${fmtEta((L / rate) * 3600)}`);
     } else if (role !== 'guest') {
-      const created = digTrench(world, digRng, dig.points, controlSide, SIDES[controlSide].enemy);
+      const seed = digRng.int(0, 2 ** 30);
+      const created = digTrench(world, new Rng(seed), dig.points, controlSide, SIDES[controlSide].enemy);
+      chunks.worldEvent({ k: 'trench', pts: dig.points, side: controlSide, s: seed });
       for (const c of created) chunks.invalidate(c.bbox);
       sim.trenches.ensure();
       log('Траншея создана мгновенно (тест)');
@@ -510,7 +512,7 @@ addEventListener('keydown', (e) => {
     selectionChanged();
     return;
   }
-  const speedKeys = { Digit1: 1, Digit2: 5, Digit3: 20, Digit4: 60 };
+  const speedKeys = { Digit1: 0.5, Digit2: 1, Digit3: 2, Digit4: 4 };
   if (speedKeys[c] && !cfg.multiplayer) { setSpeed(speedKeys[c]); return; }
   if (c === 'KeyL') toggleLabels();
   if (c === 'KeyO') cycleFortView();
@@ -1194,7 +1196,10 @@ function frame(now) {
     else if (ev.type === 'msg') {
       if (!ev.side || ev.side === controlSide) log(ev.text);
       if (role === 'host' && (!ev.side || ev.side !== controlSide)) net.send({ t: 'msg', text: ev.text, side: ev.side });
-    } else if (ev.type === 'net' && role === 'host') netEvents.push(ev.ev);
+    } else if (ev.type === 'net') {
+      chunks.worldEvent(ev.ev); // фоновая отрисовка карты повторяет изменение мира
+      if (role === 'host') netEvents.push(ev.ev);
+    }
   }
   sim.events.length = 0;
   if (role === 'host') {
@@ -1233,14 +1238,17 @@ function frame(now) {
     ctx.fillRect(0, 0, x0, canvas.height);
     ctx.fillRect(x1, 0, canvas.width - x1, canvas.height);
   }
-  need.sort((a, b) => a.level - b.level || a.d - b.d);
+  // Сначала — текущий масштаб у центра экрана, затем обзорная подложка
+  const pri = (n) => (n.level === L ? 0 : n.level === 0 ? 1 : 2);
+  need.sort((a, b) => pri(a) - pri(b) || a.d - b.d);
   const t0 = performance.now();
   let rendered = 0;
   for (const n of need) {
     if (performance.now() - t0 > 10) break;
     if (chunks.render(n.level, n.cx, n.cy, t0 + 10)) rendered++;
+    if (chunks.busy()) break;
   }
-  $('loading').style.opacity = need.length > rendered ? 1 : 0;
+  $('loading').style.opacity = need.some((n) => n.level === 0 && !chunks.get(0, n.cx, n.cy)) ? 1 : 0;
 
   const fog = fogSide();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
