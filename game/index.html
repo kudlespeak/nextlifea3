@@ -3,130 +3,251 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Линия фронта — прототип карты</title>
+  <title>Линия фронта</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=PT+Sans+Narrow:wght@400;700&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --panel: rgba(20, 22, 17, 0.82);
-      --border: rgba(255, 240, 200, 0.14);
-      --text: #e9e4d4;
-      --muted: #a9a38f;
-      --accent: #ffd36b;
-      --red: #d9534f;
+      --bg: #15170f;
+      --panel: rgba(22, 25, 18, 0.9);
+      --panel-2: rgba(34, 38, 28, 0.96);
+      --line: rgba(230, 220, 180, 0.13);
+      --line-2: rgba(230, 220, 180, 0.24);
+      --text: #ece6d2;
+      --muted: #a39d86;
+      --accent: #f2c14e;
+      --accent-2: #ffdf8a;
+      --ok: #7ddc6a;
+      --warn: #f0c34a;
+      --bad: #ef5a4a;
+      --blue: #80b4ff;
+      --red: #ff8f85;
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1d17; color: var(--text); font-family: "PT Sans", system-ui, sans-serif; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.35 "PT Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
     #map { position: fixed; inset: 0; width: 100vw; height: 100vh; cursor: grab; touch-action: none; display: block; }
     #map:active { cursor: grabbing; }
-    .panel { position: fixed; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; backdrop-filter: blur(6px); }
-    #top { top: 12px; left: 12px; padding: 10px 14px; max-width: calc(100vw - 24px); }
-    #top h1 { margin: 0 0 2px; font-size: 16px; letter-spacing: 0.02em; }
-    #top .sides { font-size: 13px; color: var(--muted); }
-    #top .sides b.blue { color: #6fa8ff; }
-    #top .sides b.red { color: #ff7b72; }
-    #info { font-size: 11px; color: var(--muted); margin-top: 4px; }
-    #tools { top: 12px; right: 12px; padding: 6px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: min(430px, calc(50vw - 200px)); }
-    button { font: inherit; font-size: 13px; color: var(--text); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-    button:hover { background: rgba(255, 255, 255, 0.12); }
-    button.active { background: rgba(255, 211, 107, 0.2); border-color: var(--accent); color: var(--accent); }
-    #btn-strike.active { background: rgba(217, 83, 79, 0.25); border-color: var(--red); color: #ffb3ae; }
-    #minimap { bottom: 12px; right: 12px; width: 240px; height: 160px; padding: 0; overflow: hidden; cursor: pointer; }
-    #bottom { bottom: 12px; left: 12px; padding: 8px 12px; font-size: 12px; color: var(--muted); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-    #scale { display: flex; flex-direction: column; gap: 3px; }
+    .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(8px); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
+    button { font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s, border-color 0.15s; }
+    button:hover { background: rgba(255, 255, 255, 0.11); border-color: var(--line-2); }
+    button.active { background: rgba(242, 193, 78, 0.18); border-color: var(--accent); color: var(--accent-2); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    kbd { font: 700 11px "PT Sans Narrow", sans-serif; background: rgba(255, 255, 255, 0.1); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--muted); }
+
+    #topbar { top: 10px; left: 10px; right: 10px; height: 50px; display: flex; align-items: center; gap: 12px; padding: 0 10px; }
+    .brand { display: flex; align-items: center; gap: 10px; font: 700 16px "PT Sans Narrow", sans-serif; letter-spacing: 0.08em; white-space: nowrap; }
+    .brand .mark { width: 18px; height: 18px; border: 2px solid var(--accent); transform: rotate(45deg); border-radius: 3px; margin: 0 4px; }
+    #side-badge { font-weight: 700; }
+    #side-badge.blue { color: var(--blue); border-color: rgba(128, 180, 255, 0.5); }
+    #side-badge.red { color: var(--red); border-color: rgba(255, 143, 133, 0.5); }
+    .grow { flex: 1; }
+    .timebox { display: flex; align-items: center; gap: 4px; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+    #clock { font: 700 15px "PT Sans Narrow", sans-serif; padding: 0 10px; min-width: 128px; text-align: center; font-variant-numeric: tabular-nums; }
+    .timebox button { padding: 4px 9px; border-color: transparent; background: transparent; }
+    .timebox button.active { background: rgba(242, 193, 78, 0.2); border-color: var(--accent); }
+    .toolbar { display: flex; gap: 6px; align-items: center; }
+    .toolbar button { padding: 6px 9px; }
+    .toolbar .lbl { font-size: 13px; }
+    .menu { position: relative; }
+    .menu-list { position: absolute; right: 0; top: 44px; display: none; flex-direction: column; min-width: 240px; padding: 6px; gap: 4px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 9px; z-index: 6; }
+    .menu.open .menu-list { display: flex; }
+    .menu-list button { justify-content: flex-start; }
+
+    #roster { top: 70px; left: 10px; width: 250px; max-height: calc(100vh - 300px); display: flex; flex-direction: column; overflow: hidden; }
+    #roster .head { display: flex; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--line); font: 700 13px "PT Sans Narrow", sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+    #roster .head button { padding: 2px 8px; margin-left: auto; }
+    #roster.collapsed #roster-list { display: none; }
+    #roster-list { overflow-y: auto; padding: 4px 6px 8px; }
+    .group-title { font: 700 11px "PT Sans Narrow", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 8px 6px 3px; }
+    .r-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+    .r-row:hover { background: rgba(255, 255, 255, 0.06); }
+    .r-row.sel { background: rgba(184, 255, 107, 0.1); border-color: rgba(184, 255, 107, 0.4); }
+    .r-row.dead { opacity: 0.4; }
+    .r-row canvas { width: 34px; height: 24px; }
+    .r-name { font-weight: 700; font-size: 13px; }
+    .r-state { font-size: 11.5px; color: var(--muted); }
+    .bar { height: 4px; background: rgba(0, 0, 0, 0.5); border-radius: 2px; overflow: hidden; width: 44px; }
+    .bar > i { display: block; height: 100%; background: var(--ok); }
+
+    #card { left: 50%; bottom: 10px; transform: translateX(-50%); width: min(840px, calc(100vw - 640px)); min-width: 520px; display: none; flex-direction: column; }
+    #card.show { display: flex; }
+    .card-head { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .card-head canvas { width: 60px; height: 42px; flex: none; }
+    .card-title { font: 700 17px "PT Sans Narrow", sans-serif; }
+    .card-sub { color: var(--muted); font-size: 13px; }
+    .card-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; margin-top: 2px; }
+    .card-stats b { color: var(--accent-2); }
+    #card-close { margin-left: auto; align-self: flex-start; padding: 3px 8px; }
+    .card-body { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 10px 12px 12px; }
+    #soldiers { display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; max-height: 150px; overflow-y: auto; }
+    .chip { display: flex; flex-direction: column; gap: 3px; min-width: 104px; padding: 5px 7px; font-size: 12px; cursor: pointer; border-radius: 7px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); }
+    .chip:hover { border-color: var(--line-2); }
+    .chip.active { border-color: #fff27a; background: rgba(255, 242, 122, 0.12); }
+    .chip.dead { opacity: 0.45; text-decoration: line-through; }
+    .chip .bar { width: 100%; }
+    .chip small { color: var(--muted); font-size: 11px; }
+    #task { font-size: 13px; color: var(--accent-2); min-height: 18px; }
+    .cmds { display: grid; grid-template-columns: repeat(4, 76px); gap: 6px; align-content: start; }
+    .cmd { flex-direction: column; justify-content: center; gap: 3px; height: 62px; padding: 4px; position: relative; font-size: 12px; text-align: center; line-height: 1.1; }
+    .cmd svg.i { width: 22px; height: 22px; }
+    .cmd kbd { position: absolute; top: 3px; right: 4px; font-size: 10px; padding: 0 3px; }
+    .opts { display: flex; flex-direction: column; gap: 6px; }
+    .seg { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+    .seg span { color: var(--muted); font-size: 12px; margin-right: 4px; min-width: 76px; }
+    .seg button { padding: 4px 9px; font-size: 12.5px; }
+    .left-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+    #log { left: 10px; bottom: 10px; width: 300px; max-height: 190px; overflow: hidden; display: flex; flex-direction: column-reverse; gap: 3px; padding: 8px 10px; font-size: 12.5px; background: rgba(22, 25, 18, 0.72); }
+    #log:empty { display: none; }
+    #log .ev { display: flex; gap: 8px; }
+    #log .ev time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+    #log .ev.loss { color: #ffb0a6; }
+    #log .ev.old { opacity: 0.55; }
+
+    #mapbox { right: 10px; bottom: 10px; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+    #minimap { width: 270px; height: 180px; border-radius: 6px; cursor: pointer; display: block; }
+    .mapinfo { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); padding: 0 2px; }
+    #scale { display: flex; flex-direction: column; gap: 2px; }
     #scale-bar { height: 5px; border: 1.5px solid var(--text); border-top: none; }
-    #help { font-size: 12px; }
-    kbd { font-family: inherit; background: rgba(255,255,255,0.1); border-radius: 3px; padding: 0 4px; }
-    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 14px; font-size: 13px; pointer-events: none; transition: opacity 0.3s; }
-    #timebar { top: 12px; left: 50%; transform: translateX(-50%); padding: 6px; display: flex; gap: 4px; align-items: center; }
-    #clock { font-weight: 700; font-size: 14px; padding: 0 10px; min-width: 132px; text-align: center; font-variant-numeric: tabular-nums; }
-    #timebar button { padding: 4px 9px; }
-    #selpanel { bottom: 12px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; flex-direction: column; gap: 6px; width: min(460px, calc(100vw - 24px)); max-height: min(260px, 40vh); }
-    #selpanel .head { display: flex; gap: 6px; align-items: center; }
-    #selpanel .head .grow { flex: 1; font-weight: 700; font-size: 13px; }
-    #sel-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-    .unit-row { display: flex; gap: 8px; align-items: center; font-size: 12.5px; line-height: 1.2; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
-    .unit-row:hover { background: rgba(255,255,255,0.06); }
-    .unit-row canvas { width: 33px; height: 22px; flex: none; }
-    .muted { color: var(--muted); font-size: 12px; }
-    .st { color: var(--muted); font-size: 12px; }
-    #toast { top: 64px; left: 50%; transform: translateX(-50%); padding: 7px 14px; font-size: 13px; opacity: 0; transition: opacity 0.4s; pointer-events: none; max-width: calc(100vw - 24px); }
-    .soldiers { display: flex; flex-wrap: wrap; gap: 4px; }
-    .soldier { font-size: 11.5px; padding: 3px 7px; }
-    .soldier.active { background: rgba(255, 242, 122, 0.2); border-color: #fff27a; color: #fff6b0; }
-    #stances button { padding: 3px 8px; font-size: 12px; }
-    #stances button.active, #btn-basement.active { background: rgba(255, 211, 107, 0.2); border-color: var(--accent); color: var(--accent); }
-    #selpanel .head { flex-wrap: wrap; }
-    #btn-clear.active { background: rgba(255, 157, 107, 0.2); border-color: #ff9d6b; color: #ffc8a8; }
-    #btn-stealth.active { background: rgba(140, 220, 120, 0.2); border-color: #9be07f; color: #c5f5b0; }
-    @media (max-width: 900px) {
-      #top { display: none; }
-      #selpanel { bottom: 124px; }
+
+    #hint { position: fixed; pointer-events: none; padding: 5px 9px; font-size: 12.5px; background: rgba(15, 17, 11, 0.92); border: 1px solid var(--line-2); border-radius: 7px; display: none; white-space: nowrap; z-index: 5; }
+    #hint b { color: var(--accent-2); }
+    #loading { top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 14px; pointer-events: none; transition: opacity 0.3s; }
+
+    #help { inset: 0; position: fixed; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); z-index: 10; }
+    #help.show { display: flex; }
+    #help .box { width: min(760px, calc(100vw - 30px)); max-height: calc(100vh - 60px); overflow-y: auto; padding: 18px 22px; position: relative; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 12px; }
+    #help h2 { margin: 0 0 6px; font: 700 20px "PT Sans Narrow", sans-serif; }
+    #help h3 { margin: 14px 0 6px; font: 700 14px "PT Sans Narrow", sans-serif; color: var(--accent-2); letter-spacing: 0.05em; text-transform: uppercase; }
+    #help table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    #help td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    #help td:first-child { white-space: nowrap; width: 1%; }
+    #help-close { position: absolute; top: 12px; right: 12px; }
+
+    @media (max-width: 1250px) {
+      #card { width: calc(100vw - 20px); min-width: 0; bottom: 206px; }
+      #log { display: none; }
     }
-    @media (max-width: 640px) {
+    @media (max-width: 1100px) {
+      #roster { width: 210px; }
+      .toolbar .lbl { display: none; }
+    }
+    @media (max-width: 760px) {
+      #roster, .brand .txt { display: none; }
+      #mapbox { bottom: auto; top: 70px; }
       #minimap { width: 150px; height: 100px; }
-      #help { display: none; }
-      #tools { top: auto; bottom: 124px; right: 12px; }
+      #card { bottom: 10px; }
+      .card-body { grid-template-columns: 1fr; }
+      .cmds { grid-template-columns: repeat(4, 1fr); }
     }
   </style>
 </head>
 <body>
   <canvas id="map"></canvas>
 
-  <div id="top" class="panel">
-    <h1>Линия фронта · прототип карты</h1>
-    <div class="sides">Стороны: <b class="blue">Синие</b> vs <b class="red">Красные</b> · окопы и подземные ходы</div>
-    <div id="info"></div>
-  </div>
-
-  <div id="timebar" class="panel">
-    <span id="clock">—</span>
-    <button data-speed="0" title="Пауза (Пробел)">⏸</button>
-    <button data-speed="1" title="Клавиша 1">1×</button>
-    <button data-speed="5" title="Клавиша 2">5×</button>
-    <button data-speed="20" title="Клавиша 3">20×</button>
-    <button data-speed="60" title="Клавиша 4">60×</button>
-  </div>
-
-  <div id="selpanel" class="panel">
-    <div class="head">
-      <span id="sel-title" class="grow"></span>
-      <button id="btn-basement" title="V: укрыться в подвале / погребе — затем клик по зданию">В подвал</button>
-      <button id="btn-clear" title="C: зачистить траншею — затем клик по точке на траншее">Зачистить</button>
-      <button id="btn-stealth" title="G: маршрут скрытно — вдоль посадок, избегая открытых мест">Скрытно</button>
-      <button id="btn-stop" title="X: остановиться">Стоп</button>
+  <header id="topbar" class="panel">
+    <div class="brand"><div class="mark"></div><span class="txt">ЛИНИЯ ФРОНТА</span>
+      <button id="side-badge" class="blue" title="Tab: управлять другой стороной (для теста, пока нет ИИ)"></button>
     </div>
-    <div id="stances" class="head">
-      <span class="muted">Поза:</span>
-      <button data-stance="auto" title="N: по обстановке">Авто</button>
-      <button data-stance="stand" title="Z">Стоя</button>
-      <button data-stance="crouch" title="H">Пригнуться</button>
-      <button data-stance="prone" title="P">Лёжа</button>
+    <div class="grow"></div>
+    <div class="timebox">
+      <button data-speed="0" title="Пауза (Пробел)"><svg class="i"><path d="M8 5v14M16 5v14"/></svg></button>
+      <span id="clock">—</span>
+      <button data-speed="1" title="Клавиша 1">1×</button>
+      <button data-speed="5" title="Клавиша 2">5×</button>
+      <button data-speed="20" title="Клавиша 3">20×</button>
+      <button data-speed="60" title="Клавиша 4">60×</button>
     </div>
-    <div id="sel-task" class="muted"></div>
-    <div id="sel-list"></div>
+    <div class="grow"></div>
+    <div class="toolbar">
+      <button id="btn-labels" class="active" title="L: подписи"><svg class="i"><path d="M4 6h16M4 12h10M4 18h13"/></svg><span class="lbl">Подписи</span></button>
+      <button id="btn-forts" title="O: окопы — скрыты / схема / подземный слой"><svg class="i"><path d="M3 14l4-4 4 4 4-4 4 4 2-2"/></svg><span class="lbl" id="forts-lbl">Окопы</span></button>
+      <button id="btn-interior" title="I: планировки зданий всегда"><svg class="i"><path d="M4 4h16v16H4zM12 4v9M4 13h8M16 13v7"/></svg><span class="lbl">Интерьеры</span></button>
+      <button id="btn-help" title="F1: справка"><svg class="i"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg></button>
+      <div class="menu" id="menu">
+        <button id="btn-menu" title="Меню"><svg class="i"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
+        <div class="menu-list">
+          <button id="btn-strike"><svg class="i"><path d="M12 2l2 6 6-2-4 5 5 4h-6l-1 6-3-5-5 3 2-6-5-3 6-1z"/></svg>Удар 152 мм по клику (тест) <kbd>B</kbd></button>
+          <button id="btn-dig-test"><svg class="i"><path d="M3 14l4-4 4 4 4-4 4 4 2-2"/></svg>Траншея мгновенно (тест)</button>
+          <button id="btn-new"><svg class="i"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3M18 3v4h-4M6 21v-4h4"/></svg>Новая карта</button>
+          <div id="info" style="font-size:11px;color:var(--muted);padding:4px 6px"></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <aside id="roster" class="panel">
+    <div class="head">Подразделения <button id="roster-toggle" title="Свернуть">–</button></div>
+    <div id="roster-list"></div>
+  </aside>
+
+  <section id="card" class="panel">
+    <div class="card-head">
+      <canvas id="card-sym" width="120" height="84"></canvas>
+      <div>
+        <div class="card-title" id="card-title"></div>
+        <div class="card-sub" id="card-sub"></div>
+        <div class="card-stats" id="card-stats"></div>
+      </div>
+      <button id="card-close" title="Снять выбор (Esc)">✕</button>
+    </div>
+    <div class="card-body">
+      <div class="left-col">
+        <div id="task"></div>
+        <div id="soldiers"></div>
+        <div class="opts" id="opts"></div>
+      </div>
+      <div class="cmds" id="cmds"></div>
+    </div>
+  </section>
+
+  <div id="log" class="panel"></div>
+
+  <div id="mapbox" class="panel">
+    <canvas id="minimap"></canvas>
+    <div class="mapinfo">
+      <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
+      <span id="coords">—</span>
+    </div>
   </div>
 
-  <div id="tools" class="panel">
-    <button id="btn-side" title="Tab: сменить управляемую сторону (для теста)">Сторона</button>
-    <button id="btn-labels" title="Подписи (L)">Подписи</button>
- <button id="btn-forts" title="O: показать окопы схемой / подземный слой">Окопы</button>
-    <button id="btn-dig" title="T: выкопать траншею по точкам">Копать траншею</button>
- <button id="btn-interior" title="I: показывать планировки зданий всегда">Интерьеры: вблизи</button>
-    <button id="btn-strike" title="Артудар (B): клик по карте оставляет воронки">Артудар</button>
-    <button id="btn-new" title="Сгенерировать другую карту">Новая карта</button>
-  </div>
-
-  <canvas id="minimap" class="panel"></canvas>
-
-  <div id="bottom" class="panel">
-    <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
-    <span id="coords">—</span>
-    <span id="help"><kbd>ЛКМ</kbd> выбор/тянуть · <kbd>Shift</kbd>+рамка · <kbd>ПКМ</kbd> приказ · <kbd>G</kbd> скрытно · <kbd>X</kbd> стоп · <kbd>Пробел</kbd> пауза · <kbd>C</kbd> зачистить · <kbd>V</kbd> подвал · <kbd>Z/H/P/N</kbd> позы · <kbd>I</kbd> интерьеры · <kbd>O</kbd> окопы · <kbd>T</kbd> копать · <kbd>B</kbd> артудар</span>
-  </div>
-
-  <div id="toast" class="panel"></div>
+  <div id="hint"></div>
   <div id="loading" class="panel">Прорисовка местности…</div>
+
+  <div id="help">
+    <div class="box">
+      <button id="help-close">✕</button>
+      <h2>Как играть</h2>
+      <div style="color:var(--muted)">Прототип: карта, подразделения, окопы, здания, артиллерия. Вы управляете стороной, отмеченной в левом верхнем углу.</div>
+      <h3>Камера</h3>
+      <table>
+        <tr><td>ЛКМ + тянуть · <kbd>WASD</kbd></td><td>двигать карту</td></tr>
+        <tr><td>Колесо · щипок</td><td>приблизить / отдалить. Вблизи видны бойцы, техника и планировки зданий</td></tr>
+        <tr><td>Клик по миникарте</td><td>перейти в точку</td></tr>
+      </table>
+      <h3>Выбор и приказы</h3>
+      <table>
+        <tr><td>ЛКМ по подразделению</td><td>выбрать (<kbd>Ctrl</kbd> — добавить). Или в списке слева; двойной клик — показать на карте</td></tr>
+        <tr><td><kbd>Shift</kbd> + рамка · <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>выбрать группу / всех</td></tr>
+        <tr><td>ПКМ по земле</td><td>двигаться строем по самому быстрому маршруту</td></tr>
+        <tr><td>ПКМ по траншее</td><td>пехота занимает позицию, бойцы расходятся по ячейкам</td></tr>
+        <tr><td>ПКМ по зданию</td><td>пехота занимает здание, бойцы — у окон</td></tr>
+        <tr><td>Панель команд внизу</td><td>каждая кнопка подписана, горячая клавиша — в углу кнопки</td></tr>
+        <tr><td>Боец вручную</td><td>выберите отделение → кликните по бойцу на карте или по его карточке → ПКМ — куда идти</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>отменить режим / снять выбор</td></tr>
+      </table>
+      <h3>Артиллерия</h3>
+      <table>
+        <tr><td><kbd>F</kbd> «Огонь»</td><td>выберите миномёт или гаубицу → клик по цели. На карте показаны кольца дальности и эллипс рассеяния. Число выстрелов и взрыватель (контакт / воздушный подрыв) — в карточке</td></tr>
+        <tr><td>Осколки</td><td>урон зависит от расстояния, позы и укрытия. Стены и деревья гасят осколки. Воздушный подрыв опасен для открытых траншей, перекрытие защищает. В подвале и блиндаже безопасно, пока их не пробьёт прямое попадание крупного калибра</td></tr>
+      </table>
+      <h3>Время</h3>
+      <table>
+        <tr><td><kbd>Пробел</kbd> · <kbd>1</kbd>–<kbd>4</kbd></td><td>пауза · скорость 1×, 5×, 20×, 60×</td></tr>
+      </table>
+    </div>
+  </div>
 
   <script type="module" src="./src/main.js"></script>
 </body>

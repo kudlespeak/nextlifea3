@@ -8,6 +8,7 @@ import { digTrench } from '../forts.js';
 import { Rng } from '../rng.js';
 import { resample, pointInPoly } from '../geom.js';
 import { LocalGrid } from './localnav.js';
+import { Artillery } from './artillery.js';
 
 // Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
 export const POSES = {
@@ -33,13 +34,15 @@ export const UNIT_TYPES = {
   ifv:   { name: 'БМП', short: 'БМП', move: 'tracked', symbol: 'mech', men: 9, spacing: 50, accel: 2.0, turn: 1.4 },
   apc:   { name: 'БТР', short: 'БТР', move: 'wheeled', symbol: 'motor', men: 10, spacing: 50, accel: 2.2, turn: 1.0 },
   tank:  { name: 'Танк', short: 'Танк', move: 'tracked', symbol: 'armor', men: 3, spacing: 55, accel: 1.8, turn: 1.2 },
-  arty:  { name: 'Гаубица (буксир.)', short: 'Гаубица', move: 'wheeled', symbol: 'arty', men: 7, spacing: 60, accel: 1.2, turn: 0.8 },
+  arty:  { name: 'Гаубица 152 мм (буксир.)', short: 'Гаубица', move: 'wheeled', symbol: 'arty', men: 7, spacing: 60, accel: 1.2, turn: 0.8, caliber: 152, reload: 10, setup: 90, ammo: 40 },
+  mortar: { name: 'Миномётный расчёт 82 мм', short: 'Миномёт', move: 'foot', symbol: 'mortar', men: 4, spacing: 50, accel: 1.5, turn: 3, caliber: 82, reload: 5, setup: 30, ammo: 60 },
   truck: { name: 'Грузовик снабжения', short: 'Грузовик', move: 'wheeled', symbol: 'supply', men: 2, spacing: 45, accel: 1.6, turn: 0.9 },
 };
 
 const ROLES = {
   inf: ['Командир', 'Пулемётчик', 'Гранатомётчик', 'Стрелок', 'Стрелок', 'Снайпер', 'Помощник пулемётчика', 'Медик', 'Стрелок'],
   eng: ['Командир', 'Сапёр', 'Сапёр', 'Сапёр', 'Пулемётчик', 'Сапёр', 'Сапёр', 'Медик'],
+  mortar: ['Командир расчёта', 'Наводчик', 'Заряжающий', 'Подносчик'],
 };
 // Кто идёт первым при зачистке (штурмовая «двойка», командир третьим)
 const CLEAR_ORDER = ['Стрелок', 'Гранатомётчик', 'Командир', 'Пулемётчик', 'Помощник пулемётчика', 'Сапёр', 'Снайпер', 'Медик'];
@@ -69,6 +72,10 @@ export class Unit {
     this.eta = 0;
     this.stealth = false;
     this.soldiers = null;
+    this.ammo = this.def.ammo || 0;
+    this.hp = 1;
+    this.dead = false;
+    this.fire = null;
     if (ROLES[type]) {
       this.soldiers = ROLES[type].map((role, i) => {
         const [ox, oy] = formationOffset(i);
@@ -77,6 +84,7 @@ export class Unit {
           idx: i, role, x: x + ox * c - oy * s, y: y + ox * s + oy * c, heading: this.heading,
           mode: 'follow', path: null, pathIdx: 0, speed: 1.4, under: false, startAt: 0, waitUntil: 0, face: null,
           stance: 'auto', pose: 'crouch', slot: null, building: null, afterPath: null, inTrench: false,
+          hp: 100, dead: false, wounded: 0,
         };
       });
     }
@@ -107,6 +115,12 @@ export class Sim {
     this.cleared = []; // зачищенные участки траншей { side, line, t }
     this.events = []; // для интерфейса: { type: 'forts', bbox } | { type: 'msg', text }
     this.rng = new Rng((world.seed ^ 0x5151) >>> 0);
+    this.art = new Artillery(this);
+  }
+
+  // Бойцы, способные выполнять приказы (живые и не тяжело раненые)
+  act(u) {
+    return u.soldiers ? u.soldiers.filter((s) => !s.dead && s.wounded < 2) : [];
   }
 
   spawn(side, type, x, y, label) {
@@ -160,7 +174,7 @@ export class Sim {
   regroup(u) {
     this.centroid(u);
     u.mode = 'field';
-    for (const s of u.soldiers) {
+    for (const s of this.act(u)) {
       s.slot = null;
       const exit = this.exitPath(s);
       if (exit) {
@@ -244,16 +258,32 @@ export class Sim {
 
   doOccupy(u, node) {
     const g = this.trenches;
-    const men = u.soldiers.length;
+    const men = Math.max(1, this.act(u).length);
     const dmap = g.around(node, 14 + men * 4);
     const cand = [...dmap.entries()]
       .map(([id, d]) => ({ id, score: d - (g.nodes[id].kind === 'cell' ? 8 : g.nodes[id].kind === 'fire' ? 2 : 0) }))
       .sort((a, b) => a.score - b.score);
+    // Если связанный участок короткий — добавляем соседние траншеи поблизости
+    const n0 = g.nodes[node];
+    for (const id of g.near(n0.x, n0.y, 45)) {
+      if (g.nodes[id].under || dmap.has(id)) continue;
+      cand.push({ id, score: Math.hypot(g.nodes[id].x - n0.x, g.nodes[id].y - n0.y) * 1.4 + 5 });
+    }
+    cand.sort((a, b) => a.score - b.score);
     const slots = [];
     for (const c of cand) {
       const nd = g.nodes[c.id];
       if (slots.every((s) => Math.hypot(g.nodes[s].x - nd.x, g.nodes[s].y - nd.y) >= 4.5)) slots.push(c.id);
       if (slots.length >= men) break;
+    }
+    // Мест всё равно мало — допускаем более плотную расстановку, но не в одну точку
+    for (const minD of [3, 2]) {
+      if (slots.length >= men) break;
+      for (const c of cand) {
+        if (slots.length >= men) break;
+        const nd = g.nodes[c.id];
+        if (!slots.includes(c.id) && slots.every((s) => Math.hypot(g.nodes[s].x - nd.x, g.nodes[s].y - nd.y) >= minD)) slots.push(c.id);
+      }
     }
     while (slots.length < men) slots.push(slots[slots.length % Math.max(1, slots.length)] ?? node);
     const free = [...slots];
@@ -261,7 +291,7 @@ export class Sim {
     u.task = { type: 'occupy' };
     u.state = 'moving';
     const enemy = SIDES[u.side].enemy;
-    for (const s of u.soldiers) {
+    for (const s of this.act(u)) {
       // Ближайшее свободное место
       let bi = 0, bd = Infinity;
       free.forEach((id, i) => {
@@ -333,7 +363,8 @@ export class Sim {
       if (turn > 0.7) pts[i].wait = 2.5; // заглянуть за излом
       if (g.adj[nodes[i]].length > 2) pts[i].wait = Math.max(pts[i].wait, 4); // развилка — проверить отвилок
     }
-    const order = [...u.soldiers].sort((a, b) => CLEAR_ORDER.indexOf(a.role) - CLEAR_ORDER.indexOf(b.role));
+    const order = this.act(u).sort((a, b) => CLEAR_ORDER.indexOf(a.role) - CLEAR_ORDER.indexOf(b.role));
+    if (!order.length) return false;
     order.forEach((s, k) => {
       s.path = [{ x: s.x, y: s.y, under: s.under }, ...pts.map((p) => ({ ...p }))];
       s.pathIdx = 1;
@@ -351,7 +382,7 @@ export class Sim {
   // Ручное управление одним бойцом
   orderSoldier(u, idx, x, y) {
     const s = u.soldiers?.[idx];
-    if (!s) return;
+    if (!s || s.dead || s.wounded === 2) { this.msg('Боец не может двигаться'); return; }
     const g = this.trenches;
     g.ensure();
     if (u.mode === 'field') {
@@ -416,7 +447,7 @@ export class Sim {
     // Разнесём по окнам: не ближе 1.5 м друг к другу
     const chosen = [];
     for (const sl of slots) {
-      if (chosen.length >= u.soldiers.length) break;
+      if (chosen.length >= this.act(u).length) break;
       if (chosen.every((c) => Math.hypot(c.p[0] - sl.p[0], c.p[1] - sl.p[1]) > 1.5 || sl.kind === 'inside')) chosen.push(sl);
     }
     this.sendToSlots(u, b, chosen, false);
@@ -435,7 +466,7 @@ export class Sim {
       this.moveSingle(u, d.p[0] + d.n[0] * 6, d.p[1] + d.n[1] * 6);
       return true;
     }
-    const chosen = u.soldiers.map((_, i) => ({ p: bs.spots[i % bs.spots.length], face: null, kind: 'basement' }));
+    const chosen = this.act(u).map((_, i) => ({ p: bs.spots[i % bs.spots.length], face: null, kind: 'basement' }));
     this.sendToSlots(u, b, chosen, true);
     u.task = { type: 'basement', b };
     if (u.soldiers.length > bs.capacity) this.msg(`${u.label}: ${bs.kind} тесный — все не поместятся с удобством`);
@@ -444,11 +475,11 @@ export class Sim {
 
   sendToSlots(u, b, slots, basement) {
     const bs = b.interior.basement;
-    const grid = new LocalGrid(this.world, bboxPts([...u.soldiers.map((q) => [q.x, q.y]), ...b.poly], 6));
+    const grid = new LocalGrid(this.world, bboxPts([...this.act(u).map((q) => [q.x, q.y]), ...b.poly], 6));
     const free = [...slots];
     u.mode = 'trench';
     u.state = 'moving';
-    for (const s of u.soldiers) {
+    for (const s of this.act(u)) {
       let bi = 0, bd = Infinity;
       free.forEach((sl, i) => {
         const d = Math.hypot(sl.p[0] - s.x, sl.p[1] - s.y);
@@ -551,7 +582,9 @@ export class Sim {
   update(dt) {
     this.time += dt;
     this.trenches.ensure();
+    this.art.update();
     for (const u of this.units) {
+      if (u.dead && !u.soldiers) continue;
       if (u.mode === 'field' && u.state === 'moving') this.moveUnit(u, dt);
       if (u.task?.type === 'dig') this.updateDig(u, dt);
       if (u.soldiers) this.updateSoldiers(u, dt);
@@ -563,13 +596,15 @@ export class Sim {
     const c = Math.cos(u.heading), sn = Math.sin(u.heading);
     let anyPath = false;
     for (const s of u.soldiers) {
+      if (s.dead) { s.pose = 'dead'; continue; }
+      if (s.wounded === 2) { s.pose = 'prone'; s.moving = false; continue; }
       if (s.mode === 'follow') {
         const [ox, oy] = formationOffset(s.idx);
         const tx = u.x + ox * c - oy * sn, ty = u.y + ox * sn + oy * c;
         const dx = tx - s.x, dy = ty - s.y;
         const d = Math.hypot(dx, dy);
         if (d > 0.2) {
-          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed);
+          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1);
           const step = Math.min(d, v * dt);
           const nx = s.x + (dx / d) * step, ny = s.y + (dy / d) * step;
           // Сквозь дома не ходим — скользим вдоль стены
@@ -614,7 +649,7 @@ export class Sim {
       const d = Math.hypot(dx, dy);
       if (d > 0.01) s.heading = Math.atan2(dy, dx);
       s.moving = true;
-      const speed = s.speed * (s.stance === 'auto' ? 1 : POSES[s.stance].speed);
+      const speed = s.speed * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1);
       const step = speed * remaining;
       if (step >= d) {
         s.x = wp.x;
@@ -640,6 +675,8 @@ export class Sim {
 
   // Поза: ручная, либо по обстановке
   poseOf(u, s) {
+    if (s.dead) return 'dead';
+    if (s.wounded === 2) return 'prone';
     if (s.under) return 'under';
     const moving = s.moving && !(s.waitUntil > this.time) && !(s.startAt > this.time);
     if (!moving && s.slot === 'window') return 'window';
@@ -667,10 +704,12 @@ export class Sim {
 
   centroid(u) {
     if (!u.soldiers) return;
+    const alive = u.soldiers.filter((s) => !s.dead);
+    if (!alive.length) return;
     let x = 0, y = 0;
-    for (const s of u.soldiers) { x += s.x; y += s.y; }
-    u.x = x / u.soldiers.length;
-    u.y = y / u.soldiers.length;
+    for (const s of alive) { x += s.x; y += s.y; }
+    u.x = x / alive.length;
+    u.y = y / alive.length;
   }
 
   updateDig(u, dt) {
@@ -683,12 +722,13 @@ export class Sim {
       return;
     }
     // Темп: у отделения зависит от числа людей
-    const crew = u.soldiers ? u.soldiers.length / u.def.men : 1;
+    const crew = u.soldiers ? this.act(u).length / u.def.men : 1;
     job.done = Math.min(job.total, job.done + (u.def.dig * crew * dt) / 3600);
     if (u.soldiers) {
       // Бойцы расходятся вдоль участка работ
-      u.soldiers.forEach((s, i) => {
-        const p = this.pointAt(job, job.done - 1 - (i / u.soldiers.length) * 10);
+      const crewS = this.act(u);
+      crewS.forEach((s, i) => {
+        const p = this.pointAt(job, job.done - 1 - (i / crewS.length) * 10);
         const q = this.pointAt(job, job.done + 1);
         const a = Math.atan2(q[1] - p[1], q[0] - p[0]);
         s.mode = 'dig';
@@ -793,7 +833,7 @@ export class Sim {
 
   // Мягкое расталкивание отрядов в поле (в траншеях бойцы стоят где поставили)
   separate(dt) {
-    const us = this.units.filter((u) => u.mode === 'field' && u.task?.type !== 'dig');
+    const us = this.units.filter((u) => !u.dead && u.mode === 'field' && u.task?.type !== 'dig');
     for (let i = 0; i < us.length; i++)
       for (let j = i + 1; j < us.length; j++) {
         const a = us[i], b = us[j];
@@ -822,12 +862,12 @@ export class Sim {
     const blue = [
       ['tank', 'Т-1'], ['tank', 'Т-2'], ['ifv', '1-я БМП'], ['ifv', '2-я БМП'],
       ['inf', '1-е отд.'], ['inf', '2-е отд.'], ['inf', '3-е отд.'], ['apc', 'БТР-1'],
-      ['eng', 'Сапёры-1'], ['btm', 'БТМ-1'],
+      ['eng', 'Сапёры-1'], ['btm', 'БТМ-1'], ['mortar', 'Миномёт-1'], ['mortar', 'Миномёт-2'],
       ['arty', 'Батарея-1'], ['truck', 'Снабж.-1'], ['truck', 'Снабж.-2'],
     ];
     const red = [
       ['tank', 'Т-71'], ['ifv', '71-я БМП'], ['ifv', '72-я БМП'], ['inf', '71-е отд.'],
-      ['inf', '72-е отд.'], ['eng', 'Сапёры-7'], ['apc', 'БТР-71'], ['btm', 'БТМ-7'], ['arty', 'Батарея-7'], ['truck', 'Снабж.-7'],
+      ['inf', '72-е отд.'], ['eng', 'Сапёры-7'], ['apc', 'БТР-71'], ['btm', 'БТМ-7'], ['mortar', 'Миномёт-7'], ['arty', 'Батарея-7'], ['truck', 'Снабж.-7'],
     ];
     const place = (list, side, cx, cy, ang, spread) => {
       list.forEach(([type, label], i) => {

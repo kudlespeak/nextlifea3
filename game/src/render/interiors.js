@@ -9,7 +9,14 @@ const FLOOR = {
   'прихожая': '#8c8476', 'кухня': '#a19d92', 'комната': '#8d7353', 'спальня': '#86704f',
   'подъезд': '#8a8883', 'кабинет': '#8f7a5a', 'класс': '#937c58', 'коридор': '#8a877f',
   'цех': '#7f7d77', 'бытовка': '#8d8779', 'коровник': '#7b7160', 'гараж': '#6e6c67',
-  'сарай': '#7a6c55', 'теплица': '#6f7d52',
+  'сарай': '#7a6c55', 'теплица': '#6f7d52', 'сени': '#857d6d', 'веранда': '#9a927f',
+  'санузел': '#b8bcbc', 'котельная': '#8a8680', 'зал': '#94785a',
+};
+const FURN = {
+  'ковёр': '#7c3f35', 'диван': '#6c5243', 'шкаф': '#5a4331', 'стол': '#8a6a48', 'кровать': '#d6d0c2',
+  'печь': '#c7c0b1', 'гарнитур': '#c9c4b6', 'плита': '#3a3a3a', 'ванна': '#eef0ee', 'унитаз': '#f4f4f2',
+  'котёл': '#9d9d98', 'вешалка': '#4d3a2a', 'ящики': '#8a7a55', 'парта': '#a58a60', 'стеллаж': '#6a5238',
+  'станок': '#5f6a70', 'стойло': '#4a3b2b', 'дрова': '#7a5a3a',
 };
 
 export function drawInteriors(ctx, world, sim, view, force, underground) {
@@ -50,7 +57,30 @@ export function drawInteriors(ctx, world, sim, view, force, underground) {
       poly(r.poly);
       ctx.fillStyle = FLOOR[r.kind] || '#857c6c';
       ctx.fill();
-      if (zc > 4 && (r.kind === 'комната' || r.kind === 'спальня' || r.kind === 'кухня')) drawFurniture(ctx, r, toS, z);
+    }
+    // Мебель: сначала ковры, потом остальное
+    if (zc > 3.2 && it.furniture) {
+      for (const pass of [0, 1])
+        for (const f of it.furniture) {
+          if ((f.kind === 'ковёр') !== (pass === 0)) continue;
+          poly(f.poly);
+          ctx.fillStyle = FURN[f.kind] || '#8a7a60';
+          ctx.fill();
+          if (pass && zc > 5) {
+            ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+            ctx.lineWidth = Math.max(0.6, 0.03 * z);
+            ctx.stroke();
+            if (f.kind === 'кровать' || f.kind === 'печь' || f.kind === 'плита') {
+              // подушка / топка / конфорки
+              const [a, b2] = f.poly;
+              const [ax, ay] = toS(a[0], a[1]);
+              ctx.fillStyle = f.kind === 'кровать' ? '#f2efe7' : '#2a2622';
+              ctx.beginPath();
+              ctx.arc(ax + (toS(b2[0], b2[1])[0] - ax) * 0.5, ay + (toS(b2[0], b2[1])[1] - ay) * 0.5, 0.18 * z, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
     }
     if (it.columns && zc > 2.5) {
       ctx.fillStyle = '#4b4944';
@@ -142,24 +172,6 @@ export function drawInteriors(ctx, world, sim, view, force, underground) {
     }
   }
   ctx.globalAlpha = 1;
-}
-
-function drawFurniture(ctx, r, toS, z) {
-  const [a, b, c] = r.poly;
-  const ux = (b[0] - a[0]), uy = (b[1] - a[1]);
-  const vx = (c[0] - b[0]), vy = (c[1] - b[1]);
-  const at = (u, v) => toS(a[0] + ux * u + vx * v, a[1] + uy * u + vy * v);
-  ctx.fillStyle = r.kind === 'кухня' ? '#c9c4b6' : '#b7a88e';
-  const box = (u0, v0, u1, v1) => {
-    const p = [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)];
-    ctx.beginPath();
-    p.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.closePath();
-    ctx.fill();
-  };
-  if (r.kind === 'кухня') { box(0.05, 0.05, 0.95, 0.2); box(0.4, 0.45, 0.65, 0.7); }
-  else if (r.kind === 'спальня') { box(0.1, 0.55, 0.45, 0.95); }
-  else { box(0.6, 0.08, 0.95, 0.3); box(0.08, 0.6, 0.3, 0.92); }
 }
 
 // Здание под курсором (для приказов)

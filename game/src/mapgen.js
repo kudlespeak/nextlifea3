@@ -11,11 +11,11 @@ import { buildFortifications } from './forts.js';
 import { seedBattleDamage } from './damage.js';
 import { generateInterior } from './interiors.js';
 
-export const WORLD_W = 6000;
-export const WORLD_H = 4000;
+export const WORLD_W = 9000;
+export const WORLD_H = 6000;
 
 const CITY_NAMES = ['Верхнеозёрск', 'Степногорск', 'Краснолиманск', 'Заречанск'];
-const VILLAGE_NAMES = ['Сосновка', 'Дубровное', 'Каменный Брод', 'Весёлое', 'Лозовая', 'Старая Балка', 'Приволье'];
+const VILLAGE_NAMES = ['Сосновка', 'Дубровное', 'Каменный Брод', 'Весёлое', 'Лозовая', 'Старая Балка', 'Приволье', 'Зелёный Гай', 'Малиновка', 'Кривая Лука'];
 
 // Типы культур на полях (цвет — спутниковый вид конца лета)
 export const CROPS = {
@@ -54,8 +54,9 @@ export function generateWorld(seed) {
   // ---------- Ключевые точки ----------
   const cityC = [W * 0.52 + rng.float(-150, 150), H * 0.52 + rng.float(-120, 120)];
   const villageSpots = [
-    [W * 0.15, H * 0.2], [W * 0.18, H * 0.78], [W * 0.84, H * 0.72], [W * 0.82, H * 0.14],
-  ].map(([x, y]) => [x + rng.float(-200, 200), y + rng.float(-150, 150)]);
+    [W * 0.12, H * 0.18], [W * 0.14, H * 0.55], [W * 0.2, H * 0.86], [W * 0.42, H * 0.1],
+    [W * 0.45, H * 0.9], [W * 0.8, H * 0.14], [W * 0.86, H * 0.5], [W * 0.8, H * 0.86],
+  ].map(([x, y]) => [x + rng.float(-250, 250), y + rng.float(-200, 200)]);
 
   // ---------- Река ----------
   const riverLine = [];
@@ -80,7 +81,7 @@ export function generateWorld(seed) {
   world.settlements.push({ name: rng.pick(CITY_NAMES), x: cityC[0], y: cityC[1], type: 'city' });
 
   // ---------- Трасса (обходит город с севера) ----------
-  const hwY = cityC[1] - 780;
+  const hwY = cityC[1] - 1000;
   const highwayCtrl = [];
   for (let i = 0; i <= 8; i++) {
     const x = -200 + (i / 8) * (W + 400);
@@ -103,7 +104,8 @@ export function generateWorld(seed) {
   addItem(world.rails, { kind: 'rail', line: rail, width: 10 }, 20);
   mask.stampLine(rail, 16, M.RAIL);
 
-  // ---------- Балка с прудом ----------
+  // ---------- Балки с прудами ----------
+  buildBalka(world, rng, river, cityC);
   buildBalka(world, rng, river, cityC);
 
   // ---------- Сёла: главная улица + дороги к городу ----------
@@ -122,18 +124,34 @@ export function generateWorld(seed) {
     return { c, street, angle };
   });
 
-  // Дороги из сёл к городу и к трассе (асфальт)
+  // Дороги из сёл к городу и к трассе (асфальт). Дороги к городу кладём после
+  // застройки: они заканчиваются на окраине и примыкают к уличной сетке.
+  const toCity = [];
   for (const v of villages) {
-    const target = rng.chance(0.5) || Math.abs(v.c[1] - hwY) > 1200 ? cityC.slice() : nearestPoint(highway, v.c);
-    addRoad(world, wobblyRoad(rng, v.c, target, 3), 'local');
+    const nearCity = Math.hypot(v.c[0] - cityC[0], v.c[1] - cityC[1]) < 3200;
+    if (nearCity && (rng.chance(0.6) || Math.abs(v.c[1] - hwY) > 1300)) toCity.push(wobblyRoad(rng, v.c, cityC.slice(), 3));
+    else addRoad(world, wobblyRoad(rng, v.c, nearestPoint(highway, v.c), 3), 'local');
   }
-  // Дорога между южными сёлами
-  addRoad(world, wobblyRoad(rng, villages[1].c, villages[2].c, 4), 'local');
+  // Дороги между соседними сёлами
+  const linked = new Set();
+  villages.forEach((a, i) => {
+    let bj = -1, bd = Infinity;
+    villages.forEach((b, j) => {
+      if (i === j) return;
+      const d = Math.hypot(a.c[0] - b.c[0], a.c[1] - b.c[1]);
+      if (d < bd) { bd = d; bj = j; }
+    });
+    const key = Math.min(i, bj) + ':' + Math.max(i, bj);
+    if (bj < 0 || linked.has(key) || bd > 4200) return;
+    linked.add(key);
+    addRoad(world, wobblyRoad(rng, a.c, villages[bj].c, 4), rng.chance(0.5) ? 'local' : 'dirt');
+  });
 
   for (const v of villages) addRoad(world, v.street, 'village');
 
   // ---------- Город ----------
-  buildCity(world, rng, cityC, rail, river);
+  buildCity(world, rng, cityC, rail, river, toCity);
+  for (const line of toCity) connectToCity(world, line);
 
   // ---------- Сёла: дворы ----------
   for (const v of villages) {
@@ -229,6 +247,33 @@ function addVillageGround(world, street) {
   addItem(world.areas, { kind: 'vground', line: street, width: 260 }, 160);
   world._vgroundLines = (world._vgroundLines || []).concat([street]);
   world.mask.stampLine(street, 280, M.VILLAGE);
+}
+
+// Дорога из села заканчивается у края застройки и примыкает к ближайшей улице
+function connectToCity(world, line) {
+  const { mask } = world;
+  let cut = line.findIndex(([x, y]) => mask.has(x, y, M.CITY));
+  if (cut < 0) { addRoad(world, line, 'local'); return; }
+  cut = Math.max(1, cut - 1);
+  const trimmed = line.slice(0, cut + 1);
+  const end = trimmed[trimmed.length - 1];
+  const cands = [];
+  for (const r of world.roadList) {
+    if (r.type !== 'street' && r.type !== 'avenue') continue;
+    for (const p of r.line) cands.push(p);
+  }
+  cands.sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]));
+  for (const c of cands.slice(0, 40)) {
+    const L = Math.hypot(c[0] - end[0], c[1] - end[1]);
+    if (L > 250) break;
+    let ok = true;
+    for (let t = 0; t <= L; t += 2) {
+      const x = end[0] + ((c[0] - end[0]) * t) / L, y = end[1] + ((c[1] - end[1]) * t) / L;
+      if (mask.has(x, y, M.BUILD | M.WATER)) { ok = false; break; }
+    }
+    if (ok) { trimmed.push(c.slice()); break; }
+  }
+  addRoad(world, resample(trimmed, 10), 'local');
 }
 
 function nearestPoint(line, p) {
@@ -459,7 +504,7 @@ function buildVillageStreet(world, rng, street, density) {
   for (let k = 1; k < street.length; k++) cum.push(cum[k - 1] + dist(street[k - 1], street[k]));
   const total = cum[cum.length - 1];
   while (s < total - 10) {
-    const plotW = rng.float(20, 28);
+    const plotW = rng.float(24, 34);
     s += plotW;
     while (i < street.length - 1 && cum[i + 1] < s - plotW / 2) i++;
     const p = street[i];
@@ -467,7 +512,7 @@ function buildVillageStreet(world, rng, street, density) {
     const ang = Math.atan2(t[1], t[0]);
     for (const side of [-1, 1]) {
       if (!rng.chance(0.95 * density)) continue;
-      const depth = rng.float(70, 130);
+      const depth = rng.float(80, 140);
       const setback = 9;
       const nx = -t[1] * side, ny = t[0] * side;
       const cx = p[0] + nx * (setback + depth / 2), cy = p[1] + ny * (setback + depth / 2);
@@ -488,11 +533,19 @@ function buildVillageStreet(world, rng, street, density) {
       });
 
       // Дом у улицы
-      const hw = rng.float(8, 13), hd = rng.float(7, 10);
-      const along = rng.float(-plotW * 0.18, plotW * 0.18);
+      const house = makeHouse(rng, roofs);
+      const hw = Math.min(house.w, plotW - 5), hd = house.h;
+      const along = rng.float(-1, 1) * Math.max(0, (plotW - hw) / 2 - 2);
       const hx = p[0] + nx * (setback + 4 + hd / 2) + t[0] * along;
       const hy = p[1] + ny * (setback + 4 + hd / 2) + t[1] * along;
-      addBuilding(world, { x: hx, y: hy, w: hw, h: hd, angle: ang, roof: rng.weighted(roofs), style: 'gable', height: 5 });
+      addBuilding(world, { ...house, x: hx, y: hy, w: hw, h: hd, angle: ang });
+      // Двор: колодец, будка, дровник, летняя кухня, туалет в глубине участка
+      const yardAt = (dd, lat) => [p[0] + nx * dd + t[0] * lat * plotW, p[1] + ny * dd + t[1] * lat * plotW];
+      if (rng.chance(0.45)) { const [x, y] = yardAt(setback + 4 + hd + rng.float(3, 7), rng.float(-0.35, 0.35)); tryBuilding(world, { x, y, w: 1.6, h: 1.6, angle: ang, roof: '#8a8478', style: 'well', height: 1 }); }
+      if (rng.chance(0.4)) { const [x, y] = yardAt(setback + 4 + hd + rng.float(2, 6), rng.float(-0.4, 0.4)); tryBuilding(world, { x, y, w: 1.1, h: 1.4, angle: ang, roof: '#6d5a4a', style: 'shed', height: 1 }); }
+      if (rng.chance(0.5)) { const [x, y] = yardAt(setback + 4 + hd + rng.float(6, 14), rng.float(-0.4, 0.4)); tryBuilding(world, { x, y, w: 3.2, h: 1.1, angle: ang + (rng.chance(0.5) ? Math.PI / 2 : 0), roof: '#8a6a45', style: 'woodpile', height: 1.4 }); }
+      if (rng.chance(0.3)) { const [x, y] = yardAt(setback + 4 + hd + rng.float(8, 16), rng.float(-0.3, 0.3)); const b2 = tryBuilding(world, { x, y, w: rng.float(4, 5.5), h: rng.float(4, 5), angle: ang, roof: rng.pick(['#7e7e79', '#8b4a38']), style: 'shed', height: 3, summer: true }); if (b2) b2.chimney = [1, 0]; }
+      { const [x, y] = yardAt(depth * rng.float(0.5, 0.6) + setback, rng.float(-0.35, 0.35)); tryBuilding(world, { x, y, w: 1.3, h: 1.4, angle: ang, roof: '#6a5a48', style: 'shed', height: 2.2 }); }
 
       // Хозпостройки
       const nOut = rng.int(1, 3);
@@ -529,6 +582,17 @@ function tryBuilding(world, b) {
   const poly = rectCorners(b.x, b.y, b.w + 0.8, b.h + 0.8, b.angle);
   if (!world.mask.polyFree(poly, M.BUILD | M.ROAD | M.WATER, 1)) return null;
   return addBuilding(world, b);
+}
+
+// Разные дома: старая хата, типовой дом, большой новый дом; веранды
+function makeHouse(rng, roofs) {
+  const type = rng.weighted([['small', 3], ['std', 5], ['big', 2]]);
+  const [w, h] = type === 'small' ? [rng.float(8.5, 10.5), rng.float(7.2, 8.5)] : type === 'std' ? [rng.float(10.5, 13), rng.float(8.5, 10.5)] : [rng.float(13, 16), rng.float(10, 12.5)];
+  const roof = type === 'big' ? rng.pick(['#8b3f33', '#6b3a2e', '#4d5a66', '#6f7478', '#7d2f2a']) : type === 'small' ? rng.pick(['#8a8a84', '#7c7c76', '#94918a', '#6f6a60']) : rng.weighted(roofs);
+  return {
+    w, h, style: 'gable', houseType: type, roof, height: type === 'big' ? 7 : 5,
+    veranda: type !== 'big' && rng.chance(0.45) ? rng.float(2.2, 3) : 0,
+  };
 }
 
 function addBuilding(world, b) {
@@ -572,11 +636,11 @@ function buildFarm(world, rng, v) {
 // Город «растёт» органически: несколько районов со своей сеткой и поворотом,
 // плотность застройки падает от центра, но тянется вдоль дорог и железной дороги.
 // Граница получается рваной: частный сектор, пустыри между районами, «языки» вдоль трасс.
-function buildCity(world, rng, C, rail, river) {
+function buildCity(world, rng, C, rail, river, extraGrowth = []) {
   const { mask } = world;
-  const R = 900; // характерный радиус
+  const R = 1100; // характерный радиус
   const growthLines = world.roadList.filter((r) => r.type === 'local' || r.type === 'village').map((r) => r.line);
-  growthLines.push(rail);
+  growthLines.push(rail, ...extraGrowth);
   const noiseSeed = rng.int(0, 1e6);
   const density = (p) => {
     const d = Math.hypot(p[0] - C[0], p[1] - C[1]);
@@ -593,10 +657,10 @@ function buildCity(world, rng, C, rail, river) {
   // Районы: центр + 4–6 вокруг, у каждого свой угол сетки и размер кварталов
   const base = rng.float(-0.3, 0.3);
   const districts = [{ x: C[0], y: C[1], phi: base, su: rng.float(115, 140), sv: rng.float(100, 125), core: true }];
-  const nD = rng.int(4, 6);
+  const nD = rng.int(5, 7);
   for (let i = 0; i < nD; i++) {
     const a = (i / nD) * Math.PI * 2 + rng.float(-0.4, 0.4);
-    const r = rng.float(480, 820);
+    const r = rng.float(560, 1000);
     districts.push({
       x: C[0] + Math.cos(a) * r, y: C[1] + Math.sin(a) * r * 0.8,
       phi: base + rng.float(-0.6, 0.6), su: rng.float(90, 150), sv: rng.float(70, 120), core: false,
@@ -616,7 +680,7 @@ function buildCity(world, rng, C, rail, river) {
   districts.forEach((dist, di) => {
     const c = Math.cos(dist.phi), s = Math.sin(dist.phi);
     const toW = (u, v) => [dist.x + u * c - v * s, dist.y + u * s + v * c];
-    const span = 1500;
+    const span = 1900;
     const us = [], vs = [];
     for (let u = -span; u <= span; u += dist.su * rng.float(0.8, 1.2)) us.push(u);
     for (let v = -span; v <= span; v += dist.sv * rng.float(0.8, 1.2)) vs.push(v);
@@ -716,7 +780,7 @@ function blockBuild(world, blk, u, v, w, h, props) {
   const [x, y] = blk.toW(u, v);
   const poly = rectCorners(x, y, w, h, blk.phi + (props.rot || 0));
   if (!world.mask.polyFree(poly, M.ROAD | M.WATER | M.RAIL | M.BUILD, 4)) return null;
-  return addBuilding(world, { x, y, w, h, angle: blk.phi + (props.rot || 0), ...props });
+  return addBuilding(world, { ...props, x, y, w, h, angle: blk.phi + (props.rot || 0) });
 }
 
 function buildPanelBlock(world, rng, blk, roofs, d) {
@@ -765,7 +829,7 @@ function buildPanelBlock(world, rng, blk, roofs, d) {
 function buildPrivateBlock(world, rng, blk, roofs) {
   const { u0, u1, v0, v1 } = blk;
   const bw = u1 - u0;
-  const n = Math.max(2, Math.floor(bw / rng.float(20, 28)));
+  const n = Math.max(2, Math.floor(bw / rng.float(24, 32)));
   const pw = bw / n;
   const pd = (v1 - v0) / 2;
   for (const half of [0, 1]) {
@@ -780,7 +844,11 @@ function buildPrivateBlock(world, rng, blk, roofs) {
       const [gx, gy] = blk.toW(cu, gv);
       addItem(world.areas, { kind: 'garden', poly: rectCorners(gx, gy, pw - 4, pd * 0.35, blk.phi), angle: blk.phi + Math.PI / 2, tone: rng.int(0, 2) });
       const hv = half === 0 ? v0 + 9 : v1 - 9;
-      blockBuild(world, blk, cu + rng.float(-3, 3), hv, rng.float(8, 12), rng.float(7, 9.5), { roof: rng.weighted(roofs), style: 'gable', height: 5 });
+      {
+        const house = makeHouse(rng, roofs);
+        const hw2 = Math.min(house.w, pw - 4);
+        blockBuild(world, blk, cu + rng.float(-1, 1) * Math.max(0, (pw - hw2) / 2 - 1.5), half === 0 ? v0 + 3 + house.h / 2 : v1 - 3 - house.h / 2, hw2, house.h, house);
+      }
       if (rng.chance(0.7))
         blockBuild(world, blk, cu + rng.float(-5, 5), half === 0 ? v0 + pd * 0.5 : v1 - pd * 0.5, rng.float(4, 7), rng.float(3.5, 5), { roof: rng.pick(['#7a7872', '#6d5a4a']), style: 'shed', height: 3 });
       const nT = rng.int(1, 4);
@@ -884,7 +952,7 @@ function buildStation(world, rng, rail, C) {
 // ---------- Следы войны ----------
 function seedWarScars(world, rng, cityC) {
   // Условная «серая зона» — полоса к востоку от города
-  const cx = Math.min(world.W - 1700, cityC[0] + rng.float(1000, 1400));
+  const cx = Math.min(world.W - 2200, cityC[0] + rng.float(1300, 1700));
   for (let k = 0; k < 14; k++) {
     const x = cx + rng.gauss(0, 350);
     const y = rng.float(300, world.H - 300);

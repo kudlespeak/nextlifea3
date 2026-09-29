@@ -64,6 +64,16 @@ export function drawSymbol(ctx, x, y, s, side, symbol, opts = {}) {
       ctx.arc(0, 0, s * 0.13, 0, Math.PI * 2);
       ctx.fill();
       break;
+    case 'mortar':
+      // Миномёт: точка и стрелка вверх
+      ctx.beginPath();
+      ctx.arc(0, ih * 0.35, s * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, ih * 0.25); ctx.lineTo(0, -ih * 0.7);
+      ctx.moveTo(-iw * 0.25, -ih * 0.4); ctx.lineTo(0, -ih * 0.75); ctx.lineTo(iw * 0.25, -ih * 0.4);
+      ctx.stroke();
+      break;
     case 'eng':
     case 'engmech': {
       // Инженерный знак — «мостик» с опорами
@@ -361,6 +371,7 @@ export function drawUnits(ctx, sim, view, ui) {
         drawSoldiers(ctx, u, toS, z, dpr, ui);
         continue;
       }
+      if (u.dead) continue;
       if (sel.has(u.id)) {
         ctx.beginPath();
         ctx.arc(sx, sy, (u.def.move === 'foot' ? 10 : 7) * z, 0, Math.PI * 2);
@@ -385,12 +396,13 @@ export function drawUnits(ctx, sim, view, ui) {
   }
 
   // Тактические знаки (вблизи — маленькие над техникой)
-  const size = (sprites ? 12 : Math.min(20, Math.max(13, 12 + z * 8))) * dpr;
+  const size = (sprites ? 15 : Math.min(24, Math.max(17, 16 + z * 8))) * dpr;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.font = `600 ${11 * dpr}px "PT Sans", system-ui, sans-serif`;
+  ctx.font = `700 ${12.5 * dpr}px "PT Sans", system-ui, sans-serif`;
   const labelAll = z > 0.35 * dpr || sel.size > 0;
   for (const u of sim.units) {
+    if (u.dead) continue;
     let [sx, sy] = toS(u.x, u.y);
     if (sx < -60 || sy < -60 || sx > canvas.width + 60 || sy > canvas.height + 60) continue;
     if (sprites) {
@@ -398,6 +410,25 @@ export function drawUnits(ctx, sim, view, ui) {
       sy -= (u.def.move === 'foot' ? 16 : 10) * z + size;
     }
     drawSymbol(ctx, sx, sy, size, u.side, u.def.symbol, { selected: sel.has(u.id), alpha: 0.95 });
+    // Полоска численности / состояния и боезапаса
+    {
+      const bw = size * 1.5, bx = sx - bw / 2, by = sy - size * 0.5 - 5 * dpr;
+      const val = u.soldiers ? u.soldiers.filter((q) => !q.dead).length / u.soldiers.length : u.hp ?? 1;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(bx, by, bw, 3 * dpr);
+      ctx.fillStyle = val > 0.66 ? '#7ddc6a' : val > 0.33 ? '#f0c34a' : '#ef5a4a';
+      ctx.fillRect(bx, by, bw * val, 3 * dpr);
+      if (u.def.caliber) {
+        ctx.fillStyle = '#ffd36b';
+        ctx.fillRect(bx, by - 4 * dpr, bw * (u.ammo / u.def.ammo), 2 * dpr);
+      }
+      if (u.fire) {
+        ctx.fillStyle = '#ff7a5a';
+        ctx.font = `700 ${10 * dpr}px "PT Sans", system-ui, sans-serif`;
+        ctx.fillText('огонь', sx, by - 16 * dpr);
+        ctx.font = `600 ${11 * dpr}px "PT Sans", system-ui, sans-serif`;
+      }
+    }
     if (u.state === 'planning') {
       ctx.fillStyle = '#ffe68c';
       ctx.fillText('…', sx + size, sy - size);
@@ -443,6 +474,7 @@ export function pickUnit(sim, view, sx, sy, side) {
   let best = null, bd = Infinity;
   const sprites = cam.zoom >= SPRITE_ZOOM;
   for (const u of sim.units) {
+    if (u.dead) continue;
     if (side && u.side !== side) continue;
     const ux = (u.x - cam.x) * cam.zoom + canvas.width / 2;
     let uy = (u.y - cam.y) * cam.zoom + canvas.height / 2;
@@ -487,6 +519,19 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui) {
     const [x, y] = toS(s.x, s.y);
     const isSel = ui.soldier && ui.soldier.unitId === u.id && ui.soldier.idx === s.idx;
     const pose = s.pose || 'stand';
+    if (s.dead) {
+      // Погибший: тёмное пятно и неподвижный силуэт
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(s.heading + 0.6);
+      ctx.fillStyle = 'rgba(90,20,15,0.55)';
+      ctx.beginPath(); ctx.ellipse(-0.3 * m, 0.1 * m, 0.7 * m, 0.45 * m, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#2e3026';
+      ctx.beginPath(); ctx.ellipse(-0.5 * m, 0, 0.6 * m, 0.22 * m, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0.12 * m, 0, 0.14 * m, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      continue;
+    }
     ctx.globalAlpha = s.under ? (ui.underground ? 0.95 : 0.25) : 1;
     if (isSel || selUnit) {
       ctx.beginPath();
@@ -542,6 +587,17 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui) {
     ctx.beginPath();
     ctx.arc(x, y, Math.max(1.2 * dpr, 0.07 * m), 0, Math.PI * 2);
     ctx.fill();
+    if (s.wounded) {
+      // Ранен: красный крест (жёлтый — легко, красный — тяжело)
+      const c = s.wounded === 2 ? '#ff3b30' : '#ffb020';
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 2 * dpr;
+      const r = 0.35 * m;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y - r - 3 * dpr); ctx.lineTo(x + r, y - r + 3 * dpr);
+      ctx.moveTo(x + r - 3 * dpr, y - r); ctx.lineTo(x + r + 3 * dpr, y - r);
+      ctx.stroke();
+    }
     if (s.mode === 'dig' && z > 3) {
       const t = (performance.now() / 300 + s.idx) % 1;
       ctx.strokeStyle = '#8a7a5a';
@@ -569,4 +625,71 @@ export function pickSoldier(sim, view, sx, sy, ui) {
     }
   }
   return best;
+}
+
+// ---------- Снаряды в полёте, выстрелы, разрывы и осколки ----------
+export function drawArtillery(ctx, sim, view) {
+  const { cam, canvas, dpr } = view;
+  const z = cam.zoom;
+  const toS = (x, y) => [(x - cam.x) * z + canvas.width / 2, (y - cam.y) * z + canvas.height / 2];
+  const now = performance.now();
+  // Снаряды: точка по дуге (высота условно — смещение вверх на экране)
+  for (const sh of sim.art.shells) {
+    const p = Math.max(0, Math.min(1, (sim.time - sh.tLaunch) / (sh.tImpact - sh.tLaunch)));
+    const [ax, ay] = toS(sh.x0, sh.y0), [bx, by] = toS(sh.x, sh.y);
+    const arc = Math.min(160 * dpr, Math.hypot(bx - ax, by - ay) * 0.25);
+    const pos = (q) => [ax + (bx - ax) * q, ay + (by - ay) * q - Math.sin(Math.PI * q) * arc];
+    const [x, y] = pos(p);
+    const [tx, ty] = pos(Math.max(0, p - 0.04));
+    ctx.strokeStyle = 'rgba(255,220,160,0.5)';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillStyle = '#fff2c0';
+    ctx.beginPath(); ctx.arc(x, y, 2 * dpr, 0, Math.PI * 2); ctx.fill();
+    // Метка точки падения
+    ctx.strokeStyle = 'rgba(255,110,80,0.6)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath(); ctx.arc(bx, by, 5 * dpr, 0, Math.PI * 2); ctx.stroke();
+  }
+  const fx = sim.art.effects;
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const e = fx[i];
+    const t = (now - e.t) / 1000;
+    if (t > 4) { fx.splice(i, 1); continue; }
+    const [x, y] = toS(e.x, e.y);
+    if (e.type === 'muzzle') {
+      if (t > 0.25) continue;
+      ctx.fillStyle = `rgba(255,200,90,${1 - t * 4})`;
+      ctx.beginPath(); ctx.arc(x, y, (6 + t * 30) * dpr, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    const cal = e.caliber;
+    const R = (cal === 82 ? 4 : cal === 122 ? 7 : 9) * z;
+    // Дым
+    const smokeA = t < 0.2 ? t * 3 : Math.max(0, 0.6 - (t - 0.2) * 0.16);
+    ctx.fillStyle = e.air ? `rgba(200,200,195,${smokeA})` : `rgba(70,62,52,${smokeA})`;
+    ctx.beginPath(); ctx.arc(x + t * 6 * z, y - t * 3 * z, Math.max(6 * dpr, R * (1 + t * 0.8)), 0, Math.PI * 2); ctx.fill();
+    // Вспышка
+    if (t < 0.25) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(10 * dpr, R * 1.6));
+      g.addColorStop(0, `rgba(255,245,200,${1 - t * 4})`);
+      g.addColorStop(0.4, `rgba(255,160,60,${0.9 - t * 3.6})`);
+      g.addColorStop(1, 'rgba(255,120,40,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, Math.max(10 * dpr, R * 1.6), 0, Math.PI * 2); ctx.fill();
+    }
+    // Осколки: лучи, обрывающиеся на стенах
+    if (t < 0.45 && e.rays) {
+      const k = t / 0.45;
+      ctx.strokeStyle = `rgba(255,210,140,${0.85 * (1 - k)})`;
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      for (const [a, L] of e.rays) {
+        const r0 = L * Math.max(0, k - 0.25) * z, r1 = L * k * z;
+        ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
+        ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
+      }
+      ctx.stroke();
+    }
+  }
 }

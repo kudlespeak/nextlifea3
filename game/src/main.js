@@ -1,98 +1,76 @@
-import { generateWorld, addCraterCluster, addBurn } from './mapgen.js';
+import { generateWorld } from './mapgen.js';
 import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
-import { Sim, UNIT_TYPES, SIDES } from './sim/units.js';
+import { Sim, SIDES, POSES } from './sim/units.js';
 import { T_NAMES } from './sim/nav.js';
-import { drawUnits, drawSymbol, emitDust, pickUnit, pickSoldier } from './render/units.js';
+import { CALIBERS } from './sim/artillery.js';
+import { drawUnits, drawSymbol, emitDust, pickUnit, pickSoldier, drawArtillery } from './render/units.js';
 import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js';
 import { digTrench } from './forts.js';
 import { drawInteriors, buildingAtScreen } from './render/interiors.js';
-import { POSES } from './sim/units.js';
 
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed')) || 1337;
+const $ = (id) => document.getElementById(id);
 
-const canvas = document.getElementById('map');
+const canvas = $('map');
 const ctx = canvas.getContext('2d');
-const mini = document.getElementById('minimap');
+const mini = $('minimap');
 const mctx = mini.getContext('2d');
-const hud = {
-  coords: document.getElementById('coords'),
-  scale: document.getElementById('scale-bar'),
-  scaleLabel: document.getElementById('scale-label'),
-  info: document.getElementById('info'),
-  strike: document.getElementById('btn-strike'),
-  labels: document.getElementById('btn-labels'),
-  newMap: document.getElementById('btn-new'),
-  loading: document.getElementById('loading'),
-  clock: document.getElementById('clock'),
-  speeds: document.querySelectorAll('#timebar [data-speed]'),
-  sel: document.getElementById('selpanel'),
-  selList: document.getElementById('sel-list'),
-  selTitle: document.getElementById('sel-title'),
-  stealth: document.getElementById('btn-stealth'),
-  stop: document.getElementById('btn-stop'),
-  side: document.getElementById('btn-side'),
-  forts: document.getElementById('btn-forts'),
-  dig: document.getElementById('btn-dig'),
-  clear: document.getElementById('btn-clear'),
-  toast: document.getElementById('toast'),
-  task: document.getElementById('sel-task'),
-  basement: document.getElementById('btn-basement'),
-  interior: document.getElementById('btn-interior'),
-  stances: document.querySelectorAll('#stances [data-stance]'),
-};
-let interiorsForce = false;
 
 const world = generateWorld(seed);
 const chunks = new ChunkCache(world);
-const strikeRng = new Rng(seed ^ 0x5eed);
 const sim = new Sim(world);
 sim.deployDefault(new Rng(seed ^ 0xa11));
+const digRng = new Rng(seed ^ 0xd16);
 
-// Состояние интерфейса управления
+// ================= Состояние =================
 const ui = { selected: new Set(), box: null, marks: [], soldier: null, underground: false };
-let orderMode = null; // 'clear' — следующий приказ = зачистка траншеи
+let orderMode = null; // null | move | occupy | clear | basement | fire | dig | strike
 let controlSide = 'blue';
 let stealthOrders = false;
 let timeScale = 5;
 let paused = false;
 let fortView = 'off';
-let dig = null; // { points: [], cursor } — режим рытья траншеи
-const digRng = new Rng(seed ^ 0xd16);
-
-let dpr = window.devicePixelRatio || 1;
-const cam = { x: world.W / 2, y: world.H / 2, zoom: 0.3 }; // zoom — device px на метр
+let interiorsForce = false;
 let showLabels = true;
-let strikeMode = false;
-let dirty = true;
+let dig = null; // { points, cursor }
+const fireOpts = { rounds: 3, fuse: 'ground' };
+let dpr = window.devicePixelRatio || 1;
+const cam = { x: world.W / 2, y: world.H / 2, zoom: 1 };
 let mouse = null;
+let minZoom = 0.05;
+const MAX_ZOOM = 28;
 
-hud.info.textContent = `seed ${seed} · карта ${world.genTime.toFixed(0)} мс · навигация ${sim.navTime.toFixed(0)} мс · деревьев ${world.trees.count.toLocaleString('ru')} · зданий ${world.buildings.items.length.toLocaleString('ru')}`;
+$('info').textContent = `seed ${seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.genTime.toFixed(0)} мс · деревьев ${world.trees.count.toLocaleString('ru')} · зданий ${world.buildings.items.length.toLocaleString('ru')}`;
 
-// ---------- Размеры и камера ----------
+// ================= Камера =================
 function resize() {
   dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(innerWidth * dpr);
   canvas.height = Math.round(innerHeight * dpr);
   minZoom = Math.min(canvas.width / world.W, canvas.height / world.H) * 0.9;
   cam.zoom = Math.max(cam.zoom, minZoom);
-  dirty = true;
 }
-let minZoom = 0.1;
-const MAX_ZOOM = 16;
 addEventListener('resize', resize);
 resize();
-cam.zoom = minZoom * 1.1;
+
+// Старт — у своих позиций на передовой, крупно
+{
+  const own = sim.units.filter((u) => u.side === controlSide);
+  const front = own.find((u) => u.label.includes('позиции')) || own[0];
+  const cx = own.reduce((a, u) => a + u.x, 0) / own.length;
+  cam.x = (front.x * 2 + cx) / 3;
+  cam.y = (front.y * 2 + own.reduce((a, u) => a + u.y, 0) / own.length) / 3;
+  cam.zoom = 1.1 * dpr;
+}
 
 function clampCam() {
   cam.zoom = Math.min(MAX_ZOOM, Math.max(minZoom, cam.zoom));
   cam.x = Math.min(world.W, Math.max(0, cam.x));
   cam.y = Math.min(world.H, Math.max(0, cam.y));
 }
-
 const screenToWorld = (sx, sy) => [cam.x + (sx * dpr - canvas.width / 2) / cam.zoom, cam.y + (sy * dpr - canvas.height / 2) / cam.zoom];
-
 function zoomAt(sx, sy, factor) {
   const [wx, wy] = screenToWorld(sx, sy);
   cam.zoom *= factor;
@@ -101,180 +79,50 @@ function zoomAt(sx, sy, factor) {
   cam.x += wx - nx;
   cam.y += wy - ny;
   clampCam();
-  dirty = true;
+}
+function focus(x, y, zoom) {
+  cam.x = x; cam.y = y;
+  if (zoom) cam.zoom = Math.max(cam.zoom, zoom);
+  clampCam();
 }
 
-// ---------- Ввод: мышь, колесо, тач ----------
-// ЛКМ — выбрать отряд / тянуть карту; Shift+ЛКМ — рамка; ПКМ — приказ.
-// На сенсорном экране: тап по отряду — выбор, тап по земле — приказ выбранным.
 const view = { cam, canvas, get dpr() { return dpr; } };
-const selectedUnits = () => sim.units.filter((u) => ui.selected.has(u.id));
-let drag = null;
+const selectedUnits = () => sim.units.filter((u) => ui.selected.has(u.id) && !u.dead);
+
+// ================= Ввод =================
+let drag = null, pinch = null;
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
+  closeMenu();
   canvas.setPointerCapture(e.pointerId);
   if (e.button === 2) {
-    if (dig) finishDig();
+    if (orderMode === 'dig') finishDig();
     else orderAt(e.clientX, e.clientY);
     return;
   }
-  const box = e.shiftKey && !strikeMode;
-  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, box, touch: e.pointerType === 'touch' };
+  const box = e.shiftKey && !orderMode;
+  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, box, touch: e.pointerType === 'touch' };
   if (box) ui.box = { x0: e.clientX * dpr, y0: e.clientY * dpr, x1: e.clientX * dpr, y1: e.clientY * dpr };
 });
 canvas.addEventListener('pointermove', (e) => {
   mouse = [e.clientX, e.clientY];
   if (dig) dig.cursor = screenToWorld(e.clientX, e.clientY);
-  if (pinch) return;
-  if (drag && drag.id === e.pointerId) {
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    drag.moved += Math.abs(dx) + Math.abs(dy);
-    drag.x = e.clientX;
-    drag.y = e.clientY;
-    if (drag.box) {
-      ui.box.x1 = e.clientX * dpr;
-      ui.box.y1 = e.clientY * dpr;
-    } else {
-      cam.x -= (dx * dpr) / cam.zoom;
-      cam.y -= (dy * dpr) / cam.zoom;
-      clampCam();
-    }
-  }
-  dirty = true;
+  updateHint();
+  if (pinch || !drag || drag.id !== e.pointerId) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.box) { ui.box.x1 = e.clientX * dpr; ui.box.y1 = e.clientY * dpr; }
+  else { cam.x -= (dx * dpr) / cam.zoom; cam.y -= (dy * dpr) / cam.zoom; clampCam(); }
 });
 canvas.addEventListener('pointerup', (e) => {
   if (!drag || drag.id !== e.pointerId) return;
-  if (drag.box) {
-    boxSelect(ui.box, e.ctrlKey || e.metaKey);
-    ui.box = null;
-  } else if (drag.moved < 6) {
-    if (strikeMode) strike(...screenToWorld(e.clientX, e.clientY));
-    else if (dig) dig.points.push(screenToWorld(e.clientX, e.clientY));
-    else clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch);
-  }
+  if (drag.box) { boxSelect(ui.box, e.ctrlKey || e.metaKey); ui.box = null; }
+  else if (drag.moved < 6) clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch);
   drag = null;
 });
-canvas.addEventListener('pointerleave', () => { mouse = null; dirty = true; });
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  zoomAt(e.clientX, e.clientY, Math.pow(1.0015, -e.deltaY));
-}, { passive: false });
-
-function clickAt(cx, cy, additive, touch) {
-  // Вблизи можно выбрать отдельного бойца выделенного отделения
-  const sol = pickSoldier(sim, view, cx * dpr, cy * dpr, ui);
-  if (sol) {
-    ui.soldier = sol;
-    refreshPanel();
-    return;
-  }
-  if (orderMode && ui.selected.size) { orderAt(cx, cy); return; }
-  ui.soldier = null;
-  const u = pickUnit(sim, view, cx * dpr, cy * dpr, controlSide);
-  if (u) {
-    if (additive) ui.selected.has(u.id) ? ui.selected.delete(u.id) : ui.selected.add(u.id);
-    else { ui.selected.clear(); ui.selected.add(u.id); }
-  } else if (touch && ui.selected.size) orderAt(cx, cy);
-  else if (!additive) ui.selected.clear();
-  refreshPanel();
-}
-
-function boxSelect(b, additive) {
-  if (!additive) ui.selected.clear();
-  const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
-  for (const u of sim.units) {
-    if (u.side !== controlSide) continue;
-    const sx = (u.x - cam.x) * cam.zoom + canvas.width / 2, sy = (u.y - cam.y) * cam.zoom + canvas.height / 2;
-    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) ui.selected.add(u.id);
-  }
-  refreshPanel();
-}
-
-function orderAt(cx, cy) {
-  const units = selectedUnits();
-  if (!units.length) return;
-  const [x, y] = screenToWorld(cx, cy);
-  ui.marks.push({ x, y, t: performance.now(), stealth: stealthOrders });
-  // Приказ одному бойцу
-  if (ui.soldier) {
-    const u = sim.units.find((q) => q.id === ui.soldier.unitId);
-    if (u) { sim.orderSoldier(u, ui.soldier.idx, x, y); return; }
-  }
-  const foot = units.filter((u) => u.soldiers);
-  const rest = units.filter((u) => !u.soldiers);
-  const bld = buildingAtScreen(world, view, cx * dpr, cy * dpr);
-  if (orderMode === 'basement') {
-    setOrderMode(null);
-    // Здание под курсором или ближайшее с подвалом
-    let target = bld?.interior?.basement ? bld : null;
-    if (!target) {
-      let bd = 150;
-      for (const b of world.buildings.query({ x0: x - 150, y0: y - 150, x1: x + 150, y1: y + 150 })) {
-        if (!b.interior?.basement) continue;
-        const d = Math.hypot(b.x - x, b.y - y);
-        if (d < bd) { bd = d; target = b; }
-      }
-    }
-    if (!target) { toast('Рядом нет подвалов и погребов'); return; }
-    for (const u of foot) sim.orderBasement(u, target);
-    toast(`В укрытие: ${target.interior.basement.kind}`);
-    return;
-  }
-  // ПКМ по зданию — пехота занимает его (у окон), техника встаёт рядом
-  if (bld && foot.length) {
-    for (const u of foot) sim.orderGarrison(u, bld);
-    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
-    toast(`Занять здание${bld.interior.floors > 1 ? ` (${bld.interior.floors} эт.)` : ''}: ${foot.length} отд.`);
-    return;
-  }
-  if (orderMode === 'clear') {
-    setOrderMode(null);
-    let ok = 0;
-    for (const u of foot) if (sim.orderClear(u, x, y)) ok++;
-    toast(ok ? `Зачистка траншеи: ${ok} отд.` : 'Укажите точку на траншее');
-    return;
-  }
-  // Клик по траншее — пехота занимает позицию, техника просто едет рядом
-  sim.trenches.ensure();
-  const onTrench = sim.trenches.nearest(x, y, 6, true) >= 0;
-  if (onTrench && foot.length) {
-    foot.forEach((u, i) => {
-      // Несколько отделений — занимают соседние участки
-      const off = (i - (foot.length - 1) / 2) * 45;
-      const node = sim.trenches.nodes[sim.trenches.nearest(x, y, 6, true)];
-      const it = node.item;
-      let tx = x, ty = y;
-      if (it?.line && foot.length > 1) {
-        const a = it.line[0], b = it.line[it.line.length - 1];
-        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-        tx += ((b[0] - a[0]) / L) * off;
-        ty += ((b[1] - a[1]) / L) * off;
-      }
-      if (!sim.orderOccupy(u, tx, ty)) sim.orderOccupy(u, x, y);
-    });
-    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
-    toast(`Занять траншею: ${foot.length} отд.`);
-    return;
-  }
-  sim.orderMove(units, x, y, { stealth: stealthOrders });
-}
-
-function setOrderMode(m) {
-  orderMode = m;
-  hud.clear.classList.toggle('active', m === 'clear');
-  hud.basement.classList.toggle('active', m === 'basement');
-  canvas.style.cursor = m ? 'crosshair' : 'grab';
-}
-
-let toastTimer = 0;
-function toast(text) {
-  hud.toast.textContent = text;
-  hud.toast.style.opacity = 1;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (hud.toast.style.opacity = 0), 3500);
-}
-
-let pinch = null;
+canvas.addEventListener('pointerleave', () => { mouse = null; $('hint').style.display = 'none'; });
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.pow(1.0015, -e.deltaY)); }, { passive: false });
 canvas.addEventListener('touchstart', (e) => {
   if (e.touches.length === 2) {
     const [a, b] = e.touches;
@@ -292,150 +140,556 @@ canvas.addEventListener('touchmove', (e) => {
 }, { passive: true });
 canvas.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinch = null; });
 
+function clickAt(cx, cy, additive, touch) {
+  const [x, y] = screenToWorld(cx, cy);
+  if (orderMode === 'strike') { strikeTest(x, y); return; }
+  if (orderMode === 'dig') { dig.points.push([x, y]); updateHint(); return; }
+  if (orderMode && ui.selected.size) { orderAt(cx, cy); return; }
+  // Вблизи можно выбрать отдельного бойца выделенного отделения
+  const sol = pickSoldier(sim, view, cx * dpr, cy * dpr, ui);
+  if (sol) { ui.soldier = sol; buildCard(); return; }
+  const u = pickUnit(sim, view, cx * dpr, cy * dpr, controlSide);
+  if (u) {
+    ui.soldier = null;
+    if (additive) ui.selected.has(u.id) ? ui.selected.delete(u.id) : ui.selected.add(u.id);
+    else { ui.selected.clear(); ui.selected.add(u.id); }
+  } else if (touch && ui.selected.size) { orderAt(cx, cy); return; }
+  else if (!additive) { ui.selected.clear(); ui.soldier = null; }
+  selectionChanged();
+}
+
+function boxSelect(b, additive) {
+  if (!additive) ui.selected.clear();
+  ui.soldier = null;
+  const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+  for (const u of sim.units) {
+    if (u.side !== controlSide || u.dead) continue;
+    const sx = (u.x - cam.x) * cam.zoom + canvas.width / 2, sy = (u.y - cam.y) * cam.zoom + canvas.height / 2;
+    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) ui.selected.add(u.id);
+  }
+  selectionChanged();
+}
+
+// ================= Приказы =================
+function orderAt(cx, cy) {
+  const units = selectedUnits();
+  if (!units.length) return;
+  const [x, y] = screenToWorld(cx, cy);
+  const mode = orderMode;
+  ui.marks.push({ x, y, t: performance.now(), stealth: stealthOrders });
+  if (mode === 'fire') {
+    const guns = units.filter((u) => u.def.caliber);
+    for (const t of sim.art.orderFire(guns, x, y, fireOpts)) log(t);
+    setOrderMode(null);
+    return;
+  }
+  if (ui.soldier && !mode) {
+    const u = sim.units.find((q) => q.id === ui.soldier.unitId);
+    if (u) { sim.orderSoldier(u, ui.soldier.idx, x, y); return; }
+  }
+  const foot = units.filter((u) => u.soldiers);
+  const rest = units.filter((u) => !u.soldiers);
+  const bld = buildingAtScreen(world, view, cx * dpr, cy * dpr);
+  if (mode) setOrderMode(null);
+  if (mode === 'move') { sim.orderMove(units, x, y, { stealth: stealthOrders }); return; }
+  if (mode === 'basement') {
+    let target = bld?.interior?.basement ? bld : null;
+    if (!target) {
+      let bd = 150;
+      for (const b of world.buildings.query({ x0: x - 150, y0: y - 150, x1: x + 150, y1: y + 150 })) {
+        if (!b.interior?.basement) continue;
+        const d = Math.hypot(b.x - x, b.y - y);
+        if (d < bd) { bd = d; target = b; }
+      }
+    }
+    if (!target) { log('Рядом нет подвалов и погребов'); return; }
+    for (const u of foot) sim.orderBasement(u, target);
+    log(`Приказ: укрыться (${target.interior.basement.kind}) — ${foot.map((u) => u.label).join(', ')}`);
+    return;
+  }
+  if (mode === 'clear') {
+    let ok = 0;
+    for (const u of foot) if (sim.orderClear(u, x, y)) ok++;
+    log(ok ? `Приказ: зачистить траншею — ${ok} отд.` : 'Для зачистки укажите точку на траншее');
+    return;
+  }
+  // Здание или траншея под курсором — занять; иначе — двигаться
+  if (bld && foot.length) {
+    for (const u of foot) sim.orderGarrison(u, bld);
+    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
+    log(`Приказ: занять здание${bld.interior.floors > 1 ? ` (${bld.interior.floors} эт.)` : ''} — ${foot.map((u) => u.label).join(', ')}`);
+    return;
+  }
+  sim.trenches.ensure();
+  const tn = sim.trenches.nearest(x, y, 6, true);
+  if (tn >= 0 && foot.length) {
+    const it = sim.trenches.nodes[tn].item;
+    foot.forEach((u, i) => {
+      let tx = x, ty = y;
+      if (it?.line && foot.length > 1) {
+        const a = it.line[0], b = it.line[it.line.length - 1];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const off = (i - (foot.length - 1) / 2) * 45;
+        tx += ((b[0] - a[0]) / L) * off; ty += ((b[1] - a[1]) / L) * off;
+      }
+      if (!sim.orderOccupy(u, tx, ty)) sim.orderOccupy(u, x, y);
+    });
+    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
+    log(`Приказ: занять траншею — ${foot.map((u) => u.label).join(', ')}`);
+    return;
+  }
+  if (mode === 'occupy') { log('Укажите траншею или здание'); return; }
+  sim.orderMove(units, x, y, { stealth: stealthOrders });
+}
+
+function setOrderMode(m) {
+  if (m === 'dig') dig = { points: [], cursor: null };
+  else if (orderMode === 'dig' && m !== 'dig') dig = null;
+  orderMode = m;
+  if (m === 'dig' && fortView === 'off') cycleFortView();
+  canvas.style.cursor = m ? 'crosshair' : 'grab';
+  updateCommands();
+  updateHint();
+}
+
+function finishDig() {
+  if (dig && dig.points.length >= 2) {
+    const diggers = selectedUnits().filter((u) => u.def.dig);
+    if (diggers.length && !dig.test) {
+      const job = sim.orderDig(diggers, dig.points);
+      const rate = diggers.reduce((a, u) => a + u.def.dig, 0);
+      log(`Приказ: рыть траншею ${Math.round(job.total)} м (${diggers.map((u) => u.label).join(', ')}) · ~${fmtEta((job.total / rate) * 3600)}`);
+    } else {
+      const created = digTrench(world, digRng, dig.points, controlSide, SIDES[controlSide].enemy);
+      for (const c of created) chunks.invalidate(c.bbox);
+      sim.trenches.ensure();
+      log('Траншея создана мгновенно (тест)');
+    }
+  }
+  setOrderMode(null);
+}
+
+function strikeTest(x, y) {
+  sim.art.explode(x, y, 152, fireOpts.fuse, null);
+}
+
+// ================= Клавиатура =================
 const keys = new Set();
 addEventListener('keydown', (e) => {
-  keys.add(e.key.toLowerCase());
+  if (e.target.tagName === 'INPUT') return;
+  keys.add(e.code);
   if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.25);
   if (e.key === '-') zoomAt(innerWidth / 2, innerHeight / 2, 0.8);
-  if (e.code === 'KeyB') toggleStrike();
-  if (e.code === 'KeyL') toggleLabels();
-  if (e.code === 'KeyG') toggleStealth();
-  if (e.code === 'KeyX') { sim.stop(selectedUnits()); refreshPanel(); }
-  if (e.code === 'Escape') {
-    if (dig) toggleDig();
+  const c = e.code;
+  if (c === 'Escape') {
+    if ($('help').classList.contains('show')) toggleHelp(false);
     else if (orderMode) setOrderMode(null);
-    else if (ui.soldier) { ui.soldier = null; refreshPanel(); }
-    else { ui.selected.clear(); refreshPanel(); }
+    else if (ui.soldier) { ui.soldier = null; buildCard(); }
+    else { ui.selected.clear(); selectionChanged(); }
+    return;
   }
-  if (e.code === 'KeyC') setOrderMode(orderMode === 'clear' ? null : 'clear');
-  if (e.code === 'KeyV') setOrderMode(orderMode === 'basement' ? null : 'basement');
-  if (e.code === 'KeyI') toggleInterior();
-  const stanceKeys = { KeyZ: 'stand', KeyH: 'crouch', KeyP: 'prone', KeyN: 'auto' };
-  if (stanceKeys[e.code]) setStance(stanceKeys[e.code]);
-  if (e.code === 'KeyO') cycleFortView();
-  if (e.code === 'KeyT') toggleDig();
-  if (e.code === 'Enter' && dig) finishDig();
-  if (e.code === 'Space') { e.preventDefault(); setSpeed(paused ? timeScale : 0); }
-  if (e.code === 'Tab') { e.preventDefault(); switchSide(); }
-  if (e.code === 'KeyA' && (e.ctrlKey || e.metaKey)) {
+  if (c === 'F1') { e.preventDefault(); toggleHelp(); return; }
+  if (c === 'Space') { e.preventDefault(); setSpeed(paused ? timeScale : 0); return; }
+  if (c === 'Tab') { e.preventDefault(); switchSide(); return; }
+  if (c === 'Enter' && orderMode === 'dig') { finishDig(); return; }
+  if (c === 'KeyA' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
-    for (const u of sim.units) if (u.side === controlSide) ui.selected.add(u.id);
-    refreshPanel();
+    for (const u of sim.units) if (u.side === controlSide && !u.dead) ui.selected.add(u.id);
+    selectionChanged();
+    return;
   }
   const speedKeys = { Digit1: 1, Digit2: 5, Digit3: 20, Digit4: 60 };
-  if (speedKeys[e.code]) setSpeed(speedKeys[e.code]);
+  if (speedKeys[c]) { setSpeed(speedKeys[c]); return; }
+  if (c === 'KeyL') toggleLabels();
+  if (c === 'KeyO') cycleFortView();
+  if (c === 'KeyI') toggleInterior();
+  if (c === 'KeyB') setOrderMode(orderMode === 'strike' ? null : 'strike');
+  // Команды панели по горячим клавишам
+  for (const cmd of COMMANDS) if (cmd.key === c && cmd.when(selectedUnits())) { cmd.run(); return; }
+  for (const st of STANCES) if (st.key === c && selectedUnits().some((u) => u.soldiers)) { setStance(st.id); return; }
 });
-addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+addEventListener('keyup', (e) => keys.delete(e.code));
 
-function toggleStrike() {
-  if (dig) toggleDig();
-  strikeMode = !strikeMode;
-  hud.strike.classList.toggle('active', strikeMode);
-  canvas.style.cursor = strikeMode ? 'crosshair' : 'grab';
+// ================= Панель команд =================
+const ICON = {
+  move: '<path d="M4 12h14M13 6l6 6-6 6"/>',
+  occupy: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  clear: '<path d="M3 12h11M10 7l5 5-5 5M19 5v14"/>',
+  basement: '<path d="M3 6h5v4h4v4h4v4h5"/><path d="M17 3v6M14 6l3 3 3-3"/>',
+  dig: '<path d="M14 3l7 7M17.5 6.5L9 15M9 15l-5.5 5.5M6 13l5 5"/>',
+  fire: '<circle cx="12" cy="12" r="6"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
+  stealth: '<path d="M3 3l18 18M10.6 5.1A9 9 0 0 1 12 5c5 0 9 4.5 10 7-.5 1.2-1.4 2.6-2.6 3.8M6.2 6.3C4.2 7.7 2.7 9.8 2 12c1 2.5 5 7 10 7 1.7 0 3.3-.5 4.7-1.3"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
+};
+const svg = (p) => `<svg class="i" viewBox="0 0 24 24">${p}</svg>`;
+const has = (units, f) => units.some(f);
+const COMMANDS = [
+  { id: 'move', label: 'Идти', key: 'KeyM', icon: 'move', when: (u) => u.length > 0, run: () => setOrderMode(orderMode === 'move' ? null : 'move'), active: () => orderMode === 'move', tip: 'Двигаться в точку (или просто ПКМ по земле)' },
+  { id: 'occupy', label: 'Занять', key: 'KeyE', icon: 'occupy', when: (u) => has(u, (q) => q.soldiers), run: () => setOrderMode(orderMode === 'occupy' ? null : 'occupy'), active: () => orderMode === 'occupy', tip: 'Занять траншею или здание (или ПКМ по ним)' },
+  { id: 'clear', label: 'Зачистить', key: 'KeyC', icon: 'clear', when: (u) => has(u, (q) => q.soldiers), run: () => setOrderMode(orderMode === 'clear' ? null : 'clear'), active: () => orderMode === 'clear', tip: 'Зачистить траншею до указанной точки' },
+  { id: 'basement', label: 'В подвал', key: 'KeyV', icon: 'basement', when: (u) => has(u, (q) => q.soldiers), run: () => setOrderMode(orderMode === 'basement' ? null : 'basement'), active: () => orderMode === 'basement', tip: 'Укрыться в подвале / погребе' },
+  { id: 'dig', label: 'Копать', key: 'KeyT', icon: 'dig', when: (u) => has(u, (q) => q.def.dig), run: () => setOrderMode(orderMode === 'dig' ? null : 'dig'), active: () => orderMode === 'dig', tip: 'Рыть траншею: клики — точки, ПКМ/Enter — копать' },
+  { id: 'fire', label: 'Огонь', key: 'KeyF', icon: 'fire', when: (u) => has(u, (q) => q.def.caliber), run: () => setOrderMode(orderMode === 'fire' ? null : 'fire'), active: () => orderMode === 'fire', tip: 'Огонь по точке' },
+  { id: 'stealth', label: 'Скрытно', key: 'KeyG', icon: 'stealth', when: (u) => u.length > 0, run: () => { stealthOrders = !stealthOrders; updateCommands(); }, active: () => stealthOrders, tip: 'Маршрут вдоль посадок и балок, избегая открытых мест' },
+  { id: 'stop', label: 'Стоп', key: 'KeyX', icon: 'stop', when: (u) => u.length > 0, run: () => { sim.stop(selectedUnits()); for (const u of selectedUnits()) u.fire = null; }, active: () => false, tip: 'Остановиться, отменить задачу и огонь' },
+];
+const KEYNAME = (code) => code.replace('Key', '').replace('Digit', '');
+const STANCES = [
+  { id: 'auto', label: 'Авто', key: 'KeyN' },
+  { id: 'stand', label: 'Стоя', key: 'KeyZ' },
+  { id: 'crouch', label: 'Пригнуться', key: 'KeyH' },
+  { id: 'prone', label: 'Лёжа', key: 'KeyP' },
+];
+
+function buildCommands() {
+  const units = selectedUnits();
+  const box = $('cmds');
+  box.innerHTML = '';
+  for (const c of COMMANDS) {
+    if (!c.when(units)) continue;
+    const b = document.createElement('button');
+    b.className = 'cmd';
+    b.dataset.cmd = c.id;
+    b.title = c.tip;
+    b.innerHTML = `${svg(ICON[c.icon])}<span>${c.label}</span><kbd>${KEYNAME(c.key)}</kbd>`;
+    b.onclick = () => c.run();
+    box.appendChild(b);
+  }
+  // Опции: позы, параметры огня
+  const opts = $('opts');
+  opts.innerHTML = '';
+  if (units.some((u) => u.soldiers)) {
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    seg.innerHTML = '<span>Поза</span>';
+    for (const st of STANCES) {
+      const b = document.createElement('button');
+      b.dataset.stance = st.id;
+      b.innerHTML = `${st.label} <kbd>${KEYNAME(st.key)}</kbd>`;
+      b.onclick = () => setStance(st.id);
+      seg.appendChild(b);
+    }
+    opts.appendChild(seg);
+  }
+  if (units.some((u) => u.def.caliber)) {
+    const r = document.createElement('div');
+    r.className = 'seg';
+    r.innerHTML = '<span>Выстрелов</span>';
+    for (const n of [1, 3, 6, 10]) {
+      const b = document.createElement('button');
+      b.dataset.rounds = n;
+      b.textContent = n;
+      b.onclick = () => { fireOpts.rounds = n; updateCommands(); };
+      r.appendChild(b);
+    }
+    opts.appendChild(r);
+    const f = document.createElement('div');
+    f.className = 'seg';
+    f.innerHTML = '<span>Взрыватель</span>';
+    for (const [id, name] of [['ground', 'Контакт'], ['air', 'Воздушный подрыв']]) {
+      const b = document.createElement('button');
+      b.dataset.fuse = id;
+      b.textContent = name;
+      b.onclick = () => { fireOpts.fuse = id; updateCommands(); };
+      f.appendChild(b);
+    }
+    opts.appendChild(f);
+  }
+  updateCommands();
 }
-function toggleLabels() {
-  showLabels = !showLabels;
-  hud.labels.classList.toggle('active', showLabels);
-  dirty = true;
+
+function updateCommands() {
+  for (const b of document.querySelectorAll('#cmds .cmd')) {
+    const c = COMMANDS.find((q) => q.id === b.dataset.cmd);
+    b.classList.toggle('active', !!c?.active());
+  }
+  const units = selectedUnits();
+  const sd = currentSoldier();
+  const cur = sd ? sd.stance : units.find((u) => u.soldiers)?.soldiers.find((q) => !q.dead)?.stance;
+  for (const b of document.querySelectorAll('[data-stance]')) b.classList.toggle('active', b.dataset.stance === cur);
+  for (const b of document.querySelectorAll('[data-rounds]')) b.classList.toggle('active', Number(b.dataset.rounds) === fireOpts.rounds);
+  for (const b of document.querySelectorAll('[data-fuse]')) b.classList.toggle('active', b.dataset.fuse === fireOpts.fuse);
 }
-function toggleStealth() {
-  stealthOrders = !stealthOrders;
-  hud.stealth.classList.toggle('active', stealthOrders);
+
+function setStance(st) {
+  const sd = currentSoldier();
+  if (sd) sim.setStance(sim.units.find((q) => q.id === ui.soldier.unitId), st, ui.soldier.idx);
+  else for (const u of selectedUnits()) sim.setStance(u, st);
+  updateCommands();
 }
-function switchSide() {
-  controlSide = controlSide === 'blue' ? 'red' : 'blue';
-  ui.selected.clear();
-  hud.side.textContent = `Сторона: ${SIDES[controlSide].name}`;
-  hud.side.style.color = SIDES[controlSide].fill;
-  refreshPanel();
+
+const currentSoldier = () => (ui.soldier ? sim.units.find((q) => q.id === ui.soldier.unitId)?.soldiers[ui.soldier.idx] : null);
+
+// ================= Карточка выбранного =================
+const STATE_TEXT = { idle: 'на месте', planning: 'прокладывает маршрут', moving: 'в движении' };
+const TASK_TEXT = { occupy: 'занимает позицию', clear: 'зачищает траншею', dig: 'роет траншею', manual: 'ручное управление', garrison: 'занимает здание', basement: 'уходит в укрытие' };
+
+function selectionChanged() {
+  if (ui.soldier && !ui.selected.has(ui.soldier.unitId)) ui.soldier = null;
+  buildCard();
+  updateRoster();
 }
+
+function buildCard() {
+  const units = selectedUnits();
+  const card = $('card');
+  card.classList.toggle('show', units.length > 0);
+  if (!units.length) return;
+  const sc = $('card-sym').getContext('2d');
+  sc.clearRect(0, 0, 120, 84);
+  drawSymbol(sc, 60, 42, 40, units[0].side, units[0].def.symbol);
+  const one = units.length === 1 ? units[0] : null;
+  $('card-title').textContent = one ? one.label : `Группа: ${units.length}`;
+  if (one) $('card-sub').textContent = one.def.name;
+  else {
+    const cnt = {};
+    for (const u of units) cnt[u.def.short] = (cnt[u.def.short] || 0) + 1;
+    $('card-sub').textContent = Object.entries(cnt).map(([k, v]) => `${k} ×${v}`).join(' · ');
+  }
+  // Бойцы отделения
+  const box = $('soldiers');
+  box.innerHTML = '';
+  if (one?.soldiers) {
+    for (const s of one.soldiers) {
+      const c = document.createElement('div');
+      c.className = 'chip';
+      c.dataset.sid = s.idx;
+      c.innerHTML = `<b>${s.idx + 1}. ${s.role}</b><small></small><div class="bar"><i></i></div>`;
+      c.onclick = () => {
+        ui.soldier = ui.soldier && ui.soldier.idx === s.idx ? null : { unitId: one.id, idx: s.idx };
+        buildCard();
+      };
+      c.ondblclick = () => focus(s.x, s.y, 6 * dpr);
+      box.appendChild(c);
+    }
+  }
+  buildCommands();
+  updateCard();
+}
+
+function updateCard() {
+  const units = selectedUnits();
+  if (!units.length) { $('card').classList.remove('show'); return; }
+  const one = units.length === 1 ? units[0] : null;
+  const stats = [];
+  if (one) {
+    if (one.soldiers) {
+      const alive = one.soldiers.filter((s) => !s.dead);
+      const w = alive.filter((s) => s.wounded).length;
+      stats.push(`Личный состав <b>${alive.length}/${one.soldiers.length}</b>${w ? ` · ранено <b>${w}</b>` : ''}`);
+    } else stats.push(`Состояние <b>${Math.round((one.hp ?? 1) * 100)}%</b>`);
+    if (one.def.caliber) stats.push(`Боезапас <b>${one.ammo}/${one.def.ammo}</b> · ${CALIBERS[one.def.caliber].name}`);
+    stats.push(`${STATE_TEXT[one.state] || ''} · ${T_NAMES[sim.nav.classAt(one.x, one.y)]}`);
+    if (one.state === 'moving' && one.mode === 'field') stats.push(`${(one.speed * 3.6).toFixed(0)} км/ч · прибытие ~${fmtEta(one.eta)}`);
+  } else {
+    const men = units.reduce((a, u) => a + (u.soldiers ? u.soldiers.filter((s) => !s.dead).length : 0), 0);
+    stats.push(`Подразделений <b>${units.length}</b>`);
+    if (men) stats.push(`Бойцов <b>${men}</b>`);
+  }
+  $('card-stats').innerHTML = stats.map((s) => `<span>${s}</span>`).join('');
+  // Задача
+  let task = '';
+  if (one) {
+    if (one.fire) task = `Огонь: осталось ${one.fire.rounds} выстр. ${sim.time < one.fire.next ? `· готовность через ${Math.ceil(one.fire.next - sim.time)} с` : ''}`;
+    else if (one.task) {
+      task = `Задача: ${TASK_TEXT[one.task.type] || one.task.type}`;
+      if (one.task.type === 'dig') task += ` · ${Math.round((one.task.job.done / one.task.job.total) * 100)}%`;
+      if (one.task.type === 'clear') task += ` · ${Math.round((one.task.progress / Math.max(1, one.task.line.length - 1)) * 100)}%`;
+    } else if (one.mode === 'trench') task = 'Бойцы действуют по отдельности (траншея / здание)';
+    if (one.pending) task += ' · выдвигается к месту';
+    if (one.noRoute && sim.time - one.noRoute < 30) task += ' · нет маршрута!';
+  }
+  const sd = currentSoldier();
+  if (sd) {
+    const where = sd.under ? (sd.building?.interior?.basement?.kind || 'под землёй') : sd.building ? 'в здании' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
+    task = `Выбран боец: ${sd.role} · ${POSES[sd.pose]?.name || (sd.dead ? 'погиб' : '')} · ${where} — ПКМ: куда идти`;
+  }
+  $('task').textContent = task;
+  // Чипы бойцов
+  if (one?.soldiers) {
+    for (const c of document.querySelectorAll('#soldiers .chip')) {
+      const s = one.soldiers[Number(c.dataset.sid)];
+      c.classList.toggle('active', !!ui.soldier && ui.soldier.idx === s.idx);
+      c.classList.toggle('dead', s.dead);
+      c.querySelector('small').textContent = s.dead ? 'погиб' : `${s.wounded === 2 ? 'тяжело ранен · ' : s.wounded ? 'ранен · ' : ''}${POSES[s.pose]?.name || ''}`;
+      const bar = c.querySelector('.bar > i');
+      bar.style.width = `${s.hp}%`;
+      bar.style.background = s.hp > 70 ? 'var(--ok)' : s.hp > 30 ? 'var(--warn)' : 'var(--bad)';
+    }
+  }
+  updateCommands();
+}
+
+$('card-close').onclick = () => { ui.selected.clear(); selectionChanged(); };
+
+// ================= Список подразделений =================
+const GROUPS = [
+  ['Пехота', ['inf']], ['Инженеры', ['eng', 'btm']], ['Бронетехника', ['tank', 'ifv', 'apc']],
+  ['Артиллерия', ['mortar', 'arty']], ['Тыл', ['truck']],
+];
+let rosterKey = '';
+function buildRoster() {
+  const list = $('roster-list');
+  list.innerHTML = '';
+  const own = sim.units.filter((u) => u.side === controlSide);
+  for (const [name, types] of GROUPS) {
+    const us = own.filter((u) => types.includes(u.type));
+    if (!us.length) continue;
+    const t = document.createElement('div');
+    t.className = 'group-title';
+    t.textContent = name;
+    list.appendChild(t);
+    for (const u of us) {
+      const r = document.createElement('div');
+      r.className = 'r-row';
+      r.dataset.id = u.id;
+      const c = document.createElement('canvas');
+      c.width = 68; c.height = 48;
+      drawSymbol(c.getContext('2d'), 34, 24, 26, u.side, u.def.symbol);
+      r.appendChild(c);
+      const mid = document.createElement('div');
+      mid.innerHTML = `<div class="r-name">${u.label}</div><div class="r-state"></div>`;
+      r.appendChild(mid);
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.innerHTML = '<i></i>';
+      r.appendChild(bar);
+      r.onclick = (e) => {
+        if (u.dead) return;
+        ui.soldier = null;
+        if (e.ctrlKey || e.metaKey || e.shiftKey) ui.selected.has(u.id) ? ui.selected.delete(u.id) : ui.selected.add(u.id);
+        else { ui.selected.clear(); ui.selected.add(u.id); }
+        selectionChanged();
+      };
+      r.ondblclick = () => focus(u.x, u.y, 2 * dpr);
+      list.appendChild(r);
+    }
+  }
+  rosterKey = controlSide;
+}
+
+function updateRoster() {
+  if (rosterKey !== controlSide) buildRoster();
+  for (const r of document.querySelectorAll('#roster-list .r-row')) {
+    const u = sim.units.find((q) => q.id === Number(r.dataset.id));
+    if (!u) continue;
+    r.classList.toggle('sel', ui.selected.has(u.id));
+    r.classList.toggle('dead', u.dead);
+    let st;
+    if (u.dead) st = 'уничтожено';
+    else if (u.fire) st = `огонь · ${u.ammo} выстр.`;
+    else if (u.task) st = TASK_TEXT[u.task.type] || '';
+    else if (u.mode === 'trench') st = 'на позиции';
+    else st = STATE_TEXT[u.state];
+    r.querySelector('.r-state').textContent = st;
+    const val = u.dead ? 0 : u.soldiers ? u.soldiers.filter((q) => !q.dead).length / u.soldiers.length : u.hp ?? 1;
+    const bar = r.querySelector('.bar > i');
+    bar.style.width = `${val * 100}%`;
+    bar.style.background = val > 0.66 ? 'var(--ok)' : val > 0.33 ? 'var(--warn)' : 'var(--bad)';
+  }
+}
+$('roster-toggle').onclick = () => {
+  const r = $('roster');
+  r.classList.toggle('collapsed');
+  $('roster-toggle').textContent = r.classList.contains('collapsed') ? '+' : '–';
+};
+
+// ================= Журнал =================
+function log(text) {
+  const box = $('log');
+  const ev = document.createElement('div');
+  ev.className = 'ev' + (/убит|уничтож|обруш|погиб/.test(text) ? ' loss' : '');
+  ev.innerHTML = `<time>${fmtClock(sim.time)}</time><span></span>`;
+  ev.querySelector('span').textContent = text;
+  box.prepend(ev);
+  while (box.children.length > 9) box.lastChild.remove();
+  [...box.children].forEach((c, i) => c.classList.toggle('old', i > 3));
+}
+
+// ================= Подсказка у курсора =================
+function updateHint() {
+  const h = $('hint');
+  if (!mouse) { h.style.display = 'none'; return; }
+  const [x, y] = screenToWorld(mouse[0], mouse[1]);
+  const units = selectedUnits();
+  let text = '';
+  if (orderMode === 'fire') {
+    const g = units.find((u) => u.def.caliber);
+    if (g) {
+      const cal = CALIBERS[g.def.caliber];
+      const d = Math.hypot(x - g.x, y - g.y);
+      const ok = d >= cal.minR && d <= cal.maxR;
+      text = ok
+        ? `<b>Огонь</b> · ${(d / 1000).toFixed(2)} км · рассеяние ±${Math.round(cal.sigma * d * 2)} м · ${fireOpts.rounds} выстр. · ${fireOpts.fuse === 'air' ? 'воздушный подрыв' : 'контакт'}`
+        : `<b>Вне досягаемости</b> · ${(d / 1000).toFixed(2)} км (можно ${cal.minR}–${cal.maxR} м)`;
+    }
+  } else if (orderMode === 'dig') {
+    const pts = dig.points.length ? [...dig.points, [x, y]] : [];
+    let L = 0;
+    for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    text = dig.points.length ? `<b>Траншея</b> ${Math.round(L)} м · ЛКМ — ещё точка · ПКМ/Enter — копать` : '<b>Траншея</b>: кликните начало';
+  } else if (orderMode === 'clear') text = '<b>Зачистить</b>: укажите точку на траншее';
+  else if (orderMode === 'basement') text = '<b>В подвал</b>: укажите здание (или рядом)';
+  else if (orderMode === 'occupy') text = '<b>Занять</b>: траншею или здание';
+  else if (orderMode === 'move') text = '<b>Идти</b>: укажите точку';
+  else if (orderMode === 'strike') text = '<b>Удар 152 мм (тест)</b>: клик — разрыв';
+  else if (units.some((u) => u.soldiers)) {
+    const b = buildingAtScreen(world, view, mouse[0] * dpr, mouse[1] * dpr);
+    if (b) text = `ПКМ — <b>занять здание</b>${b.interior.floors > 1 ? ` · ${b.interior.floors} эт.` : ''}${b.interior.basement ? ` · ${b.interior.basement.kind}` : ''}`;
+    else if (sim.trenches.nearest(x, y, 6, true) >= 0) text = 'ПКМ — <b>занять траншею</b>';
+  }
+  if (!text) { h.style.display = 'none'; return; }
+  h.innerHTML = text;
+  h.style.display = 'block';
+  h.style.left = `${mouse[0] + 16}px`;
+  h.style.top = `${mouse[1] + 18}px`;
+}
+
+// ================= Верхняя панель =================
 function setSpeed(v) {
   if (v === 0) paused = true;
   else { paused = false; timeScale = v; }
-  hud.speeds.forEach((b) => b.classList.toggle('active', paused ? b.dataset.speed === '0' : Number(b.dataset.speed) === timeScale));
+  for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('active', paused ? b.dataset.speed === '0' : Number(b.dataset.speed) === timeScale);
 }
-hud.speeds.forEach((b) => (b.onclick = () => setSpeed(Number(b.dataset.speed))));
+for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => setSpeed(Number(b.dataset.speed));
 setSpeed(timeScale);
-hud.stealth.onclick = toggleStealth;
-hud.stop.onclick = () => { sim.stop(selectedUnits()); refreshPanel(); };
-hud.side.onclick = switchSide;
-switchSide(); switchSide();
+
+function switchSide() {
+  controlSide = controlSide === 'blue' ? 'red' : 'blue';
+  ui.selected.clear();
+  ui.soldier = null;
+  const b = $('side-badge');
+  b.textContent = SIDES[controlSide].name;
+  b.className = controlSide;
+  selectionChanged();
+}
+$('side-badge').onclick = switchSide;
+$('side-badge').textContent = SIDES[controlSide].name;
+
+function toggleLabels() { showLabels = !showLabels; $('btn-labels').classList.toggle('active', showLabels); }
 function cycleFortView() {
   fortView = FORT_VIEWS[(FORT_VIEWS.indexOf(fortView) + 1) % FORT_VIEWS.length];
   ui.underground = fortView === 'underground';
-  hud.forts.textContent = FORT_VIEW_NAMES[fortView];
-  hud.forts.classList.toggle('active', fortView !== 'off');
+  $('forts-lbl').textContent = fortView === 'off' ? 'Окопы' : FORT_VIEW_NAMES[fortView];
+  $('btn-forts').classList.toggle('active', fortView !== 'off');
 }
-function toggleDig() {
-  if (strikeMode) toggleStrike();
-  dig = dig ? null : { points: [], cursor: null };
-  hud.dig.classList.toggle('active', !!dig);
-  hud.dig.textContent = dig ? 'Копаем: ПКМ — готово' : 'Копать траншею';
-  canvas.style.cursor = dig ? 'crosshair' : 'grab';
-  if (dig && fortView === 'off') cycleFortView();
-}
-function finishDig() {
-  if (dig.points.length >= 2) {
-    const diggers = selectedUnits().filter((u) => u.def.dig);
-    if (diggers.length) {
-      const job = sim.orderDig(diggers, dig.points);
-      const rate = diggers.reduce((a, u) => a + u.def.dig, 0);
-      toast(`Рыть траншею ${Math.round(job.total)} м: ${diggers.map((u) => u.label).join(', ')} · ~${fmtEta((job.total / rate) * 3600)} игрового времени`);
-    } else {
-      // Без выбранных копающих — мгновенно (тестовый режим)
-      const created = digTrench(world, digRng, dig.points, controlSide, controlSide === 'blue' ? [1, 0] : [-1, 0]);
-      for (const c of created) chunks.invalidate(c.bbox);
-      toast('Траншея создана мгновенно (тест). Чтобы рыли бойцы — выберите пехоту, сапёров или БТМ.');
-    }
-  }
-  dig.points = [];
-  toggleDig();
-}
-hud.forts.onclick = cycleFortView;
-hud.clear.onclick = () => setOrderMode(orderMode === 'clear' ? null : 'clear');
-hud.basement.onclick = () => setOrderMode(orderMode === 'basement' ? null : 'basement');
-hud.interior.onclick = () => toggleInterior();
-hud.stances.forEach((b) => (b.onclick = () => setStance(b.dataset.stance)));
-function toggleInterior() {
-  interiorsForce = !interiorsForce;
-  hud.interior.classList.toggle('active', interiorsForce);
-  hud.interior.textContent = interiorsForce ? 'Интерьеры: всегда' : 'Интерьеры: вблизи';
-}
-// Поза — выбранному бойцу или всем бойцам выбранных отделений
-function setStance(st) {
-  if (ui.soldier) {
-    const u = sim.units.find((q) => q.id === ui.soldier.unitId);
-    if (u) sim.setStance(u, st, ui.soldier.idx);
-  } else for (const u of selectedUnits()) sim.setStance(u, st);
-  toast(`Поза: ${st === 'auto' ? 'авто (по обстановке)' : POSES[st].name}`);
-  updatePanel();
-}
-hud.dig.onclick = toggleDig;
-hud.forts.textContent = FORT_VIEW_NAMES[fortView];
-hud.strike.onclick = toggleStrike;
-hud.labels.onclick = toggleLabels;
-hud.labels.classList.add('active');
-hud.newMap.onclick = () => {
-  const s = Math.floor(Math.random() * 1e6);
-  location.search = `?seed=${s}`;
-};
+function toggleInterior() { interiorsForce = !interiorsForce; $('btn-interior').classList.toggle('active', interiorsForce); }
+function toggleHelp(v) { $('help').classList.toggle('show', v ?? !$('help').classList.contains('show')); }
+const closeMenu = () => $('menu').classList.remove('open');
+$('btn-labels').onclick = toggleLabels;
+$('btn-forts').onclick = cycleFortView;
+$('btn-interior').onclick = toggleInterior;
+$('btn-help').onclick = () => toggleHelp();
+$('help-close').onclick = () => toggleHelp(false);
+$('help').onclick = (e) => { if (e.target.id === 'help') toggleHelp(false); };
+$('btn-menu').onclick = (e) => { e.stopPropagation(); $('menu').classList.toggle('open'); };
+$('btn-strike').onclick = () => { closeMenu(); setOrderMode('strike'); };
+$('btn-dig-test').onclick = () => { closeMenu(); setOrderMode('dig'); dig.test = true; };
+$('btn-new').onclick = () => { location.search = `?seed=${Math.floor(Math.random() * 1e6)}`; };
 
-// Артудар: кластер воронок, чанки в зоне перерисуются
-function strike(x, y) {
-  const n = strikeRng.int(5, 14);
-  const added = addCraterCluster(world, strikeRng, x, y, n, strikeRng.float(12, 35));
-  if (strikeRng.chance(0.35)) added.push(addBurn(world, strikeRng, x, y, strikeRng.float(20, 60)));
-  let b = { x0: x, y0: y, x1: x, y1: y };
-  for (const c of added) b = { x0: Math.min(b.x0, c.bbox.x0), y0: Math.min(b.y0, c.bbox.y0), x1: Math.max(b.x1, c.bbox.x1), y1: Math.max(b.y1, c.bbox.y1) };
-  chunks.invalidate(b);
-  flashes.push({ x, y, t: performance.now() });
-  dirty = true;
-}
-const flashes = [];
-
-// ---------- Миникарта ----------
-mini.width = 240;
-mini.height = 160;
+// ================= Миникарта =================
+mini.width = 540;
+mini.height = 360;
 const miniScale = mini.width / world.W;
 mini.addEventListener('pointerdown', (e) => {
   const moveTo = (ev) => {
@@ -443,7 +697,6 @@ mini.addEventListener('pointerdown', (e) => {
     cam.x = ((ev.clientX - r.left) / r.width) * world.W;
     cam.y = ((ev.clientY - r.top) / r.height) * world.H;
     clampCam();
-    dirty = true;
   };
   moveTo(e);
   mini.setPointerCapture(e.pointerId);
@@ -451,23 +704,40 @@ mini.addEventListener('pointerdown', (e) => {
   mini.onpointerup = () => (mini.onpointermove = null);
 });
 
-// ---------- Кадр ----------
+function drawMinimap() {
+  mctx.setTransform(1, 0, 0, 1, 0, 0);
+  mctx.fillStyle = '#15170f';
+  mctx.fillRect(0, 0, mini.width, mini.height);
+  const size = chunks.worldSize(0);
+  for (let cy = 0; cy * size < world.H; cy++)
+    for (let cx = 0; cx * size < world.W; cx++) {
+      const e = chunks.get(0, cx, cy);
+      if (e) mctx.drawImage(e.canvas, cx * size * miniScale, cy * size * miniScale, size * miniScale, size * miniScale);
+    }
+  for (const u of sim.units) {
+    if (u.dead) continue;
+    mctx.fillStyle = ui.selected.has(u.id) ? '#b8ff6b' : SIDES[u.side].fill;
+    mctx.fillRect(u.x * miniScale - 3, u.y * miniScale - 3, 6, 6);
+  }
+  const hw = canvas.width / 2 / cam.zoom, hh = canvas.height / 2 / cam.zoom;
+  mctx.strokeStyle = '#f2c14e';
+  mctx.lineWidth = 2;
+  mctx.strokeRect((cam.x - hw) * miniScale, (cam.y - hh) * miniScale, hw * 2 * miniScale, hh * 2 * miniScale);
+}
+
+// ================= Отрисовка кадра =================
 function pickLevel() {
   for (let i = 0; i < LEVELS.length; i++) if (LEVELS[i] >= cam.zoom * 0.85) return i;
   return LEVELS.length - 1;
 }
-
 function visibleRange(level) {
   const size = chunks.worldSize(level);
   const hw = canvas.width / 2 / cam.zoom, hh = canvas.height / 2 / cam.zoom;
   return {
-    cx0: Math.max(0, Math.floor((cam.x - hw) / size)),
-    cy0: Math.max(0, Math.floor((cam.y - hh) / size)),
-    cx1: Math.min(Math.ceil(world.W / size) - 1, Math.floor((cam.x + hw) / size)),
-    cy1: Math.min(Math.ceil(world.H / size) - 1, Math.floor((cam.y + hh) / size)),
+    cx0: Math.max(0, Math.floor((cam.x - hw) / size)), cy0: Math.max(0, Math.floor((cam.y - hh) / size)),
+    cx1: Math.min(Math.ceil(world.W / size) - 1, Math.floor((cam.x + hw) / size)), cy1: Math.min(Math.ceil(world.H / size) - 1, Math.floor((cam.y + hh) / size)),
   };
 }
-
 function drawLevel(level, requestMissing, need) {
   const size = chunks.worldSize(level);
   const r = visibleRange(level);
@@ -487,13 +757,90 @@ function drawLevel(level, requestMissing, need) {
     }
 }
 
+// Кольца дальности и эллипс рассеяния для выбранной артиллерии
+function drawArtyOverlay() {
+  const guns = selectedUnits().filter((u) => u.def.caliber);
+  if (!guns.length) return;
+  const toS = (x, y) => [(x - cam.x) * cam.zoom + canvas.width / 2, (y - cam.y) * cam.zoom + canvas.height / 2];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  for (const g of guns) {
+    const cal = CALIBERS[g.def.caliber];
+    const [x, y] = toS(g.x, g.y);
+    ctx.setLineDash([8 * dpr, 6 * dpr]);
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.strokeStyle = 'rgba(255,190,120,0.55)';
+    ctx.beginPath(); ctx.arc(x, y, cal.maxR * cam.zoom, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,110,80,0.5)';
+    ctx.beginPath(); ctx.arc(x, y, cal.minR * cam.zoom, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    if (g.fire) {
+      const [tx, ty] = toS(g.fire.x, g.fire.y);
+      ctx.strokeStyle = 'rgba(255,120,90,0.8)';
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+      crosshair(tx, ty, '#ff7a5a');
+    }
+  }
+  if (orderMode === 'fire' && mouse) {
+    const g = guns[0];
+    const cal = CALIBERS[g.def.caliber];
+    const [wx, wy] = screenToWorld(mouse[0], mouse[1]);
+    const d = Math.hypot(wx - g.x, wy - g.y);
+    const [sx, sy] = [mouse[0] * dpr, mouse[1] * dpr];
+    const ok = d >= cal.minR && d <= cal.maxR;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(Math.atan2(wy - g.y, wx - g.x));
+    ctx.beginPath();
+    ctx.ellipse(0, 0, Math.max(4, cal.sigma * d * 2 * cam.zoom), Math.max(3, cal.sigma * d * 0.9 * cam.zoom), 0, 0, Math.PI * 2);
+    ctx.fillStyle = ok ? 'rgba(255,120,80,0.18)' : 'rgba(120,120,120,0.15)';
+    ctx.fill();
+    ctx.strokeStyle = ok ? '#ff7a5a' : '#999';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.stroke();
+    // Радиус поражения осколками
+    ctx.setLineDash([3 * dpr, 4 * dpr]);
+    ctx.beginPath(); ctx.arc(0, 0, cal.lethal * cam.zoom, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+function crosshair(x, y, c) {
+  ctx.strokeStyle = c;
+  ctx.lineWidth = 2 * dpr;
+  ctx.beginPath();
+  ctx.arc(x, y, 8 * dpr, 0, Math.PI * 2);
+  ctx.moveTo(x - 13 * dpr, y); ctx.lineTo(x - 4 * dpr, y);
+  ctx.moveTo(x + 4 * dpr, y); ctx.lineTo(x + 13 * dpr, y);
+  ctx.moveTo(x, y - 13 * dpr); ctx.lineTo(x, y - 4 * dpr);
+  ctx.moveTo(x, y + 4 * dpr); ctx.lineTo(x, y + 13 * dpr);
+  ctx.stroke();
+}
+
+function drawLabels() {
+  if (!showLabels || cam.zoom > 3 * dpr) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const s of world.settlements) {
+    const city = s.type === 'city';
+    const x = ((s.x - cam.x) * cam.zoom + canvas.width / 2) / dpr, y = ((s.y - cam.y) * cam.zoom + canvas.height / 2) / dpr;
+    ctx.font = city ? '700 24px "PT Sans Narrow", system-ui, sans-serif' : '700 17px "PT Sans Narrow", system-ui, sans-serif';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+    ctx.strokeText(s.name.toUpperCase(), x, y);
+    ctx.fillStyle = city ? '#fff6dc' : '#f1ecde';
+    ctx.fillText(s.name.toUpperCase(), x, y);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
 let lastNow = performance.now();
-let panelTimer = 0;
+let uiTimer = 0;
+let rosterUnits = sim.units.length;
 function frame(now) {
   chunks.frame++;
   const dtReal = Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
   lastNow = now;
-  // Симуляция: шаги не длиннее 0.25 игровой секунды
   if (!paused) {
     let gdt = dtReal * timeScale;
     while (gdt > 1e-6) {
@@ -505,239 +852,103 @@ function frame(now) {
   sim.processQueue(8);
   for (const ev of sim.events) {
     if (ev.type === 'forts') chunks.invalidate(ev.bbox);
-    else if (ev.type === 'msg') toast(ev.text);
+    else if (ev.type === 'msg') log(ev.text);
   }
   sim.events.length = 0;
   emitDust(sim, paused ? 0 : dtReal, timeScale);
-  dirty = true;
-  panelTimer += dtReal;
-  if (panelTimer > 0.2) { panelTimer = 0; updatePanel(); }
-  // Клавиатура
+  // Клавиатура: панорама
   const pan = (12 * dpr) / cam.zoom;
-  if (keys.has('w') || keys.has('arrowup') || keys.has('ц')) { cam.y -= pan; dirty = true; }
-  if (keys.has('s') || keys.has('arrowdown') || keys.has('ы')) { cam.y += pan; dirty = true; }
-  if (keys.has('a') || keys.has('arrowleft') || keys.has('ф')) { cam.x -= pan; dirty = true; }
-  if (keys.has('d') || keys.has('arrowright') || keys.has('в')) { cam.x += pan; dirty = true; }
-  clampCam();
+  if (!keys.has('ControlLeft') && !keys.has('ControlRight')) {
+    if (keys.has('KeyW') || keys.has('ArrowUp')) cam.y -= pan;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) cam.y += pan;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) cam.x -= pan;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) cam.x += pan;
+    clampCam();
+  }
 
-  if (flashes.length) dirty = true;
-  if (dirty) {
-    dirty = false;
-    const need = [];
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#1b1d17';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+  const need = [];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#15170f';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  const L = pickLevel();
+  drawLevel(0, true, need);
+  for (let l = Math.max(1, L - 2); l < L; l++) drawLevel(l, false, need);
+  if (L > 0) drawLevel(L, true, need);
+  {
+    const x0 = Math.round((0 - cam.x) * cam.zoom + canvas.width / 2), y0 = Math.round((0 - cam.y) * cam.zoom + canvas.height / 2);
+    const x1 = Math.round((world.W - cam.x) * cam.zoom + canvas.width / 2), y1 = Math.round((world.H - cam.y) * cam.zoom + canvas.height / 2);
+    ctx.fillStyle = '#15170f';
+    ctx.fillRect(0, 0, canvas.width, y0);
+    ctx.fillRect(0, y1, canvas.width, canvas.height - y1);
+    ctx.fillRect(0, 0, x0, canvas.height);
+    ctx.fillRect(x1, 0, canvas.width - x1, canvas.height);
+  }
+  need.sort((a, b) => a.level - b.level || a.d - b.d);
+  const t0 = performance.now();
+  let rendered = 0;
+  for (const n of need) {
+    if (rendered > 0 && performance.now() - t0 > 14) break;
+    chunks.render(n.level, n.cx, n.cy);
+    rendered++;
+  }
+  $('loading').style.opacity = need.length > rendered ? 1 : 0;
 
-    const L = pickLevel();
-    drawLevel(0, true, need);
-    // Промежуточные уровни, если уже есть в кэше — плавная подгрузка
-    for (let l = Math.max(1, L - 2); l < L; l++) drawLevel(l, false, need);
-    if (L > 0) drawLevel(L, true, need);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawInteriors(ctx, world, sim, view, interiorsForce, ui.underground);
+  drawFortOverlay(ctx, world, view, fortView, dig);
+  drawArtyOverlay();
+  drawUnits(ctx, sim, view, ui);
+  drawArtillery(ctx, sim, view);
+  drawLabels();
 
-    // Всё за пределами карты — тёмное
-    {
-      const x0 = Math.round((0 - cam.x) * cam.zoom + canvas.width / 2), y0 = Math.round((0 - cam.y) * cam.zoom + canvas.height / 2);
-      const x1 = Math.round((world.W - cam.x) * cam.zoom + canvas.width / 2), y1 = Math.round((world.H - cam.y) * cam.zoom + canvas.height / 2);
-      ctx.fillStyle = '#1b1d17';
-      ctx.fillRect(0, 0, canvas.width, y0);
-      ctx.fillRect(0, y1, canvas.width, canvas.height - y1);
-      ctx.fillRect(0, 0, x0, canvas.height);
-      ctx.fillRect(x1, 0, canvas.width - x1, canvas.height);
-    }
-
-    // Рендер недостающих чанков с бюджетом по времени
-    need.sort((a, b) => a.level - b.level || a.d - b.d);
-    const t0 = performance.now();
-    let rendered = 0;
-    for (const n of need) {
-      if (rendered > 0 && performance.now() - t0 > 14) break;
-      chunks.render(n.level, n.cx, n.cy);
-      rendered++;
-    }
-    if (rendered < need.length || rendered > 0) dirty = true;
-    hud.loading.style.opacity = need.length > rendered ? 1 : 0;
-
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    drawInteriors(ctx, world, sim, view, interiorsForce, ui.underground);
-    drawFortOverlay(ctx, world, view, fortView, dig);
-    drawUnits(ctx, sim, view, ui);
-    drawOverlay(now);
+  uiTimer += dtReal;
+  if (uiTimer > 0.25) {
+    uiTimer = 0;
+    $('clock').textContent = fmtTime(sim.time);
+    if (sim.units.some((u) => u.dead && ui.selected.has(u.id))) { for (const u of sim.units) if (u.dead) ui.selected.delete(u.id); buildCard(); }
+    updateCard();
+    updateRoster();
     drawMinimap();
-    updateHud();
+    updateScale();
+    if (orderMode === 'fire') updateHint();
+    if (sim.units.length !== rosterUnits) { rosterUnits = sim.units.length; buildRoster(); }
   }
   requestAnimationFrame(frame);
 }
 
-// ---------- Подписи, вспышки ударов ----------
-function drawOverlay(now) {
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const toS = (x, y) => [((x - cam.x) * cam.zoom + canvas.width / 2) / dpr, ((y - cam.y) * cam.zoom + canvas.height / 2) / dpr];
-  if (showLabels) {
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const s of world.settlements) {
-      const isCity = s.type === 'city';
-      if (!isCity && cam.zoom < 0.08) continue;
-      if (cam.zoom > 3) continue;
-      const [x, y] = toS(s.x, s.y);
-      ctx.font = isCity ? '700 20px "PT Sans", system-ui, sans-serif' : '600 15px "PT Sans", system-ui, sans-serif';
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-      ctx.strokeText(s.name, x, y);
-      ctx.fillStyle = isCity ? '#fff6dc' : '#f1ecde';
-      ctx.fillText(s.name, x, y);
-    }
-  }
-  // Вспышки разрывов
-  for (let i = flashes.length - 1; i >= 0; i--) {
-    const f = flashes[i];
-    const t = (now - f.t) / 700;
-    if (t > 1) { flashes.splice(i, 1); continue; }
-    const [x, y] = toS(f.x, f.y);
-    const r = (15 + t * 60) * Math.max(0.5, Math.min(2, cam.zoom / dpr));
-    ctx.fillStyle = `rgba(255,190,90,${0.5 * (1 - t)})`;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawMinimap() {
-  const ov = chunks.get(0, 0, 0);
-  mctx.setTransform(1, 0, 0, 1, 0, 0);
-  mctx.fillStyle = '#1b1d17';
-  mctx.fillRect(0, 0, mini.width, mini.height);
-  const size = chunks.worldSize(0);
-  for (let cy = 0; cy * size < world.H; cy++)
-    for (let cx = 0; cx * size < world.W; cx++) {
-      const e = chunks.get(0, cx, cy);
-      if (e) mctx.drawImage(e.canvas, cx * size * miniScale, cy * size * miniScale, size * miniScale, size * miniScale);
-    }
-  for (const u of sim.units) {
-    mctx.fillStyle = SIDES[u.side].fill;
-    mctx.fillRect(u.x * miniScale - 1.5, u.y * miniScale - 1.5, 3, 3);
-  }
-  if (!ov) return;
-  const hw = canvas.width / 2 / cam.zoom, hh = canvas.height / 2 / cam.zoom;
-  mctx.strokeStyle = '#ffd36b';
-  mctx.lineWidth = 1.5;
-  mctx.strokeRect((cam.x - hw) * miniScale, (cam.y - hh) * miniScale, hw * 2 * miniScale, hh * 2 * miniScale);
-}
-
-function updateHud() {
-  // Масштабная линейка: «круглая» длина около 120 css px
+function updateScale() {
   const mPerCss = dpr / cam.zoom;
-  const target = 120 * mPerCss;
+  const target = 110 * mPerCss;
   const nice = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
   const len = nice.find((n) => n >= target * 0.6) || 5000;
-  hud.scale.style.width = `${len / mPerCss}px`;
-  hud.scaleLabel.textContent = len >= 1000 ? `${len / 1000} км` : `${len} м`;
+  $('scale-bar').style.width = `${len / mPerCss}px`;
+  $('scale-label').textContent = len >= 1000 ? `${len / 1000} км` : `${len} м`;
   if (mouse) {
     const [x, y] = screenToWorld(mouse[0], mouse[1]);
-    hud.coords.textContent = `X ${Math.round(x)} м · Y ${Math.round(y)} м`;
+    $('coords').textContent = `${(x / 1000).toFixed(2)} · ${(y / 1000).toFixed(2)} км`;
   }
 }
 
-// ---------- Панели: время и выбранные отряды ----------
-function fmtTime(sec) {
-  const d = Math.floor(sec / 86400) + 1;
+// ================= Форматирование =================
+function fmtClock(sec) {
   const h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
-  return `День ${d} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
+function fmtTime(sec) { return `День ${Math.floor(sec / 86400) + 1} · ${fmtClock(sec)}`; }
 function fmtEta(sec) {
   if (sec < 60) return `${Math.round(sec)} с`;
   if (sec < 3600) return `${Math.round(sec / 60)} мин`;
   return `${Math.floor(sec / 3600)} ч ${Math.round((sec % 3600) / 60)} мин`;
 }
-const STATE_TEXT = { idle: 'стоит', planning: 'прокладка маршрута', moving: 'марш' };
 
-function refreshPanel() {
-  const units = selectedUnits();
-  hud.sel.style.display = units.length ? 'flex' : 'none';
-  hud.selList.innerHTML = '';
-  for (const u of units.slice(0, 12)) {
-    const row = document.createElement('div');
-    row.className = 'unit-row';
-    const c = document.createElement('canvas');
-    c.width = 44; c.height = 30;
-    drawSymbol(c.getContext('2d'), 22, 15, 18, u.side, u.def.symbol);
-    row.appendChild(c);
-    const info = document.createElement('div');
-    info.innerHTML = `<b>${u.label}</b> <span class="muted">${u.def.name}</span><div class="st" data-id="${u.id}"></div>`;
-    row.appendChild(info);
-    row.onclick = () => { cam.x = u.x; cam.y = u.y; };
-    hud.selList.appendChild(row);
-  }
-  if (units.length > 12) {
-    const more = document.createElement('div');
-    more.className = 'muted';
-    more.textContent = `и ещё ${units.length - 12}…`;
-    hud.selList.appendChild(more);
-  }
-  // Одно отделение — список бойцов, можно выбрать любого
-  if (units.length === 1 && units[0].soldiers) {
-    const u = units[0];
-    const box = document.createElement('div');
-    box.className = 'soldiers';
-    for (const sd of u.soldiers) {
-      const b = document.createElement('button');
-      b.className = 'soldier' + (ui.soldier && ui.soldier.unitId === u.id && ui.soldier.idx === sd.idx ? ' active' : '');
-      b.textContent = `${sd.idx + 1}. ${sd.role}`;
-      b.dataset.sid = sd.idx;
-      b.onclick = (ev) => {
-        ev.stopPropagation();
-        ui.soldier = ui.soldier && ui.soldier.idx === sd.idx ? null : { unitId: u.id, idx: sd.idx };
-        if (ui.soldier) { cam.x = sd.x; cam.y = sd.y; cam.zoom = Math.max(cam.zoom, 6 * dpr); }
-        refreshPanel();
-      };
-      box.appendChild(b);
-    }
-    hud.selList.appendChild(box);
-  }
-  hud.selTitle.textContent = ui.soldier ? `Боец: ${sim.units.find((q) => q.id === ui.soldier.unitId)?.soldiers[ui.soldier.idx].role}` : `Выбрано: ${units.length}`;
-  updatePanel();
-}
-
-const TASK_TEXT = { occupy: 'занимает позицию', clear: 'зачистка траншеи', dig: 'роет траншею', manual: 'ручное управление', garrison: 'занимает здание', basement: 'уходит в укрытие' };
-function updatePanel() {
-  hud.clock.textContent = fmtTime(sim.time);
-  const units = selectedUnits();
-  hud.task.textContent = '';
-  const soldierObj = ui.soldier ? sim.units.find((q) => q.id === ui.soldier.unitId)?.soldiers[ui.soldier.idx] : null;
-  const cur = soldierObj ? soldierObj.stance : units.find((u) => u.soldiers)?.soldiers[0].stance;
-  hud.stances.forEach((b) => b.classList.toggle('active', b.dataset.stance === cur));
-  document.getElementById('stances').style.display = units.some((u) => u.soldiers) ? 'flex' : 'none';
-  if (units.length === 1) {
-    const u = units[0];
-    let t = u.task ? `Задача: ${TASK_TEXT[u.task.type]}` : u.mode === 'trench' ? 'В траншее' : '';
-    if (u.task?.type === 'dig') t += ` · ${Math.round((u.task.job.done / u.task.job.total) * 100)}%`;
-    if (u.task?.type === 'clear') t += ` · ${Math.round((u.task.progress / Math.max(1, u.task.line.length - 1)) * 100)}%`;
-    if (u.pending) t += ' · выдвигается';
-    hud.task.textContent = t;
-    if (ui.soldier && ui.soldier.unitId === u.id) {
-      const sd = u.soldiers[ui.soldier.idx];
-      const where = sd.under ? (sd.building ? sd.building.interior.basement?.kind || 'под землёй' : 'под землёй') : sd.building ? 'в здании' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
-      hud.task.textContent = `${sd.role} · ${POSES[sd.pose]?.name || ''} · ${sd.mode === 'path' ? 'движется' : 'на месте'} · ${where} · поза: ${sd.stance === 'auto' ? 'авто' : POSES[sd.stance].name} · ПКМ — куда идти`;
-    }
-  }
-  for (const el of hud.selList.querySelectorAll('.st')) {
-    const u = sim.units.find((q) => q.id === Number(el.dataset.id));
-    if (!u) continue;
-    const terr = T_NAMES[sim.nav.classAt(u.x, u.y)];
-    let t = `${STATE_TEXT[u.state]} · ${terr}`;
-    if (u.state === 'moving') t += ` · ${(u.speed * 3.6).toFixed(0)} км/ч · прибытие ~${fmtEta(u.eta)}`;
-    if (u.state === 'idle' && u.noRoute && sim.time - u.noRoute < 30) t += ' · нет маршрута!';
-    el.textContent = t;
-  }
-}
-
-// Стартовая отрисовка обзорного уровня, затем цикл
+// ================= Старт =================
 for (let cy = 0; cy * chunks.worldSize(0) < world.H; cy++)
   for (let cx = 0; cx * chunks.worldSize(0) < world.W; cx++) chunks.render(0, cx, cy);
-hud.loading.style.opacity = 0;
+buildRoster();
+updateRoster();
+log('Сводка: противник (Красные) — к востоку, серая зона между линиями окопов. F1 — справка.');
 requestAnimationFrame(frame);
 
-// Для отладки из консоли
-window.game = { world, cam, chunks, sim, ui, CHUNK_PX };
+window.game = { world, cam, chunks, sim, ui, CHUNK_PX, setOrderMode, orderAt, fireOpts };

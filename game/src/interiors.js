@@ -22,13 +22,14 @@ export function generateInterior(b, world, rng) {
 
   const big = b.w * b.h;
   if (b.style === 'gable' && big > 350) officePlan(plan, rng, b);
-  else if (b.style === 'gable' || b.style === 'hip') housePlan(plan, rng);
+  else if (b.style === 'gable' || b.style === 'hip') housePlan(plan, rng, b);
   else if (b.style === 'flat' && (b.height || 3) >= 12 && Math.max(W, D) >= 30) panelPlan(plan, rng, b);
   else if (b.style === 'flat' && (b.height || 3) >= 12) towerPlan(plan, rng, b);
   else if (b.style === 'flat' && big > 150) officePlan(plan, rng, b);
   else if (b.style === 'hangar' || b.style === 'barn') hallPlan(plan, rng, b);
   else shedPlan(plan, rng, b);
 
+  plan.furniture = furnish(plan, rng);
   return toWorld(plan, b, front);
 }
 
@@ -83,46 +84,183 @@ function room(plan, x0, y0, x1, y1, kind) {
   plan.rooms.push({ r: [x0, y0, x1, y1], kind });
 }
 
-// Частный дом
-function housePlan(plan, rng) {
+// Частный дом: три типа планировки, веранда, зеркальное отражение
+function housePlan(plan, rng, b) {
   const { W, D } = plan;
   const hx = W / 2, hy = D / 2;
-  const xs = -hx + W * rng.float(0.38, 0.5); // перегородка: слева сени+кухня, справа комнаты
-  const ys = -hy + D * rng.float(0.4, 0.5);
-  const doorX = (-hx + xs) / 2;
-  const backDoor = rng.chance(0.4);
-  // Наружные стены
-  wall(plan, -hx, -hy, hx, -hy, [{ t: doorX + hx, w: 1.0 }], true);
+  const vd = b.veranda || 0; // застеклённая веранда вдоль фасада
+  const y0 = -hy + vd; // начало «тёплой» части
+  const type = b.houseType || 'std';
+  const backDoor = rng.chance(0.35);
+  let doorX;
+  if (type === 'big') {
+    // Коридорная: коридор от входа насквозь, по бокам зал, спальни, кухня, санузел, котельная
+    const c0 = -1.1, c1 = 1.1;
+    doorX = 0;
+    const ym = y0 + (hy - y0) * rng.float(0.45, 0.55);
+    wall(plan, c0, y0, c0, hy, [{ t: (ym - y0) / 2, w: 1.0 }, { t: ym - y0 + (hy - ym) * 0.6, w: 1.0 }]);
+    wall(plan, c1, y0, c1, hy, [{ t: (ym - y0) / 2, w: 1.0 }, { t: ym - y0 + (hy - ym) / 2, w: 1.0 }]);
+    door(plan, c0, (y0 + ym) / 2, 1, false); door(plan, c0, ym + (hy - ym) * 0.6, 1, false);
+    door(plan, c1, (y0 + ym) / 2, 1, false); door(plan, c1, ym + (hy - ym) / 2, 1, false);
+    wall(plan, -hx, ym, c0, ym);
+    wall(plan, c1, ym, hx, ym);
+    room(plan, c0, y0, c1, hy, 'коридор');
+    room(plan, -hx, y0, c0, ym, 'кухня');
+    const yb = ym + (hy - ym) * 0.45;
+    wall(plan, -hx, yb, c0, yb, [{ t: (c0 + hx) / 2, w: 0.9 }]);
+    door(plan, (-hx + c0) / 2, yb, 0.9, false);
+    room(plan, -hx, ym, c0, yb, 'санузел');
+    room(plan, -hx, yb, c0, hy, 'котельная');
+    room(plan, c1, y0, hx, ym, 'зал');
+    room(plan, c1, ym, hx, hy, 'спальня');
+  } else if (type === 'small') {
+    // Старая хата: сени, кухня с печью, одна комната
+    const xs = -hx + W * rng.float(0.38, 0.48);
+    const ys = y0 + (hy - y0) * rng.float(0.4, 0.5);
+    doorX = (-hx + xs) / 2;
+    wall(plan, xs, y0, xs, hy, [{ t: (hy - y0) * 0.35, w: 1.0 }]);
+    door(plan, xs, y0 + (hy - y0) * 0.35, 1.0, false);
+    wall(plan, -hx, ys, xs, ys, [{ t: (xs + hx) / 2, w: 1.0 }]);
+    door(plan, (-hx + xs) / 2, ys, 1.0, false);
+    room(plan, -hx, y0, xs, ys, 'сени');
+    room(plan, -hx, ys, xs, hy, 'кухня');
+    room(plan, xs, y0, hx, hy, 'комната');
+  } else {
+    // Типовой дом: прихожая, кухня, комната, спальня
+    const xs = -hx + W * rng.float(0.38, 0.5);
+    const ys = y0 + (hy - y0) * rng.float(0.4, 0.5);
+    const ys2 = y0 + (hy - y0) * rng.float(0.45, 0.55);
+    doorX = (-hx + xs) / 2;
+    wall(plan, xs, y0, xs, hy, [{ t: (ys2 - y0) / 2, w: 1.1 }]);
+    door(plan, xs, y0 + (ys2 - y0) / 2, 1.1, false);
+    wall(plan, -hx, ys, xs, ys, [{ t: (xs + hx) / 2, w: 1.1 }]);
+    door(plan, (-hx + xs) / 2, ys, 1.1, false);
+    wall(plan, xs, ys2, hx, ys2, [{ t: 1.2, w: 1.1 }]);
+    door(plan, xs + 1.2, ys2, 1.1, false);
+    room(plan, -hx, y0, xs, ys, 'прихожая');
+    room(plan, -hx, ys, xs, hy, 'кухня');
+    room(plan, xs, y0, hx, ys2, 'комната');
+    room(plan, xs, ys2, hx, hy, 'спальня');
+  }
+  // Наружные стены и веранда
+  if (vd) {
+    wall(plan, -hx, -hy, hx, -hy, [{ t: doorX + hx, w: 1.0 }], true);
+    door(plan, doorX, -hy, 1.0, true, 0, -1);
+    wall(plan, -hx, y0, hx, y0, [{ t: doorX + hx, w: 1.0 }]);
+    door(plan, doorX, y0, 1.0, false);
+    room(plan, -hx, -hy, hx, y0, 'веранда');
+    windows(plan, -hx, -hy, hx, -hy, 0, -1, 1.3, [doorX + hx]);
+  } else {
+    wall(plan, -hx, -hy, hx, -hy, [{ t: doorX + hx, w: 1.0 }], true);
+    door(plan, doorX, -hy, 1.0, true, 0, -1);
+    windows(plan, -hx, -hy, hx, -hy, 0, -1, 2.6, [doorX + hx]);
+  }
   wall(plan, hx, -hy, hx, hy, [], true);
   wall(plan, hx, hy, -hx, hy, backDoor ? [{ t: hx - doorX, w: 1.0 }] : [], true);
   wall(plan, -hx, hy, -hx, -hy, [], true);
-  door(plan, doorX, -hy, 1.0, true, 0, -1);
   if (backDoor) door(plan, doorX, hy, 1.0, true, 0, 1);
-  // Перегородки
-  const split2 = W * D > 75 && rng.chance(0.7);
-  const ys2 = -hy + D * rng.float(0.45, 0.55);
-  wall(plan, xs, -hy, xs, hy, [{ t: (split2 ? (ys2 + hy) / 2 : D * 0.3), w: 1.1 }]);
-  door(plan, xs, -hy + (split2 ? (ys2 + hy) / 2 : D * 0.3), 1.1, false);
-  wall(plan, -hx, ys, xs, ys, [{ t: (xs + hx) / 2, w: 1.1 }]);
-  door(plan, (-hx + xs) / 2, ys, 1.1, false);
-  room(plan, -hx, -hy, xs, ys, 'прихожая');
-  room(plan, -hx, ys, xs, hy, 'кухня');
-  if (split2) {
-    wall(plan, xs, ys2, hx, ys2, [{ t: 1.2, w: 1.1 }]);
-    door(plan, xs + 1.2, ys2, 1.1, false);
-    room(plan, xs, -hy, hx, ys2, 'комната');
-    room(plan, xs, ys2, hx, hy, 'спальня');
-  } else room(plan, xs, -hy, hx, hy, 'комната');
-  windows(plan, -hx, -hy, hx, -hy, 0, -1, 2.6, [doorX + hx]);
-  windows(plan, hx, -hy, hx, hy, 1, 0, 2.8);
+  windows(plan, hx, -hy + vd, hx, hy, 1, 0, 2.8);
   windows(plan, -hx, hy, hx, hy, 0, 1, 3.2, backDoor ? [doorX + hx] : []);
-  windows(plan, -hx, -hy, -hx, hy, -1, 0, 3.2);
+  windows(plan, -hx, -hy + vd, -hx, hy, -1, 0, 3.2);
   // Погреб под кухней, лаз из кухни
-  if (rng.chance(0.55)) {
-    const k = [-hx + 0.6, ys + 0.6, xs - 0.6, hy - 0.6];
-    plan.basement = { r: k, kind: 'погреб', access: [[(k[0] + k[2]) / 2, (k[1] + k[3]) / 2]], capacity: 4 };
-    plan.stairs.push({ p: [(k[0] + k[2]) / 2, (k[1] + k[3]) / 2], w: 0.8, h: 0.8, hatch: true });
+  const kitchen = plan.rooms.find((r) => r.kind === 'кухня');
+  if (kitchen && rng.chance(type === 'small' ? 0.7 : 0.5)) {
+    const k = kitchen.r;
+    const c = [(k[0] + k[2]) / 2 + 0.4, (k[1] + k[3]) / 2 + 0.4];
+    plan.basement = { r: [k[0] + 0.5, k[1] + 0.5, k[2] - 0.5, k[3] - 0.5], kind: 'погреб', access: [c], capacity: 4 };
+    plan.stairs.push({ p: c, w: 0.8, h: 0.8, hatch: true });
   }
+  plan.front = [0, -1];
+  if (rng.chance(0.5)) mirror(plan);
+}
+
+// Зеркально по X (дверь и комнаты с другой стороны)
+function mirror(plan) {
+  const m = (p) => [-p[0], p[1]];
+  for (const w of plan.walls) { w.a = m(w.a); w.b = m(w.b); }
+  for (const d of plan.doors) { d.p = m(d.p); d.n = [-d.n[0], d.n[1]]; }
+  for (const w of plan.windows) { w.p = m(w.p); w.n = [-w.n[0], w.n[1]]; }
+  for (const r of plan.rooms) r.r = [-r.r[2], r.r[1], -r.r[0], r.r[3]];
+  for (const st of plan.stairs) st.p = m(st.p);
+  if (plan.basement) {
+    const b = plan.basement;
+    b.r = [-b.r[2], b.r[1], -b.r[0], b.r[3]];
+    b.access = b.access.map(m);
+  }
+}
+
+// ---------- Мебель по назначению комнат ----------
+function furnish(plan, rng) {
+  const out = [];
+  const add = (x0, y0, x1, y1, kind) => out.push({ r: [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)], kind });
+  for (const rm of plan.rooms) {
+    const [x0, y0, x1, y1] = rm.r;
+    const w = x1 - x0, h = y1 - y0;
+    const i = 0.3;
+    if (w < 1.2 || h < 1.2) continue;
+    // Выбираем стену «подальше от дверей» простым правилом: задняя стена комнаты
+    switch (rm.kind) {
+      case 'кухня':
+        if (plan.W * plan.D < 110) add(x1 - i - 1.5, y1 - i - 1.8, x1 - i, y1 - i, 'печь');
+        else add(x0 + i, y1 - i - 0.6, x0 + i + Math.min(2.4, w - 0.8), y1 - i, 'гарнитур');
+        add(x0 + w * 0.3, y0 + h * 0.3, x0 + w * 0.3 + 1.1, y0 + h * 0.3 + 0.8, 'стол');
+        add(x0 + i, y0 + i, x0 + i + 0.6, y0 + i + 0.6, 'плита');
+        break;
+      case 'комната':
+      case 'зал':
+        add(x0 + w * 0.2, y0 + h * 0.25, x1 - w * 0.2, y1 - h * 0.25, 'ковёр');
+        add(x1 - i - 0.9, y0 + i, x1 - i, y0 + i + Math.min(2.1, h - 0.8), 'диван');
+        add(x0 + i, y1 - i - 0.6, x0 + i + Math.min(1.8, w - 0.8), y1 - i, 'шкаф');
+        add((x0 + x1) / 2 - 0.5, (y0 + y1) / 2 - 0.35, (x0 + x1) / 2 + 0.5, (y0 + y1) / 2 + 0.35, 'стол');
+        break;
+      case 'спальня':
+        add(x1 - i - 1.6, y1 - i - 2.0, x1 - i, y1 - i, 'кровать');
+        if (w > 3.2) add(x0 + i, y1 - i - 2.0, x0 + i + 0.9, y1 - i, 'кровать');
+        add(x0 + i, y0 + i, x0 + i + Math.min(1.6, w - 0.8), y0 + i + 0.6, 'шкаф');
+        break;
+      case 'санузел':
+        add(x0 + i, y0 + i, x0 + i + 0.75, y0 + i + Math.min(1.7, h - 0.6), 'ванна');
+        add(x1 - i - 0.45, y1 - i - 0.65, x1 - i, y1 - i, 'унитаз');
+        break;
+      case 'котельная':
+        add(x0 + i, y0 + i, x0 + i + 0.8, y0 + i + 0.8, 'котёл');
+        break;
+      case 'сени':
+      case 'прихожая':
+        add(x0 + i, y0 + i, x0 + i + 0.4, y0 + i + Math.min(1.4, h - 0.6), 'вешалка');
+        if (w > 2.5) add(x1 - i - 0.8, y1 - i - 0.8, x1 - i, y1 - i, 'ящики');
+        break;
+      case 'веранда':
+        add(x1 - i - 1.4, y0 + i + 0.2, x1 - i, y0 + i + 0.9, 'стол');
+        add(x0 + i, y1 - i - 0.5, x0 + i + 1.2, y1 - i, 'ящики');
+        break;
+      case 'класс':
+        for (let x = x0 + 0.8; x < x1 - 1; x += 1.6) for (let y = y0 + 1.6; y < y1 - 0.6; y += 1.2) add(x, y, x + 1.1, y + 0.5, 'парта');
+        add((x0 + x1) / 2 - 0.8, y0 + 0.4, (x0 + x1) / 2 + 0.8, y0 + 1.0, 'стол');
+        break;
+      case 'кабинет':
+        add(x0 + w * 0.3, y0 + h * 0.3, x0 + w * 0.3 + 1.4, y0 + h * 0.3 + 0.7, 'стол');
+        add(x1 - i - 0.5, y0 + i, x1 - i, y1 - i, 'стеллаж');
+        break;
+      case 'цех':
+        for (let k = 0; k < Math.min(8, Math.floor(w * h / 60)); k++) {
+          const cx = x0 + 2 + rng.float(0, w - 4), cy = y0 + 2 + rng.float(0, h - 4);
+          add(cx - 1, cy - 0.6, cx + 1, cy + 0.6, rng.chance(0.5) ? 'станок' : 'ящики');
+        }
+        break;
+      case 'коровник':
+        for (let x = x0 + 1; x < x1 - 1; x += 1.4) { add(x, y0 + 0.4, x + 0.1, y0 + 2.2, 'стойло'); add(x, y1 - 2.2, x + 0.1, y1 - 0.4, 'стойло'); }
+        break;
+      case 'сарай':
+        add(x0 + i, y0 + i, x0 + i + Math.min(1.8, w - 0.6), y0 + i + 0.7, 'дрова');
+        if (h > 2.5) add(x1 - i - 0.9, y1 - i - 0.9, x1 - i, y1 - i, 'ящики');
+        break;
+      case 'бытовка':
+        add(x0 + i, y0 + i, x0 + i + 1.8, y0 + i + 0.7, 'стол');
+        break;
+    }
+  }
+  return out;
 }
 
 // Панельная многоэтажка: подъезды на фасаде (стороне двора), общий подвал
@@ -327,6 +465,8 @@ function toWorld(plan, b, front) {
     rooms: plan.rooms.map((r) => ({ poly: rectPoly(r.r), kind: r.kind, c: tw([(r.r[0] + r.r[2]) / 2, (r.r[1] + r.r[3]) / 2]) })),
     stairs: plan.stairs.map((st) => ({ p: tw(st.p), w: st.w, h: st.h, hatch: !!st.hatch })),
     columns: (plan.columns || []).map(tw),
+    furniture: (plan.furniture || []).map((f) => ({ poly: rectPoly(f.r), kind: f.kind })),
+    front: tn([0, -1]),
     floors: plan.floors,
     basement: null,
     angle: b.angle + rot,

@@ -561,6 +561,7 @@ function drawRoads(ctx, world, b, q, ppm) {
   // 1) обочины
   for (const { r, parts: ps } of parts)
     for (const p of ps) {
+      ctx.lineCap = r.type === 'street' || r.type === 'avenue' ? 'square' : 'round';
       if (r.type === 'dirt') strokeLine(ctx, p, r.width + 2, 'rgba(120,108,80,0.5)');
       else if (r.type === 'street' || r.type === 'avenue') strokeLine(ctx, p, r.width + 5, '#9b978c');
       else strokeLine(ctx, p, r.width + (r.type === 'highway' ? 6 : 4), '#9c9580');
@@ -568,6 +569,8 @@ function drawRoads(ctx, world, b, q, ppm) {
   // 2) покрытие
   for (const { r, parts: ps } of parts)
     for (const p of ps) {
+      // Городские улицы — с прямыми углами на перекрёстках, остальное — скруглённо
+      ctx.lineCap = r.type === 'street' || r.type === 'avenue' ? 'square' : 'round';
       switch (r.type) {
         case 'dirt':
           strokeLine(ctx, p, r.width, '#a0907a');
@@ -589,6 +592,7 @@ function drawRoads(ctx, world, b, q, ppm) {
           strokeLine(ctx, p, r.width, r.type === 'local' ? '#555653' : '#535350');
       }
     }
+  ctx.lineCap = 'round';
   // Мосты: парапеты
   for (const { r } of parts)
     for (const run of bridgeRuns(world, r)) drawParapets(ctx, run, r.width / 2 + 0.8);
@@ -672,6 +676,28 @@ function drawBuilding(ctx, bd, ppm) {
   const W = (u, v) => [bd.x + u * c - v * s, bd.y + u * s + v * c];
   const hw = bd.w / 2, hh = bd.h / 2;
 
+  if (bd.collapsed) {
+    // Обрушено: груда кирпича и бетона, торчат остатки стен
+    ctx.beginPath();
+    pathPoly(ctx, p);
+    ctx.fillStyle = '#7d756a';
+    ctx.fill();
+    const seed = Math.floor(bd.x * 13 + bd.y * 7);
+    const n = Math.min(60, Math.floor(bd.w * bd.h / 6) + 6);
+    for (let i = 0; i < n; i++) {
+      const [x, y] = W((hash2(i, 1, seed) - 0.5) * bd.w * 1.1, (hash2(i, 2, seed) - 0.5) * bd.h * 1.1);
+      const r = 0.4 + hash2(i, 3, seed) * 1.4;
+      ctx.fillStyle = i % 3 === 0 ? '#5c5349' : i % 3 === 1 ? '#9a8f80' : '#6e4a3a';
+      ctx.fillRect(x - r / 2, y - r / 2, r, r * 0.7);
+    }
+    ctx.lineWidth = 0.4;
+    ctx.strokeStyle = 'rgba(40,36,30,0.8)';
+    ctx.beginPath();
+    ctx.moveTo(p[0][0], p[0][1]); ctx.lineTo(p[1][0], p[1][1]);
+    ctx.stroke();
+    return;
+  }
+
   if (bd.style === 'car') {
     ctx.save();
     ctx.translate(bd.x, bd.y);
@@ -686,6 +712,29 @@ function drawBuilding(ctx, bd, ppm) {
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.fillRect(-hw + 0.25, -hh + 1.7, bd.w - 0.5, 1.6); // крыша
     ctx.restore();
+    return;
+  }
+  if (bd.style === 'well') {
+    ctx.fillStyle = '#8f8a7e';
+    ctx.beginPath(); ctx.arc(bd.x, bd.y, 0.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1e2426';
+    ctx.beginPath(); ctx.arc(bd.x, bd.y, 0.45, 0, Math.PI * 2); ctx.fill();
+    if (ppm >= 3) strokeLine(ctx, [W(-0.9, 0), W(0.9, 0)], 0.12, '#5a4332'); // ворот
+    return;
+  }
+  if (bd.style === 'woodpile') {
+    ctx.beginPath();
+    pathPoly(ctx, p);
+    ctx.fillStyle = '#7a5a3a';
+    ctx.fill();
+    if (ppm >= 3) {
+      ctx.fillStyle = '#b08a5e';
+      for (let u = -hw + 0.15; u < hw; u += 0.3)
+        for (let v = -hh + 0.15; v < hh; v += 0.3) {
+          const [x, y] = W(u, v);
+          ctx.beginPath(); ctx.arc(x, y, 0.1, 0, Math.PI * 2); ctx.fill();
+        }
+    }
     return;
   }
   if (bd.style === 'greenhouse') {
@@ -756,6 +805,33 @@ function drawBuilding(ctx, bd, ppm) {
     ctx.lineWidth = 0.18;
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     if (ppm >= 1) ctx.stroke();
+    // Застеклённая веранда вдоль фасада — светлая лёгкая кровля
+    if (bd.veranda && bd.interior?.front) {
+      const f = bd.interior.front;
+      const front = p.filter(([x, y]) => (x - bd.x) * f[0] + (y - bd.y) * f[1] > 0);
+      if (front.length === 2) {
+        const [a1, a2] = front;
+        const q = [a1, a2, [a2[0] - f[0] * bd.veranda, a2[1] - f[1] * bd.veranda], [a1[0] - f[0] * bd.veranda, a1[1] - f[1] * bd.veranda]];
+        ctx.beginPath();
+        pathPoly(ctx, q);
+        ctx.fillStyle = 'rgba(205,210,204,0.92)';
+        ctx.fill();
+        ctx.lineWidth = 0.15;
+        ctx.strokeStyle = 'rgba(60,60,55,0.6)';
+        ctx.stroke();
+        if (ppm >= 2) {
+          const L = Math.hypot(a2[0] - a1[0], a2[1] - a1[1]);
+          const tx = (a2[0] - a1[0]) / L, ty = (a2[1] - a1[1]) / L;
+          ctx.beginPath();
+          for (let t2 = 0.6; t2 < L; t2 += 0.6) {
+            ctx.moveTo(a1[0] + tx * t2, a1[1] + ty * t2);
+            ctx.lineTo(a1[0] + tx * t2 - f[0] * bd.veranda, a1[1] + ty * t2 - f[1] * bd.veranda);
+          }
+          ctx.lineWidth = 0.06;
+          ctx.stroke();
+        }
+      }
+    }
     // Печная труба
     if (bd.chimney && ppm >= 1.2) {
       const [cx, cy] = W(bd.chimney[0], bd.chimney[1]);
@@ -1005,7 +1081,12 @@ export function drawForts(ctx, world, q, ppm) {
   }
   // Насыпи блиндажей и капониров
   for (const f of items) {
-    if (f.kind === 'dugout') {
+    if (f.kind === 'dugout' && f.collapsed) {
+      ctx.fillStyle = '#3a3128';
+      ctx.beginPath(); ctx.arc(f.x, f.y, Math.max(f.w, f.h) * 0.6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(110,85,55,0.8)';
+      for (let i = 0; i < 8; i++) ctx.fillRect(f.x + Math.cos(i) * 2 - 1, f.y + Math.sin(i * 1.7) * 2, 2.2, 0.35); // брёвна наката
+    } else if (f.kind === 'dugout') {
       ctx.save();
       ctx.translate(f.x, f.y);
       ctx.rotate(f.angle);

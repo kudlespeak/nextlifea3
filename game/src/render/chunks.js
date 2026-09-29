@@ -4,8 +4,8 @@
 import { drawChunk } from './draw.js';
 
 export const CHUNK_PX = 512;
-export const LEVELS = [0.125, 0.25, 0.5, 1, 2, 4, 8];
-const MAX_CACHE = 180;
+export const LEVELS = [0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16];
+const MAX_CACHE = 200;
 
 export class ChunkCache {
   constructor(world) {
