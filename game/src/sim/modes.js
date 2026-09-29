@@ -93,10 +93,10 @@ export class GameMode {
       p = sim.nav.nearestPassable(p[0], p[1], 'wheeled') || p;
       const spawn = { x: p[0], y: p[1], dir };
       this.reserve[side] = new Reserve(sim, side, spawn);
-      // Склад и медпункт — рядом с пунктом сбора, чуть в тылу
-      const d = sim.nav.nearestPassable(p[0] - dir * 160, p[1] + 90, 'wheeled') || [p[0] - dir * 160, p[1] + 90];
-      sim.log.addDepot(side, d[0], d[1], side === 'blue' ? 'Склад «Тыл-1»' : 'Склад «Базис»');
-      sim.medpoints[side] = { x: p[0] - dir * 120, y: p[1] - 110 };
+      // Склады и медпункты строит сам игрок (вкладка «Резерв» → «Тыл»). Для старта —
+      // бесплатно грузовик снабжения и санитарная машина
+      this.reserve[side].gift('truck');
+      this.reserve[side].gift('medevac');
     }
   }
 

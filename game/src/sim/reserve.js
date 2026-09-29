@@ -59,6 +59,11 @@ export class Reserve {
     return null;
   }
 
+  // Бесплатное подразделение (стартовый комплект)
+  gift(type) {
+    this.queue.push({ type, at: this.sim.time + 3 + this.queue.length * 3 });
+  }
+
   update() {
     const sim = this.sim;
     while (this.queue.length && sim.time >= this.queue[0].at) {

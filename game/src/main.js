@@ -12,7 +12,9 @@ import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js'
 import { digTrench } from './forts.js';
 import { drawInteriors, buildingAtScreen } from './render/interiors.js';
 import { drawNight, drawFog } from './render/night.js';
-import { drawFront, drawZones, drawPrep, drawDepots, drawSpawns, drawInfra } from './render/modes.js';
+import { drawFront, drawZones, drawPrep, drawSpawns, drawInfra } from './render/modes.js';
+import { drawFacilities, drawPlacement } from './render/facilities.js';
+import { FACILITIES } from './sim/construct.js';
 import { RES, RES_NAMES } from './sim/logistics.js';
 import { daylight } from './power.js';
 import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, applyWorldEvent } from './net.js';
@@ -245,7 +247,8 @@ const dis = (u) => { if (u?.embarked) sim.disembark(u); return u; };
 const COMMANDS_IMPL = {
   move: (ids, x, y, stealth, direct) => {
     const us = unitsById(ids);
-    for (const u of us) if (u.cargoRes) { u.autoSupply = false; u.auto = false; } // ручной приказ грузовику — сам больше не ездит
+    // Ручной приказ приостанавливает автоматику (снабжение, санитарки, укрытие) на 3 минуты
+    for (const u of us) u.autoPause = sim.time + 180;
     sim.orderMove(us, x, y, { stealth, direct });
   },
   board: (id, vid) => { const u = unitsById([id])[0], v = unitsById([vid])[0]; if (u && v) sim.orderBoard(u, v); },
@@ -253,6 +256,10 @@ const COMMANDS_IMPL = {
   supply: (ids, on) => { for (const u of unitsById(ids)) if (u.cargoRes) { u.autoSupply = on; if (!on) u.supplyTask = null; } },
   ready: (side) => sim.game?.setReady(side),
   auto: (ids, on) => { for (const u of unitsById(ids)) { u.auto = on; if (u.cargoRes) u.autoSupply = on; } },
+  build: (side, kind, x, y) => {
+    const err = sim.build.place(side, kind, x, y);
+    if (err) sim.msg(`${FACILITIES[kind].name}: ${err}`, side);
+  },
   spawn: (side, type) => {
     const r = sim.game?.reserve?.[side];
     if (!r) return;
@@ -291,6 +298,7 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   if (e.button === 2) {
     if (orderMode === 'dig') { finishDig(); return; }
+    if (orderMode?.startsWith('build:')) { setOrderMode(null); return; }
     // Двойной ПКМ — напрямик
     const now = performance.now();
     const dbl = lastRight && now - lastRight.t < 380 && Math.hypot(e.clientX - lastRight.x, e.clientY - lastRight.y) < 24;
@@ -341,6 +349,14 @@ canvas.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinch = n
 
 function clickAt(cx, cy, additive, touch) {
   const [x, y] = screenToWorld(cx, cy);
+  if (orderMode?.startsWith('build:')) {
+    const kind = orderMode.slice(6);
+    const err = sim.build.check(controlSide, kind, x, y);
+    if (err) { log(`${FACILITIES[kind].name}: ${err}`); return; }
+    issue('build', controlSide, kind, x, y);
+    setOrderMode(null);
+    return;
+  }
   if (orderMode === 'strike') { if (role !== 'guest') sim.art.explode(x, y, 152, fireOpts.fuse); return; }
   if (orderMode === 'dig') { dig.points.push([x, y]); updateHint(); return; }
   if (orderMode && ui.selected.size) { orderAt(cx, cy); return; }
@@ -848,6 +864,21 @@ function buildReserve() {
   info.className = 'res-info';
   info.id = 'res-info';
   box.appendChild(info);
+  {
+    const h = document.createElement('div');
+    h.className = 'group-title';
+    h.textContent = 'Тыл — поставить на карте';
+    box.appendChild(h);
+    for (const [kind, F] of Object.entries(FACILITIES)) {
+      const row = document.createElement('div');
+      row.className = 'res-row';
+      row.dataset.build = kind;
+      row.innerHTML = `<div style="font:700 20px 'PT Sans';text-align:center;color:${kind === 'medpoint' ? '#ff6b6b' : 'var(--accent-2)'}">${kind === 'medpoint' ? '✚' : '▦'}</div><div><div class="nm">${F.name}</div><div class="ds">${kind === 'depot' ? 'снабжает всех рядом, грузовики берут груз' : 'сюда везут раненых'}</div></div><div class="cs">${F.cost}</div>`;
+      row.title = 'Выбрать место на карте: своя территория, рядом с дорогой';
+      row.onclick = () => setOrderMode(orderMode === 'build:' + kind ? null : 'build:' + kind);
+      box.appendChild(row);
+    }
+  }
   for (const [name, types] of RES_GROUPS) {
     const ts = types.filter((t) => UNIT_TYPES[t] && r.avail[t] !== undefined);
     if (!ts.length) continue;
@@ -888,7 +919,14 @@ function updateReserve() {
   if (rosterTab !== 'reserve') return;
   const info = $('res-info');
   if (info) info.innerHTML = `Очки подкрепления: <b>${Math.floor(r.points)}</b> (+${INCOME}/мин). Нажмите на подразделение — оно прибудет на <b>пункт сбора</b> (флаг на карте)${sim.game.prep ? ', во время подготовки — почти сразу' : ''}.`;
-  for (const row of document.querySelectorAll('#reserve-list .res-row')) {
+  for (const row of document.querySelectorAll('#reserve-list .res-row[data-build]')) {
+    const kind = row.dataset.build, F = FACILITIES[kind];
+    const n = sim.build.list(controlSide, kind).length;
+    row.classList.toggle('off', r.points < F.cost || n >= F.max);
+    row.classList.toggle('sel', orderMode === 'build:' + kind);
+    row.querySelector('.ds').textContent = `${kind === 'depot' ? 'снабжает всех рядом' : 'сюда везут раненых'} · построено ${n}/${F.max}`;
+  }
+  for (const row of document.querySelectorAll('#reserve-list .res-row[data-type]')) {
     const t = row.dataset.type;
     const n = r.avail[t] ?? 0;
     row.classList.toggle('off', !r.canOrder(t));
@@ -1018,6 +1056,11 @@ function updateHint() {
   else if (orderMode === 'occupy') text = '<b>Занять</b>: траншею или здание';
   else if (orderMode === 'move') text = '<b>Идти</b>: укажите точку';
   else if (orderMode === 'strike') text = '<b>Удар 152 мм (тест)</b>: клик — разрыв';
+  else if (orderMode?.startsWith('build:')) {
+    const kind = orderMode.slice(6);
+    const err = sim.build.check(controlSide, kind, x, y);
+    text = err ? `<b>${FACILITIES[kind].name}</b>: ${err}` : `<b>${FACILITIES[kind].name}</b> · ${FACILITIES[kind].cost} очков · ЛКМ — поставить, ПКМ — отмена`;
+  }
   else if (units.length && !ui.soldier) {
     const v = pickUnit(sim, view, mouse[0] * dpr, mouse[1] * dpr, controlSide);
     const riders = units.filter((u) => u.soldiers && u !== v && u.embarked !== v);
@@ -1159,7 +1202,7 @@ function drawMinimap() {
     mctx.beginPath(); mctx.arc(z.x * miniScale, z.y * miniScale, Math.max(4, z.r * miniScale), 0, Math.PI * 2); mctx.stroke();
   }
   const fog = fogSide();
-  for (const d of sim.log.depots) {
+  for (const d of [...sim.log.depots, ...sim.medpoints.blue, ...sim.medpoints.red]) {
     if (fog && d.side !== fog && !d.spotted) continue;
     mctx.fillStyle = d.alive ? SIDES[d.side].fill : '#777';
     mctx.strokeStyle = '#000';
@@ -1382,7 +1425,12 @@ function frameBody(now) {
   if (fog) drawFog(ctx, sim, view, fog);
   drawZones(ctx, sim.game, view);
   drawPrep(ctx, sim.game, view, controlSide);
-  drawDepots(ctx, sim, view, fog);
+  drawFacilities(ctx, sim, view, fog);
+  if (orderMode?.startsWith('build:') && mouse) {
+    const kind = orderMode.slice(6);
+    const [bx, by] = screenToWorld(mouse[0], mouse[1]);
+    drawPlacement(ctx, view, kind, controlSide, bx, by, !sim.build.check(controlSide, kind, bx, by));
+  }
   drawSpawns(ctx, sim.game, view, fog ? controlSide : null);
   drawInfra(ctx, world, sim, view, controlSide, fog);
   drawArtyOverlay();

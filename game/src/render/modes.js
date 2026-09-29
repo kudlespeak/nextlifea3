@@ -203,54 +203,6 @@ export function drawPrep(ctx, game, view, side) {
   ctx.fillText('Линия разграничения — до начала боя дальше не выдвигаться', x + (side === 'blue' ? -8 : 8) * dpr, 70 * dpr);
 }
 
-// Склады снабжения
-export function drawDepots(ctx, sim, view, fogSide) {
-  const { cam, canvas, dpr } = view;
-  const z = cam.zoom;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  for (const d of sim.log.depots) {
-    if (fogSide && d.side !== fogSide && !d.spotted) continue;
-    const x = (d.x - cam.x) * z + canvas.width / 2, y = (d.y - cam.y) * z + canvas.height / 2;
-    if (x < -80 || y < -80 || x > canvas.width + 80 || y > canvas.height + 80) continue;
-    // Вблизи — штабеля ящиков и бочки
-    if (z > 1.2 * dpr) {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(z, z);
-      const rnd = (i) => ((Math.sin(i * 127.1 + d.id * 31.7) * 43758.5) % 1 + 1) % 1;
-      for (let i = 0; i < 14; i++) {
-        const bx = -14 + (i % 5) * 6.5, by = -9 + Math.floor(i / 5) * 7;
-        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(bx + 0.6, by + 0.6, 4.6, 3);
-        ctx.fillStyle = d.alive ? (i % 3 ? '#6b6242' : '#5b6a44') : '#2b2622';
-        ctx.fillRect(bx, by, 4.6, 3);
-      }
-      for (let i = 0; i < 8; i++) {
-        ctx.fillStyle = d.alive ? '#3d4a3a' : '#1f1c1a';
-        ctx.beginPath(); ctx.arc(10 + (i % 4) * 1.6, 12 + Math.floor(i / 4) * 1.6 + rnd(i) * 0.3, 0.7, 0, Math.PI * 2); ctx.fill();
-      }
-      ctx.strokeStyle = 'rgba(40,40,30,0.8)'; ctx.lineWidth = 0.3;
-      ctx.strokeRect(-18, -13, 36, 30);
-      ctx.restore();
-    }
-    const s = 11 * dpr;
-    ctx.fillStyle = d.alive ? FACTIONS[d.side].fill : '#777';
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 1.5 * dpr;
-    ctx.beginPath(); ctx.rect(x - s, y - s * 0.75 - (z > 1.2 * dpr ? 24 * z : 0), s * 2, s * 1.5); ctx.fill(); ctx.stroke();
-    const yy = y - (z > 1.2 * dpr ? 24 * z : 0);
-    ctx.beginPath(); ctx.moveTo(x - s, yy + s * 0.35); ctx.lineTo(x + s, yy + s * 0.35); ctx.stroke();
-    ctx.font = `700 ${11 * dpr}px "PT Sans", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    const own = !fogSide || d.side === fogSide;
-    const t = d.alive ? (own ? `${d.name} · П ${Math.round(d.stock.ammo)} · С ${Math.round(d.stock.shells)} · Т ${Math.round(d.stock.fuel)}` : d.name) : `${d.name} (уничтожен)`;
-    ctx.lineWidth = 3 * dpr;
-    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-    ctx.strokeText(t, x, yy + s);
-    ctx.fillStyle = '#f2eee2';
-    ctx.fillText(t, x, yy + s);
-  }
-}
 
 // Значки ключевых объектов и разведданные: подстанции, ТП, склады, медпункты,
 // засечённые батареи противника. Видны на любом масштабе, чтобы объекты легко находить.
@@ -303,13 +255,6 @@ export function drawInfra(ctx, world, sim, view, side, fog) {
       const pw = tpPowered(world, i);
       badge(ctx, x, y, dpr * 0.8, pw ? '#e8c65a' : '#ef5a4a', 'ТП', z > 0.8 * dpr ? (tp.alive ? (pw ? '' : 'обесточена') : 'разрушена') : '', '', !pw);
     });
-  }
-  // Медпункты своей стороны (и чужие — без тумана)
-  for (const s of ['blue', 'red']) {
-    const m = sim.medpoints?.[s];
-    if (!m || (fog && s !== fog)) continue;
-    const [x, y] = toS(m.x, m.y);
-    if (on(x, y)) badge(ctx, x, y, dpr, '#ff7a7a', '✚', showLabels ? 'Медпункт' : '', '', false);
   }
   // Разведданные своей стороны
   const intel = sim.intel?.[side] || [];

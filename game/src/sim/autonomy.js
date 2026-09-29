@@ -24,7 +24,7 @@ export class Autonomy {
     this.next = sim.time + 2;
     if (sim.puppet) return;
     for (const u of sim.units) {
-      if (u.dead || u.embarked || u.auto === false) continue;
+      if (u.dead || u.embarked || u.auto === false || u.autoPause > sim.time) continue;
       if (u.soldiers) this.infantry(u);
       else if (u.type === 'medevac') this.medevac(u);
       else if (['tank', 'ifv', 'apc', 'armcar', 'spg', 'btm'].includes(u.type)) this.vehicle(u);
@@ -38,7 +38,9 @@ export class Autonomy {
   infantry(u) {
     const sim = this.sim;
     // Перевязанных тяжелораненых — эвакуировать
-    if (u.soldiers.some((s) => !s.dead && s.wounded === 2 && !s.evacMove && s.treated) && sim.time - (u.lastEvac || -1e9) > 30 && sim.evacDest(u)) {
+    // (если к отделению уже едет санитарка — ждём её, а не несём раненых навстречу)
+    const medComing = sim.units.some((v) => v.type === 'medevac' && !v.dead && v.medTarget === u && v.state === 'moving');
+    if (!medComing && u.soldiers.some((s) => !s.dead && s.wounded === 2 && !s.evacMove && s.treated) && sim.time - (u.lastEvac || -1e9) > 30 && sim.evacDest(u)) {
       u.lastEvac = sim.time;
       sim.orderEvac(u);
     }
@@ -105,11 +107,11 @@ export class Autonomy {
   medevac(v) {
     const sim = this.sim;
     if (v.state !== 'idle' || sim.queue.some((q) => q.unit === v)) return;
-    const med = sim.medpoints[v.side];
+    const med = sim.nearestMed(v.side, v.x, v.y);
     const waiting = sim.units.filter((u) => u.side === v.side && u.soldiers && !u.dead && !u.embarked &&
       u.soldiers.some((s) => !s.dead && s.wounded === 2 && !s.evac));
     if (v.cargo >= 4 || (v.cargo > 0 && !waiting.length)) {
-      if (med && Math.hypot(v.x - med.x, v.y - med.y) > 60) { v.medTask = 'везёт раненых в медпункт'; sim.orderMove([v], med.x, med.y); }
+      if (med && Math.hypot(v.x - med.x, v.y - med.y) > 60) { v.medTask = `везёт раненых: ${med.name}`; sim.orderMove([v], med.x, med.y); }
       return;
     }
     // Ближайшее отделение с ранеными, не под плотным огнём
@@ -119,13 +121,14 @@ export class Autonomy {
       const d = Math.hypot(u.x - v.x, u.y - v.y);
       if (d < bd) { bd = d; best = u; }
     }
+    v.medTarget = best;
     if (!best) return;
-    if (bd > 120) {
-      // Подъехать на 60–80 м с тыльной стороны
+    if (bd > 70) {
+      // Подъехать на 30–40 м с тыльной стороны — носить недалеко
       const a = Math.atan2(v.y - best.y, v.x - best.x);
       v.medTask = `едет за ранеными: ${best.label}`;
-      sim.orderMove([v], best.x + Math.cos(a) * 70, best.y + Math.sin(a) * 70);
-    } else if (best.auto !== false && sim.time - (best.lastEvac || -1e9) > 20) {
+      sim.orderMove([v], best.x + Math.cos(a) * 35, best.y + Math.sin(a) * 35);
+    } else if (best.soldiers.some((s) => !s.dead && s.wounded === 2 && !s.evacMove) && sim.time - (best.lastEvac || -1e9) > 10) {
       best.lastEvac = sim.time;
       sim.orderEvac(best);
     }

@@ -17,6 +17,7 @@ import { AI } from './ai.js';
 import { RoadGraph } from './roads.js';
 import { Logistics } from './logistics.js';
 import { Autonomy } from './autonomy.js';
+import { Construction } from './construct.js';
 
 // Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
 export const POSES = {
@@ -159,7 +160,8 @@ export class Sim {
     this.drones = new Drones(this);
     this.log = new Logistics(this);
     this.auto = new Autonomy(this);
-    this.medpoints = { blue: null, red: null };
+    this.build = new Construction(this);
+    this.medpoints = { blue: [], red: [] }; // медпункты, которые построил игрок / ИИ
     this.intel = { blue: [], red: [] }; // разведданные стороны: засечённые батареи и т.п.
     this.stats = { blue: { kia: 0, wia: 0, evac: 0, lostVeh: 0 }, red: { kia: 0, wia: 0, evac: 0, lostVeh: 0 } };
     this.puppet = false;
@@ -192,7 +194,7 @@ export class Sim {
   orderEvac(u) {
     if (!u.soldiers) return false;
     const pats = u.soldiers.filter((s) => !s.dead && s.wounded === 2 && !s.evacMove);
-    if (!pats.length) { this.msg(`${u.label}: тяжелораненых нет`, u.side); return false; }
+    if (!pats.length) { if (!u.soldiers.some((s) => s.evacMove)) this.msg(`${u.label}: тяжелораненых нет`, u.side); return false; }
     const dest = this.evacDest(u);
     if (!dest) { this.msg(`${u.label}: некуда эвакуировать — нет транспорта и медпункта`, u.side); return false; }
     const carriers = this.act(u).filter((s) => s.role !== 'Медик');
@@ -202,10 +204,11 @@ export class Sim {
       const delay = c ? Math.hypot(c.x - p.x, c.y - p.y) / 2 + 2 : 0;
       p.path = [{ x: p.x, y: p.y, under: p.under }, ...route.map(([x, y]) => ({ x, y, under: false }))];
       p.pathIdx = 1; p.mode = 'path'; p.speed = 1.0; p.startAt = this.time + delay; p.face = null;
-      p.evacMove = true; p.evacUnit = u; p.evacDest = dest;
+      p.evacMove = true; p.evacUnit = u; p.evacDest = { ...dest }; // своя копия: точку обновляем, если машина переехала
       if (c) {
         c.path = [{ x: c.x, y: c.y, under: c.under }, { x: p.x + 0.7, y: p.y, under: p.under }, ...route.map(([x, y]) => ({ x: x + 0.7, y, under: false }))];
         c.pathIdx = 1; c.mode = 'path'; c.speed = 1.6; c.startAt = 0; c.face = null; c.afterPath = 'follow';
+        c.carrying = p;
         // Носильщик ждёт у раненого, чтобы идти вместе
         c.path[1].wait = Math.max(0, delay - Math.hypot(c.x - p.x, c.y - p.y) / 1.6);
       }
@@ -223,8 +226,21 @@ export class Sim {
       if (d < bd) { bd = d; best = v; }
     }
     if (best) return { x: best.x, y: best.y, vehicle: best, label: best.label };
-    const m = this.medpoints[u.side];
-    return m ? { x: m.x, y: m.y, label: 'медпункт' } : null;
+    const m = this.nearestMed(u.side, u.x, u.y);
+    return m ? { x: m.x, y: m.y, label: m.name } : null;
+  }
+
+  // Ближайший работающий медпункт; если своих нет — тыл (пункт сбора)
+  nearestMed(side, x, y) {
+    let best = null, bd = Infinity;
+    for (const m of this.medpoints[side]) {
+      if (!m.alive || m.built < 1) continue;
+      const d = Math.hypot(m.x - x, m.y - y);
+      if (d < bd) { bd = d; best = m; }
+    }
+    if (best) return best;
+    const sp = this.game?.reserve?.[side]?.spawn;
+    return sp ? { x: sp.x, y: sp.y, name: 'тыл (пункт сбора)', rear: true } : null;
   }
 
   // Пеший маршрут: вблизи — точная сетка, далеко — общая
@@ -240,6 +256,8 @@ export class Sim {
 
   evacArrive(s) {
     const u = s.evacUnit, dest = s.evacDest;
+    // Носильщик возвращается к своим
+    for (const c of u.soldiers) if (c.carrying === s) { c.carrying = null; c.path = null; c.mode = u.mode === 'field' ? 'follow' : 'hold'; }
     s.evacMove = false;
     s.evac = true;
     s.dead = true; // выбыл из подразделения (жив, но эвакуирован)
@@ -811,17 +829,34 @@ export class Sim {
     this.combat.update(dt);
     this.auto.update();
     this.log.update(dt);
+    this.build.update(dt);
     this.game?.update(dt);
     for (const side of ['blue', 'red']) this.intel[side] = this.intel[side].filter((m) => m.until > this.time);
     for (const ai of this.ais || []) ai.update();
     // Санитарные машины и транспорт сдают раненых в медпункте
     for (const v of this.units) {
       if (v.dead || !v.cargo) continue;
-      const m = this.medpoints[v.side];
-      if (m && Math.hypot(v.x - m.x, v.y - m.y) < 70) {
+      const m = this.nearestMed(v.side, v.x, v.y);
+      if (m && Math.hypot(v.x - m.x, v.y - m.y) < 80) {
         this.stats[v.side].evac += v.cargo;
-        this.msg(`${v.label}: доставлено в медпункт ${v.cargo} раненых`, v.side);
+        this.msg(`${v.label}: доставлено раненых — ${v.cargo} (${m.name})`, v.side);
         v.cargo = 0;
+      }
+    }
+    // Раненый рядом с машиной, в которую его несут, — грузим сразу (машина могла подъехать сама)
+    for (const u of this.units) {
+      if (!u.soldiers) continue;
+      for (const s of u.soldiers) {
+        const v = s.evacMove && s.evacDest?.vehicle;
+        if (!v || v.dead) continue;
+        if (Math.hypot(s.x - v.x, s.y - v.y) < 14) { this.evacArrive(s); continue; }
+        // Машина переехала — несём к ней, а не к старой точке
+        if (Math.hypot(v.x - s.evacDest.x, v.y - s.evacDest.y) > 20) {
+          s.evacDest.x = v.x; s.evacDest.y = v.y;
+          s.path = [{ x: s.x, y: s.y, under: false }, { x: v.x, y: v.y, under: false }];
+          s.pathIdx = 1;
+          for (const c of u.soldiers) if (c.carrying === s && c.mode === 'path') { c.path = [{ x: c.x, y: c.y, under: false }, { x: v.x + 0.7, y: v.y, under: false }]; c.pathIdx = 1; }
+        }
       }
     }
     for (const u of this.units) {

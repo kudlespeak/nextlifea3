@@ -55,6 +55,7 @@ export class AI {
   buy() {
     const res = this.sim.game?.reserve?.[this.side];
     if (!res) return;
+    this.buildRear(res);
     for (let tries = 0; tries < this.plan.length; tries++) {
       const t = this.plan[this.planIdx % this.plan.length];
       if (!this.sim.unitTypes[t] || (res.avail[t] ?? 0) <= 0) { this.planIdx++; continue; }
@@ -62,6 +63,19 @@ export class AI {
       res.order(t, this.sim.unitTypes[t].move);
       this.planIdx++;
       return;
+    }
+  }
+
+  // Склад и медпункт — у пункта сбора, чуть в тылу (как поставил бы игрок)
+  buildRear(res) {
+    const sim = this.sim;
+    for (const kind of ['medpoint', 'depot']) {
+      if (sim.build.list(this.side, kind).length) continue;
+      const sp = res.spawn;
+      for (let k = 0; k < 24; k++) {
+        const x = sp.x - this.dir * (150 + (k % 4) * 80), y = sp.y + (Math.floor(k / 4) - 2.5) * 110 + (kind === 'depot' ? 60 : -60);
+        if (!sim.build.check(this.side, kind, x, y)) { sim.build.place(this.side, kind, x, y); break; }
+      }
     }
   }
 

@@ -123,13 +123,13 @@ export class Logistics {
     // Подвоз из тыла
     if (sim.time >= this.nextFlow) {
       this.nextFlow = sim.time + 600;
-      for (const d of this.depots) if (d.alive) for (const r of RES) d.stock[r] = Math.min(d.cap[r], d.stock[r] + DEPOT_FLOW[r]);
+      for (const d of this.depots) if (d.alive && (d.built ?? 1) >= 1) for (const r of RES) d.stock[r] = Math.min(d.cap[r], d.stock[r] + DEPOT_FLOW[r]);
     }
     for (const u of sim.units) {
       if (u.dead || u.embarked) continue;
       // Склад снабжает всех рядом (и грузит грузовики)
       for (const d of this.depots) {
-        if (!d.alive || d.side !== u.side || Math.hypot(u.x - d.x, u.y - d.y) > RANGE_DEPOT) continue;
+        if (!d.alive || (d.built ?? 1) < 1 || d.side !== u.side || Math.hypot(u.x - d.x, u.y - d.y) > RANGE_DEPOT) continue;
         if (u.cargoRes) {
           for (const r of RES) { const q = Math.min(u.cap[r] - u.cargoRes[r], d.stock[r], 12 * step); u.cargoRes[r] += q; d.stock[r] -= q; }
         }
@@ -145,7 +145,7 @@ export class Logistics {
         const moved = this.give(t.cargoRes, u, 2 * step);
         if (moved > 0) t.supplying = sim.time;
       }
-      if (t.autoSupply && !sim.game?.prep) this.autoTruck(t);
+      if (t.autoSupply && !sim.game?.prep && !(t.autoPause > sim.time)) this.autoTruck(t);
     }
   }
 
@@ -190,7 +190,7 @@ export class Logistics {
   nearestDepot(u) {
     let best = null, bd = Infinity;
     for (const d of this.depots) {
-      if (!d.alive || d.side !== u.side) continue;
+      if (!d.alive || (d.built ?? 1) < 1 || d.side !== u.side) continue;
       const dd = Math.hypot(d.x - u.x, d.y - u.y);
       if (dd < bd) { bd = dd; best = d; }
     }

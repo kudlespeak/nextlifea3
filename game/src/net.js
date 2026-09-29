@@ -44,7 +44,9 @@ export function makeSnapshot(sim) {
   const snap = { t: 'snap', time: r1(sim.time), units, shells, drones, fires: (sim.fires || []).map((f) => [r1(f.x), r1(f.y), f.r, r1(f.until)]) };
   snap.intel = { blue: sim.intel.blue.map((m) => [m.kind, r1(m.x), r1(m.y), Math.round(m.r), r1(m.t), r1(m.until), m.label]), red: sim.intel.red.map((m) => [m.kind, r1(m.x), r1(m.y), Math.round(m.r), r1(m.t), r1(m.until), m.label]) };
   snap.smokes = (sim.smokes || []).map((s) => [r1(s.x), r1(s.y), s.r, r1(s.t0), r1(s.until)]);
-  snap.depots = sim.log.depots.map((d) => [Math.round(d.stock.ammo), Math.round(d.stock.shells), Math.round(d.stock.fuel), d.alive ? 1 : 0, d.spotted ? 1 : 0]);
+  // Тыловые объекты: гость создаёт их по снимку
+  const fac = (kind, f) => [kind, f.id, f.side, r1(f.x), r1(f.y), r2(f.angle || 0), r2(f.built ?? 1), f.alive ? 1 : 0, f.spotted ? 1 : 0, f.name, f.stock ? [Math.round(f.stock.ammo), Math.round(f.stock.shells), Math.round(f.stock.fuel)] : 0];
+  snap.fac = [...sim.log.depots.map((d) => fac('depot', d)), ...sim.medpoints.blue.map((m) => fac('medpoint', m)), ...sim.medpoints.red.map((m) => fac('medpoint', m))];
   if (g) {
     snap.prep = g.prep ? 1 : 0; snap.prepEnd = g.prepEnd; snap.ready = g.ready;
     snap.zones = g.zones.map((z) => [z.owner, r2(z.prog), z.blue || 0, z.red || 0, z.contested ? 1 : 0, z.locked ? 1 : 0]);
@@ -137,7 +139,18 @@ export function applySnapshot(sim, snap) {
   }
   if (snap.intel) for (const side of ['blue', 'red']) sim.intel[side] = snap.intel[side].map((q) => ({ kind: q[0], x: q[1], y: q[2], r: q[3], t: q[4], until: q[5], label: q[6] }));
   if (snap.smokes) { sim.smokes.length = 0; for (const q of snap.smokes) sim.smokes.push({ x: q[0], y: q[1], r: q[2], t0: q[3], until: q[4] }); }
-  (snap.depots || []).forEach((q, i) => { const d = sim.log.depots[i]; if (!d) return; d.stock = { ammo: q[0], shells: q[1], fuel: q[2] }; d.alive = !!q[3]; d.spotted = !!q[4]; });
+  if (snap.fac) {
+    const depots = [], meds = { blue: [], red: [] };
+    const old = new Map([...sim.log.depots, ...sim.medpoints.blue, ...sim.medpoints.red].map((f) => [f.id, f]));
+    for (const q of snap.fac) {
+      const f = old.get(q[1]) || { id: q[1], kind: q[0], cap: { ammo: 1200, shells: 1600, fuel: 700 } };
+      Object.assign(f, { side: q[2], x: q[3], y: q[4], angle: q[5], built: q[6], alive: !!q[7], spotted: !!q[8], name: q[9] });
+      if (q[10]) f.stock = { ammo: q[10][0], shells: q[10][1], fuel: q[10][2] };
+      if (q[0] === 'depot') depots.push(f); else meds[f.side].push(f);
+    }
+    sim.log.depots = depots;
+    sim.medpoints.blue = meds.blue; sim.medpoints.red = meds.red;
+  }
 }
 
 export function applyGrid(sim, pkt) {
