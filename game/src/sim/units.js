@@ -892,24 +892,7 @@ export class Sim {
       if (s.dead) { s.pose = 'dead'; continue; }
       if (s.wounded === 2 && !s.evacMove) { s.pose = 'prone'; s.moving = false; continue; }
       if (s.mode === 'follow') {
-        const [ox, oy] = formationOffset(s.idx, column);
-        const tx = u.x + ox * c - oy * sn, ty = u.y + ox * sn + oy * c;
-        const dx = tx - s.x, dy = ty - s.y;
-        const d = Math.hypot(dx, dy);
-        if (d > 0.2) {
-          const v = Math.min(4, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1) * (s.supp > 6 ? 0.5 : 1);
-          const step = Math.min(d, v * dt);
-          const nx = s.x + (dx / d) * step, ny = s.y + (dy / d) * step;
-          // Сквозь дома не ходим — скользим вдоль стены
-          if (!this.solidAt(nx, ny) || this.solidAt(s.x, s.y)) { s.x = nx; s.y = ny; }
-          else if (!this.solidAt(nx, s.y)) s.x = nx;
-          else if (!this.solidAt(s.x, ny)) s.y = ny;
-          // Разворот плавный, а не мгновенный
-          const want = Math.atan2(dy, dx);
-          s.heading += Math.atan2(Math.sin(want - s.heading), Math.cos(want - s.heading)) * Math.min(1, dt * 8);
-          s.moving = step > 0.02 * dt * 60 || u.state === 'moving';
-          s.walk = (s.walk || 0) + step;
-        } else if (u.state !== 'moving') s.heading += Math.atan2(Math.sin(u.heading - s.heading), Math.cos(u.heading - s.heading)) * Math.min(1, dt * 4);
+        this.followLoose(u, s, dt, column, c, sn);
       } else if (s.mode === 'dig') {
         const dx = s.tx - s.x, dy = s.ty - s.y;
         const d = Math.hypot(dx, dy);
@@ -971,6 +954,102 @@ export class Sim {
     }
   }
 
+  // Боец идёт за отделением не «по линейке»: свободный строй с личным смещением и темпом,
+  // под огнём — перебежки (половина бежит, половина лежит и прикрывает), на остановке —
+  // каждый занимает ближайшее укрытие (воронка, дерево, угол дома).
+  followLoose(u, s, dt, column, c, sn) {
+    const t = this.time;
+    if (s.pace === undefined) {
+      const h = ((s.idx * 7919 + u.id * 104729) % 1000) / 1000;
+      s.pace = 0.88 + h * 0.24;
+      s.jx = s.jy = s.jtx = s.jty = 0; s.jt = 0; s.v = 0;
+    }
+    if (t > s.jt) {
+      s.jt = t + 2 + this.rng.next() * 3;
+      const k = column ? 0.6 : 2.2;
+      s.jtx = (this.rng.next() - 0.5) * 2 * k; s.jty = (this.rng.next() - 0.5) * 2 * k;
+    }
+    const kj = Math.min(1, dt * 0.6);
+    s.jx += (s.jtx - s.jx) * kj; s.jy += (s.jty - s.jy) * kj;
+    const spread = column ? 1 : 1.35;
+    const [ox0, oy0] = formationOffset(s.idx, column);
+    const ox = ox0 * spread + s.jx, oy = oy0 * spread + s.jy;
+    let tx = u.x + ox * c - oy * sn, ty = u.y + ox * sn + oy * c;
+    const moving = u.state === 'moving';
+    // Перебежки под огнём: чётные и нечётные меняются каждые ~6 с
+    s.bounding = false;
+    if (moving && !column && u.underFire && t - u.underFire < 15) {
+      const phase = Math.floor(t / 6) % 2;
+      if (s.idx % 2 === phase && s.idx !== 0) {
+        s.bounding = true;
+        // Лежит и прикрывает, пока не отстанет больше чем на 12 м
+        if (Math.hypot(tx - s.x, ty - s.y) < 12) { tx = s.x; ty = s.y; }
+      }
+    }
+    // Остановка в поле — к ближайшему укрытию
+    if (!moving && u.mode === 'field') {
+      if (!s.cover || t > (s.coverCheck || 0)) {
+        s.coverCheck = t + 10;
+        s.cover = this.findCover(u, s, tx, ty);
+      }
+      if (s.cover) { tx = s.cover[0]; ty = s.cover[1]; }
+    } else s.cover = null;
+    const dx = tx - s.x, dy = ty - s.y;
+    const d = Math.hypot(dx, dy);
+    s.inCover = !!s.cover && d < 1.2;
+    if (d > 0.25) {
+      const want = Math.min(4, d * 1.1 + (moving ? u.speed : 0)) * s.pace * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1) * (s.supp > 6 ? 0.5 : 1);
+      // Разгон и торможение, а не мгновенная скорость
+      s.v += Math.max(-4 * dt, Math.min(3 * dt, want - s.v));
+      const step = Math.min(d, Math.max(0, s.v) * dt);
+      const nx = s.x + (dx / d) * step, ny = s.y + (dy / d) * step;
+      // Сквозь дома не ходим — скользим вдоль стены
+      if (!this.solidAt(nx, ny) || this.solidAt(s.x, s.y)) { s.x = nx; s.y = ny; }
+      else if (!this.solidAt(nx, s.y)) s.x = nx;
+      else if (!this.solidAt(s.x, ny)) s.y = ny;
+      const wantH = Math.atan2(dy, dx);
+      s.heading += Math.atan2(Math.sin(wantH - s.heading), Math.cos(wantH - s.heading)) * Math.min(1, dt * 6);
+      s.moving = step > 0.01;
+      s.walk = (s.walk || 0) + step;
+    } else {
+      s.v = 0;
+      // Стоит: осматривается — в сторону противника с небольшими поворотами головы
+      const e = SIDES[u.side].enemy;
+      const look = Math.atan2(e[1], e[0]) + Math.sin(t * 0.3 + s.idx * 1.7) * 0.9;
+      s.heading += Math.atan2(Math.sin(look - s.heading), Math.cos(look - s.heading)) * Math.min(1, dt * 1.5);
+    }
+  }
+
+  // Ближайшее свободное укрытие в 16 м: воронки, деревья, углы домов
+  findCover(u, s, x, y) {
+    const R = 16;
+    const taken = u.soldiers.filter((q) => q !== s && q.cover).map((q) => q.cover);
+    const free = (px, py) => taken.every((c) => Math.hypot(c[0] - px, c[1] - py) > 2.2);
+    let best = null, bd = R;
+    const e = SIDES[u.side].enemy;
+    for (const c of this.world.scars.query({ x0: x - R, y0: y - R, x1: x + R, y1: y + R })) {
+      if (c.kind !== 'crater' || c.r < 1.1) continue;
+      const d = Math.hypot(c.x - x, c.y - y);
+      if (d < bd && free(c.x, c.y)) { bd = d; best = [c.x, c.y]; }
+    }
+    this.world.trees.forEach({ x0: x - R, y0: y - R, x1: x + R, y1: y + R }, (arr, i) => {
+      if (arr[i + 2] < 2) return;
+      // За стволом — со стороны своих
+      const px = arr[i] - e[0] * 1.2, py = arr[i + 1] - e[1] * 1.2;
+      const d = Math.hypot(px - x, py - y) + 1.5; // воронка предпочтительнее
+      if (d < bd && free(px, py) && !this.solidAt(px, py)) { bd = d; best = [px, py]; }
+    });
+    for (const b of this.world.buildings.query({ x0: x - R, y0: y - R, x1: x + R, y1: y + R })) {
+      if (b.collapsed || !b.poly) continue;
+      for (const p of b.poly) {
+        const px = p[0] - e[0] * 1.3 + (p[0] - b.x) * 0.12, py = p[1] - e[1] * 1.3 + (p[1] - b.y) * 0.12;
+        const d = Math.hypot(px - x, py - y) + 1;
+        if (d < bd && free(px, py) && !this.solidAt(px, py)) { bd = d; best = [px, py]; }
+      }
+    }
+    return best;
+  }
+
   // Поза: ручная, либо по обстановке
   poseOf(u, s) {
     if (s.dead) return 'dead';
@@ -979,6 +1058,7 @@ export class Sim {
     // Под плотным огнём — прижимаются к земле (если не в укрытии)
     const covered = (s.mode === 'hold' && (s.inTrench || s.slot === 'window' || s.slot === 'inside'));
     if (!covered && s.supp > 4 && s.stance === 'auto') return 'prone';
+    if (s.stance === 'auto' && s.mode === 'follow' && (s.bounding && !s.moving || s.inCover)) return 'prone';
     const moving = s.moving && !(s.waitUntil > this.time) && !(s.startAt > this.time);
     if (!moving && s.slot === 'window') return 'window';
     if (!moving && s.slot === 'inside') return 'inside';

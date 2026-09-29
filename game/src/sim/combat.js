@@ -111,7 +111,7 @@ export class Combat {
       return;
     }
     const d = Math.max(20, dReal);
-    let p = Math.min(0.9, w.p100 * Math.pow(w.fall, d / 100 - 1)) * shooter * (BULLET_EXPOSE[ts.pose] ?? 1);
+    let p = Math.min(0.9, w.p100 * Math.pow(w.fall, d / 100 - 1)) * shooter * (BULLET_EXPOSE[ts.pose] ?? 1) * (ts.inCover ? 0.45 : 1);
     // Стена между — пуля не пройдёт
     if (ts.building && ts.pose === 'inside') p = 0;
     const rounds = w.rounds || 1;

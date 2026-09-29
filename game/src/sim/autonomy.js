@@ -45,6 +45,27 @@ export class Autonomy {
       sim.orderEvac(u);
     }
     if (sim.game?.prep) return;
+    // В здании, по которому бьют (рушится, горит, потери) — уходить в другое укрытие
+    const bld = u.soldiers.find((s) => !s.dead && s.building)?.building;
+    if (bld && u.mode === 'trench' && !u.task) {
+      const prev = u.bldDamage ?? bld.damage ?? 0;
+      const hit = (bld.damage || 0) - prev;
+      u.bldDamage = bld.damage || 0;
+      const casualties = u.soldiers.filter((s) => s.dead || s.wounded === 2).length;
+      const underground = u.soldiers.every((s) => s.dead || s.under);
+      if (!underground && (bld.collapsed || bld.ruined || hit > 0.25 || (casualties >= 2 && this.underFire(u, 20))) && sim.time - (u.lastFlee || -1e9) > 45) {
+        u.lastFlee = sim.time;
+        const alt = this.nearestBuilding(u.x, u.y, 180, bld);
+        const node = (sim.trenches.ensure(), sim.trenches.nearest(u.x, u.y, 180, true));
+        if (alt) { sim.orderGarrison(u, alt); sim.msg(`${u.label}: здание под обстрелом — переходят в соседнее`, u.side); return; }
+        if (node >= 0) { const n = sim.trenches.nodes[node]; sim.orderOccupy(u, n.x, n.y); sim.msg(`${u.label}: здание под обстрелом — уходят в траншею`, u.side); return; }
+        if (bld.interior?.basement && !bld.collapsed) { sim.orderBasement(u, bld); sim.msg(`${u.label}: здание под обстрелом — спускаются в подвал`, u.side); return; }
+        const dir = u.side === 'blue' ? -1 : 1;
+        sim.orderMove([u], u.x + dir * 150, u.y);
+        sim.msg(`${u.label}: здание под обстрелом — отходят`, u.side);
+        return;
+      }
+    }
     // Под огнём в чистом поле, без задачи — в укрытие
     if (u.mode === 'field' && !u.task && !u.pending && u.state === 'idle' && this.underFire(u)) {
       sim.trenches.ensure();
@@ -93,10 +114,10 @@ export class Autonomy {
     return best;
   }
 
-  nearestBuilding(x, y, R) {
+  nearestBuilding(x, y, R, except = null) {
     let best = null, bd = R;
     for (const b of this.sim.world.buildings.query({ x0: x - R, y0: y - R, x1: x + R, y1: y + R })) {
-      if (!b.interior || b.collapsed || b.w * b.h < 40) continue;
+      if (!b.interior || b.collapsed || b.ruined || b === except || b.w * b.h < 40) continue;
       const d = Math.hypot(b.x - x, b.y - y);
       if (d < bd) { bd = d; best = b; }
     }

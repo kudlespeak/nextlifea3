@@ -255,6 +255,7 @@ export class Artillery {
       else if (air && tr?.covered === 'net') v = 0.35;
     }
     if ((s.pose === 'window' || s.pose === 'inside') && s.building && pointInPoly(x, y, s.building.poly)) v = 1; // попало в само здание
+    if (s.inCover && !air && d > 3) v *= 0.55; // воронка / ствол / угол дома гасят часть осколков
     return v;
   }
 
