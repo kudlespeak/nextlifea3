@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Линия фронта — прототип карты</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --panel: rgba(20, 22, 17, 0.82);
+      --border: rgba(255, 240, 200, 0.14);
+      --text: #e9e4d4;
+      --muted: #a9a38f;
+      --accent: #ffd36b;
+      --red: #d9534f;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1d17; color: var(--text); font-family: "PT Sans", system-ui, sans-serif; }
+    #map { position: fixed; inset: 0; width: 100vw; height: 100vh; cursor: grab; touch-action: none; display: block; }
+    #map:active { cursor: grabbing; }
+    .panel { position: fixed; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; backdrop-filter: blur(6px); }
+    #top { top: 12px; left: 12px; padding: 10px 14px; max-width: calc(100vw - 24px); }
+    #top h1 { margin: 0 0 2px; font-size: 16px; letter-spacing: 0.02em; }
+    #top .sides { font-size: 13px; color: var(--muted); }
+    #top .sides b.blue { color: #6fa8ff; }
+    #top .sides b.red { color: #ff7b72; }
+    #info { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    #tools { top: 12px; right: 12px; padding: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+    button { font: inherit; font-size: 13px; color: var(--text); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    button:hover { background: rgba(255, 255, 255, 0.12); }
+    button.active { background: rgba(255, 211, 107, 0.2); border-color: var(--accent); color: var(--accent); }
+    #btn-strike.active { background: rgba(217, 83, 79, 0.25); border-color: var(--red); color: #ffb3ae; }
+    #minimap { bottom: 12px; right: 12px; width: 240px; height: 160px; padding: 0; overflow: hidden; cursor: pointer; }
+    #bottom { bottom: 12px; left: 12px; padding: 8px 12px; font-size: 12px; color: var(--muted); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    #scale { display: flex; flex-direction: column; gap: 3px; }
+    #scale-bar { height: 5px; border: 1.5px solid var(--text); border-top: none; }
+    #help { font-size: 12px; }
+    kbd { font-family: inherit; background: rgba(255,255,255,0.1); border-radius: 3px; padding: 0 4px; }
+    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 14px; font-size: 13px; pointer-events: none; transition: opacity 0.3s; }
+    @media (max-width: 640px) {
+      #minimap { width: 150px; height: 100px; }
+      #help { display: none; }
+      #tools { top: auto; bottom: 124px; right: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="map"></canvas>
+
+  <div id="top" class="panel">
+    <h1>Линия фронта · прототип карты</h1>
+    <div class="sides">Стороны: <b class="blue">Синие</b> vs <b class="red">Красные</b> · этап 1: местность</div>
+    <div id="info"></div>
+  </div>
+
+  <div id="tools" class="panel">
+    <button id="btn-labels" title="Подписи (L)">Подписи</button>
+    <button id="btn-strike" title="Артудар (B): клик по карте оставляет воронки">Артудар</button>
+    <button id="btn-new" title="Сгенерировать другую карту">Новая карта</button>
+  </div>
+
+  <canvas id="minimap" class="panel"></canvas>
+
+  <div id="bottom" class="panel">
+    <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
+    <span id="coords">—</span>
+    <span id="help"><kbd>ЛКМ</kbd> тянуть · <kbd>колесо</kbd> зум · <kbd>WASD</kbd> · <kbd>B</kbd> артудар · <kbd>L</kbd> подписи</span>
+  </div>
+
+  <div id="loading" class="panel">Прорисовка местности…</div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
