@@ -8,7 +8,7 @@ import { M } from '../spatial.js';
 
 const GROUND = '#7b784e';
 
-const AREA_ORDER = ['floodplain', 'vground', 'balka', 'urban', 'farmyard', 'industrial', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
+const AREA_ORDER = ['floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
 const AREA_COLORS = {
   floodplain: '#6c7843',
   urban: '#7d7c64',
@@ -105,6 +105,7 @@ export function drawChunk(ctx, world, b, ppm) {
   for (const s of scars) if (s.kind === 'burn') drawBurn(ctx, s);
   drawRails(ctx, world, b, q, ppm);
   drawRoads(ctx, world, b, q, ppm);
+  drawForts(ctx, world, q, ppm);
   for (const s of scars) if (s.kind === 'crater') drawCrater(ctx, s, ppm);
   drawBuildings(ctx, world, q, ppm);
   drawTrees(ctx, world, b, ppm);
@@ -252,7 +253,7 @@ function drawField(ctx, f, b, ppm) {
 function drawAreas(ctx, world, b, q, ppm) {
   // Травяная кромка вдоль лесополос
   for (const belt of world.belts.query(q)) {
-    strokeLine(ctx, belt.line, belt.width + 10, 'rgba(98,106,62,0.9)');
+    strokeLine(ctx, belt.line, belt.width + 12, 'rgba(98,106,62,0.9)');
     if (ppm < 0.5) strokeLine(ctx, belt.line, belt.width * 0.8, 'rgba(46,58,34,0.55)');
   }
   const list = world.areas.query(q);
@@ -299,6 +300,19 @@ function drawArea(ctx, a, b, ppm) {
         strokeLine(ctx, part, a.width + 20, 'rgba(114,117,73,0.45)');
         strokeLine(ctx, part, a.width - 30, 'rgba(114,117,73,0.8)');
       }
+      break;
+    case 'suburb':
+      // Пустыри, огороды и тропинки вокруг кварталов — мягкий переход к полям
+      ctx.beginPath();
+      pathPoly(ctx, a.poly);
+      ctx.lineWidth = 60;
+      ctx.strokeStyle = 'rgba(118,118,80,0.18)';
+      ctx.stroke();
+      ctx.lineWidth = 26;
+      ctx.strokeStyle = 'rgba(118,118,80,0.3)';
+      ctx.stroke();
+      ctx.fillStyle = '#76764f';
+      ctx.fill();
       break;
     case 'dam':
       strokeLine(ctx, a.line, a.width, '#8b8568');
@@ -742,4 +756,135 @@ function drawTrees(ctx, world, b, ppm) {
     ctx.fillStyle = 'rgba(15,22,8,0.3)';
     ctx.fill(dark);
   }
+}
+
+// ---------- Фортификация ----------
+// Сверху видно: бруствер (выброшенный грунт), тёмную щель траншеи, перекрытия
+// из брёвен/сетки, насыпи блиндажей. Подземные ходы на снимке не видны.
+function spoilColor(age, alpha = 1) {
+  // свежий грунт светлый, старый зарастает травой
+  const r = Math.round(150 - age * 35), g = Math.round(132 - age * 20), bl = Math.round(100 - age * 30);
+  return `rgba(${r},${g},${bl},${alpha})`;
+}
+
+export function drawForts(ctx, world, q, ppm) {
+  const items = world.forts.query(q);
+  if (!items.length) return;
+  const trenches = items.filter((f) => f.kind === 'trench');
+  const low = ppm < 0.9;
+
+  // 1) Бруствер и тыльный отвал
+  for (const t of trenches) {
+    if (low) {
+      strokeLine(ctx, t.line, 3.5, spoilColor(t.age, 0.9));
+      continue;
+    }
+    const s = t.sub === 'fire' || t.sub === 'cell' ? 1 : 0;
+    // Нормаль «к противнику» сравниваем с нормалью линии, чтобы бруствер был спереди
+    const [a, b] = [t.line[0], t.line[t.line.length - 1]];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const ln = [-(b[1] - a[1]) / L, (b[0] - a[0]) / L];
+    const sign = t.enemy && ln[0] * t.enemy[0] + ln[1] * t.enemy[1] < 0 ? -1 : 1;
+    if (s) {
+      strokeLine(ctx, offsetLine(t.line, sign * 1.7), 2.6, spoilColor(t.age, 0.95)); // бруствер к противнику
+      strokeLine(ctx, offsetLine(t.line, -sign * 1.2), 1.5, spoilColor(t.age, 0.7)); // тыльный отвал
+    } else strokeLine(ctx, t.line, 3.8, spoilColor(t.age, 0.85));
+  }
+  // Насыпи блиндажей и капониров
+  for (const f of items) {
+    if (f.kind === 'dugout') {
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.rotate(f.angle);
+      ctx.fillStyle = 'rgba(15,12,8,0.35)';
+      ctx.beginPath();
+      ctx.roundRect(-f.w / 2 - 1.2 + 0.5, -f.h / 2 - 1.2 + 0.5, f.w + 2.4, f.h + 2.4, 1.5);
+      ctx.fill();
+      ctx.fillStyle = spoilColor(f.age);
+      ctx.beginPath();
+      ctx.roundRect(-f.w / 2 - 1.2, -f.h / 2 - 1.2, f.w + 2.4, f.h + 2.4, 1.5);
+      ctx.fill();
+      if (ppm >= 2) {
+        // Брёвна наката видны по краям насыпи
+        ctx.strokeStyle = 'rgba(80,60,40,0.8)';
+        ctx.lineWidth = 0.28;
+        ctx.beginPath();
+        for (let x = -f.w / 2; x <= f.w / 2; x += 0.35) {
+          ctx.moveTo(x, -f.h / 2 - 1.1); ctx.lineTo(x, -f.h / 2 - 0.5);
+        }
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,245,215,0.12)';
+        ctx.fillRect(-f.w / 2, -f.h / 2, f.w * 0.6, f.h * 0.6);
+      }
+      if (f.net) {
+        ctx.fillStyle = 'rgba(80,92,52,0.75)';
+        ctx.beginPath();
+        ctx.roundRect(-f.w / 2 - 1.6, -f.h / 2 - 1.6, f.w + 3.2, f.h + 3.2, 1.8);
+        ctx.fill();
+      }
+      ctx.restore();
+    } else if (f.kind === 'capon') {
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.rotate(f.angle);
+      // U-образный вал, открытый назад (от противника)
+      ctx.strokeStyle = spoilColor(0.4, 0.95);
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(-f.h / 2, -f.w / 2 - 1);
+      ctx.lineTo(f.h / 2, -f.w / 2 - 1);
+      ctx.lineTo(f.h / 2, f.w / 2 + 1);
+      ctx.lineTo(-f.h / 2, f.w / 2 + 1);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(60,50,35,0.55)';
+      ctx.fillRect(-f.h / 2, -f.w / 2, f.h, f.w);
+      ctx.restore();
+    }
+  }
+  // 2) Сама щель траншеи
+  for (const t of trenches) {
+    const w = low ? Math.max(1.2, 0.8 / ppm) : t.width;
+    strokeLine(ctx, t.line, w, '#231c14');
+    if (!low) {
+      strokeLine(ctx, t.line, w * 0.45, '#140f0a');
+      if (t.pit) {
+        ctx.fillStyle = '#1a140e';
+        ctx.beginPath();
+        ctx.arc(t.pit[0], t.pit[1], 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // «Лисьи норы» — ниши в стенках
+      if (t.niches && ppm >= 2) {
+        ctx.fillStyle = '#120d09';
+        for (const nch of t.niches) {
+          ctx.beginPath();
+          ctx.arc(nch.p[0] + nch.side * 0.5, nch.p[1] - nch.side * 0.3, 0.45, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+  // 3) Перекрытия
+  for (const t of trenches) {
+    if (!t.covered || low) continue;
+    if (t.covered === 'logs') {
+      strokeLine(ctx, t.line, t.width + 1.3, '#6c5840');
+      if (ppm >= 3) strokeLine(ctx, t.line, t.width + 1.1, 'rgba(60,45,30,0.9)', [0.18, 0.2]);
+      strokeLine(ctx, t.line, t.width + 0.6, spoilColor(t.age, 0.55));
+    } else {
+      strokeLine(ctx, t.line, t.width + 1.8, 'rgba(84,94,56,0.85)');
+      if (ppm >= 3) strokeLine(ctx, t.line, t.width + 1.6, 'rgba(50,58,32,0.6)', [0.25, 0.35]);
+    }
+  }
+  // Входы в блиндажи
+  if (!low)
+    for (const f of items)
+      if (f.kind === 'dugout') {
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        ctx.rotate(f.angle);
+        ctx.fillStyle = '#16110b';
+        ctx.fillRect(-0.5, f.h / 2 + 0.3, 1, 1.2);
+        ctx.restore();
+      }
 }

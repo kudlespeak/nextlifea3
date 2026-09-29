@@ -89,6 +89,7 @@ export const M = {
   BALKA: 32,
   CITY: 64,
   VILLAGE: 128,
+  CITYZONE: 256,
 };
 
 export class Mask {
@@ -96,7 +97,7 @@ export class Mask {
     this.res = res;
     this.w = Math.ceil(W / res);
     this.h = Math.ceil(H / res);
-    this.data = new Uint8Array(this.w * this.h);
+    this.data = new Uint16Array(this.w * this.h);
   }
   get(x, y) {
     const ix = Math.floor(x / this.res), iy = Math.floor(y / this.res);

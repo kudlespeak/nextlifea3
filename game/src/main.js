@@ -4,6 +4,8 @@ import { Rng } from './rng.js';
 import { Sim, UNIT_TYPES, SIDES } from './sim/units.js';
 import { T_NAMES } from './sim/nav.js';
 import { drawUnits, drawSymbol, emitDust, pickUnit } from './render/units.js';
+import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js';
+import { digTrench } from './forts.js';
 
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed')) || 1337;
@@ -29,6 +31,8 @@ const hud = {
   stealth: document.getElementById('btn-stealth'),
   stop: document.getElementById('btn-stop'),
   side: document.getElementById('btn-side'),
+  forts: document.getElementById('btn-forts'),
+  dig: document.getElementById('btn-dig'),
 };
 
 const world = generateWorld(seed);
@@ -43,6 +47,9 @@ let controlSide = 'blue';
 let stealthOrders = false;
 let timeScale = 5;
 let paused = false;
+let fortView = 'off';
+let dig = null; // { points: [], cursor } — режим рытья траншеи
+const digRng = new Rng(seed ^ 0xd16);
 
 let dpr = window.devicePixelRatio || 1;
 const cam = { x: world.W / 2, y: world.H / 2, zoom: 0.3 }; // zoom — device px на метр
@@ -97,7 +104,8 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   if (e.button === 2) {
-    orderAt(e.clientX, e.clientY);
+    if (dig) finishDig();
+    else orderAt(e.clientX, e.clientY);
     return;
   }
   const box = e.shiftKey && !strikeMode;
@@ -106,6 +114,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   mouse = [e.clientX, e.clientY];
+  if (dig) dig.cursor = screenToWorld(e.clientX, e.clientY);
   if (pinch) return;
   if (drag && drag.id === e.pointerId) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
@@ -130,6 +139,7 @@ canvas.addEventListener('pointerup', (e) => {
     ui.box = null;
   } else if (drag.moved < 6) {
     if (strikeMode) strike(...screenToWorld(e.clientX, e.clientY));
+    else if (dig) dig.points.push(screenToWorld(e.clientX, e.clientY));
     else clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch);
   }
   drag = null;
@@ -196,7 +206,10 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') toggleLabels();
   if (e.code === 'KeyG') toggleStealth();
   if (e.code === 'KeyX') { sim.stop(selectedUnits()); refreshPanel(); }
-  if (e.code === 'Escape') { ui.selected.clear(); refreshPanel(); }
+  if (e.code === 'Escape') { if (dig) toggleDig(); else { ui.selected.clear(); refreshPanel(); } }
+  if (e.code === 'KeyO') cycleFortView();
+  if (e.code === 'KeyT') toggleDig();
+  if (e.code === 'Enter' && dig) finishDig();
   if (e.code === 'Space') { e.preventDefault(); setSpeed(paused ? timeScale : 0); }
   if (e.code === 'Tab') { e.preventDefault(); switchSide(); }
   if (e.code === 'KeyA' && (e.ctrlKey || e.metaKey)) {
@@ -210,6 +223,7 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
 function toggleStrike() {
+  if (dig) toggleDig();
   strikeMode = !strikeMode;
   hud.strike.classList.toggle('active', strikeMode);
   canvas.style.cursor = strikeMode ? 'crosshair' : 'grab';
@@ -241,6 +255,29 @@ hud.stealth.onclick = toggleStealth;
 hud.stop.onclick = () => { sim.stop(selectedUnits()); refreshPanel(); };
 hud.side.onclick = switchSide;
 switchSide(); switchSide();
+function cycleFortView() {
+  fortView = FORT_VIEWS[(FORT_VIEWS.indexOf(fortView) + 1) % FORT_VIEWS.length];
+  hud.forts.textContent = FORT_VIEW_NAMES[fortView];
+  hud.forts.classList.toggle('active', fortView !== 'off');
+}
+function toggleDig() {
+  if (strikeMode) toggleStrike();
+  dig = dig ? null : { points: [], cursor: null };
+  hud.dig.classList.toggle('active', !!dig);
+  hud.dig.textContent = dig ? 'Копаем: ПКМ — готово' : 'Копать траншею';
+  canvas.style.cursor = dig ? 'crosshair' : 'grab';
+  if (dig && fortView === 'off') cycleFortView();
+}
+function finishDig() {
+  if (dig.points.length >= 2) {
+    const created = digTrench(world, digRng, dig.points, controlSide, controlSide === 'blue' ? [1, 0] : [-1, 0]);
+    for (const c of created) chunks.invalidate(c.bbox);
+  }
+  dig.points = [];
+}
+hud.forts.onclick = cycleFortView;
+hud.dig.onclick = toggleDig;
+hud.forts.textContent = FORT_VIEW_NAMES[fortView];
 hud.strike.onclick = toggleStrike;
 hud.labels.onclick = toggleLabels;
 hud.labels.classList.add('active');
@@ -384,6 +421,7 @@ function frame(now) {
     hud.loading.style.opacity = need.length > rendered ? 1 : 0;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawFortOverlay(ctx, world, view, fortView, dig);
     drawUnits(ctx, sim, view, ui);
     drawOverlay(now);
     drawMinimap();

@@ -50,7 +50,7 @@ export class NavGrid {
           for (let i = 1; i < a.line.length; i++) this.stampLine([a.line[i - 1], a.line[i]], a.widths[i] * 0.55, T.RAVINE);
           break;
         case 'urban': case 'industrial': case 'yard': case 'farmyard': case 'platform': this.stampPoly(a.poly, T.URBAN); break;
-        case 'plot': case 'park': case 'stadium': this.stampPoly(a.poly, T.OPEN); break;
+        case 'plot': case 'park': case 'stadium': case 'suburb': this.stampPoly(a.poly, T.OPEN); break;
         case 'garden': this.stampPoly(a.poly, T.PLOWED); break;
       }
     }
