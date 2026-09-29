@@ -12,11 +12,11 @@ import { seedBattleDamage } from './damage.js';
 import { generateInterior } from './interiors.js';
 import { buildPowerGrid } from './power.js';
 
-export const WORLD_W = 9000;
+export const WORLD_W = 12000;
 export const WORLD_H = 6000;
 
 const CITY_NAMES = ['Верхнеозёрск', 'Степногорск', 'Краснолиманск', 'Заречанск'];
-const VILLAGE_NAMES = ['Сосновка', 'Дубровное', 'Каменный Брод', 'Весёлое', 'Лозовая', 'Старая Балка', 'Приволье', 'Зелёный Гай', 'Малиновка', 'Кривая Лука'];
+const VILLAGE_NAMES = ['Сосновка', 'Дубровное', 'Каменный Брод', 'Весёлое', 'Лозовая', 'Старая Балка', 'Приволье', 'Зелёный Гай', 'Малиновка', 'Кривая Лука', 'Тихий Яр', 'Берёзовка', 'Ольховое', 'Красный Хутор'];
 
 // Типы культур на полях (цвет — спутниковый вид конца лета)
 export const CROPS = {
@@ -53,11 +53,15 @@ export function generateWorld(seed) {
   const mask = world.mask;
 
   // ---------- Ключевые точки ----------
-  const cityC = [W * 0.52 + rng.float(-150, 150), H * 0.52 + rng.float(-120, 120)];
+  // Два города — по одному в тылу каждой стороны; фронт между ними
+  const cityC = [W * 0.24 + rng.float(-150, 150), H * 0.5 + rng.float(-200, 200)];
+  const cityB = [W * 0.76 + rng.float(-150, 150), H * 0.5 + rng.float(-200, 200)];
+  const cities = [cityC, cityB];
   const villageSpots = [
-    [W * 0.12, H * 0.18], [W * 0.14, H * 0.55], [W * 0.2, H * 0.86], [W * 0.42, H * 0.1],
-    [W * 0.45, H * 0.9], [W * 0.8, H * 0.14], [W * 0.86, H * 0.5], [W * 0.8, H * 0.86],
-  ].map(([x, y]) => [x + rng.float(-250, 250), y + rng.float(-200, 200)]);
+    [W * 0.07, H * 0.15], [W * 0.08, H * 0.85], [W * 0.3, H * 0.12], [W * 0.3, H * 0.88],
+    [W * 0.44, H * 0.28], [W * 0.46, H * 0.74], [W * 0.56, H * 0.22], [W * 0.54, H * 0.8],
+    [W * 0.7, H * 0.12], [W * 0.7, H * 0.88], [W * 0.93, H * 0.16], [W * 0.92, H * 0.84],
+  ].map(([x, y]) => [x + rng.float(-220, 220), y + rng.float(-180, 180)]);
 
   // ---------- Река ----------
   const riverLine = [];
@@ -79,15 +83,19 @@ export function generateWorld(seed) {
   addItem(world.areas, { kind: 'floodplain', line: river, width: 260 }, 140);
 
   // ---------- Город: пятно застройки ----------
-  world.settlements.push({ name: rng.pick(CITY_NAMES), x: cityC[0], y: cityC[1], type: 'city' });
+  const nameA = rng.pick(CITY_NAMES);
+  let nameB = rng.pick(CITY_NAMES);
+  while (nameB === nameA) nameB = rng.pick(CITY_NAMES);
+  world.settlements.push({ name: nameA, x: cityC[0], y: cityC[1], type: 'city' });
+  world.settlements.push({ name: nameB, x: cityB[0], y: cityB[1], type: 'city' });
 
   // ---------- Трасса (обходит город с севера) ----------
-  const hwY = cityC[1] - 1000;
+  const hwY = (cityC[1] + cityB[1]) / 2 - 1000;
   const highwayCtrl = [];
-  for (let i = 0; i <= 8; i++) {
-    const x = -200 + (i / 8) * (W + 400);
-    const bend = Math.exp(-(((x - cityC[0]) / 1500) ** 2)) * -120;
-    highwayCtrl.push([x, hwY + bend + rng.float(-90, 90) + (i / 8 - 0.5) * 300]);
+  for (let i = 0; i <= 10; i++) {
+    const x = -200 + (i / 10) * (W + 400);
+    const bend = cities.reduce((a, c) => a + Math.exp(-(((x - c[0]) / 1500) ** 2)) * -120, 0);
+    highwayCtrl.push([x, hwY + bend + rng.float(-90, 90) + (i / 10 - 0.5) * 200]);
   }
   const highway = resample(catmullRom(highwayCtrl, 10), 10);
   addRoad(world, highway, 'highway');
@@ -95,11 +103,12 @@ export function generateWorld(seed) {
   // ---------- Железная дорога (через город, южнее центра) ----------
   const railCtrl = [
     [-200, H * 0.72 + rng.float(-150, 150)],
-    [W * 0.25, H * 0.68 + rng.float(-100, 100)],
     [cityC[0] - 300, cityC[1] + 280],
     [cityC[0] + 400, cityC[1] + 230],
-    [W * 0.78, H * 0.55 + rng.float(-100, 100)],
-    [W + 200, H * 0.5 + rng.float(-150, 150)],
+    [W * 0.5, H * 0.62 + rng.float(-120, 120)],
+    [cityB[0] - 400, cityB[1] + 250],
+    [cityB[0] + 300, cityB[1] + 300],
+    [W + 200, H * 0.66 + rng.float(-150, 150)],
   ];
   const rail = resample(catmullRom(railCtrl, 12), 8);
   addItem(world.rails, { kind: 'rail', line: rail, width: 10 }, 20);
@@ -127,10 +136,12 @@ export function generateWorld(seed) {
 
   // Дороги из сёл к городу и к трассе (асфальт). Дороги к городу кладём после
   // застройки: они заканчиваются на окраине и примыкают к уличной сетке.
-  const toCity = [];
+  const toCity = [[], []];
   for (const v of villages) {
-    const nearCity = Math.hypot(v.c[0] - cityC[0], v.c[1] - cityC[1]) < 3200;
-    if (nearCity && (rng.chance(0.6) || Math.abs(v.c[1] - hwY) > 1300)) toCity.push(wobblyRoad(rng, v.c, cityC.slice(), 3));
+    const ci = Math.hypot(v.c[0] - cityC[0], v.c[1] - cityC[1]) < Math.hypot(v.c[0] - cityB[0], v.c[1] - cityB[1]) ? 0 : 1;
+    const C = cities[ci];
+    const nearCity = Math.hypot(v.c[0] - C[0], v.c[1] - C[1]) < 3200;
+    if (nearCity && (rng.chance(0.6) || Math.abs(v.c[1] - hwY) > 1300)) toCity[ci].push(wobblyRoad(rng, v.c, C.slice(), 3));
     else addRoad(world, wobblyRoad(rng, v.c, nearestPoint(highway, v.c), 3), 'local');
   }
   // Дороги между соседними сёлами
@@ -151,8 +162,9 @@ export function generateWorld(seed) {
   for (const v of villages) addRoad(world, v.street, 'village');
 
   // ---------- Город ----------
-  buildCity(world, rng, cityC, rail, river, toCity);
-  for (const line of toCity) connectToCity(world, line);
+  buildCity(world, rng, cityC, rail, river, toCity[0]);
+  buildCity(world, rng, cityB, rail, river, toCity[1]);
+  for (const line of [...toCity[0], ...toCity[1]]) connectToCity(world, line);
 
   // ---------- Сёла: дворы ----------
   for (const v of villages) {
@@ -201,7 +213,7 @@ export function generateWorld(seed) {
   }
 
   // ---------- Следы войны: воронки и выгоревшие участки ----------
-  const frontX = seedWarScars(world, rng, cityC);
+  const frontX = seedWarScars(world, rng, W * 0.5 + rng.float(-250, 250));
 
   // ---------- Окопы, блиндажи, подземные ходы обеих сторон ----------
   buildFortifications(world, rng, frontX);
@@ -957,9 +969,8 @@ function buildStation(world, rng, rail, C) {
 }
 
 // ---------- Следы войны ----------
-function seedWarScars(world, rng, cityC) {
-  // Условная «серая зона» — полоса к востоку от города
-  const cx = Math.min(world.W - 2200, cityC[0] + rng.float(1300, 1700));
+function seedWarScars(world, rng, cx) {
+  // Условная «серая зона» — полоса посередине между городами
   for (let k = 0; k < 14; k++) {
     const x = cx + rng.gauss(0, 350);
     const y = rng.float(300, world.H - 300);

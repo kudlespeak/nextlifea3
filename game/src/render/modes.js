@@ -292,9 +292,11 @@ export function drawInfra(ctx, world, sim, view, side, fog) {
   const p = world.power;
   const showLabels = z > 0.25 * dpr;
   if (p && z < 6 * dpr) {
-    const [mx, my] = toS(p.main.x, p.main.y);
-    const ok = p.main.alive && !p.feedCut;
-    if (on(mx, my)) badge(ctx, mx, my, dpr, ok ? '#ffd24a' : '#ef5a4a', '⚡', showLabels ? 'Подстанция 110 кВ' : '', showLabels ? (p.main.alive ? (p.feedCut ? 'ЛЭП перебита — без питания' : 'работает') : 'разрушена') : '', false);
+    for (const m of p.mains) {
+      const [mx, my] = toS(m.x, m.y);
+      const ok = m.alive && !m.feedCut;
+      if (on(mx, my)) badge(ctx, mx, my, dpr, ok ? '#ffd24a' : '#ef5a4a', '⚡', showLabels ? `Подстанция «${m.name}» 110 кВ` : '', showLabels ? (m.alive ? (m.feedCut ? 'ЛЭП перебита — без питания' : 'работает') : 'разрушена') : '', false);
+    }
     if (z > 0.35 * dpr) p.tps.forEach((tp, i) => {
       const [x, y] = toS(tp.x, tp.y);
       if (!on(x, y)) return;

@@ -71,7 +71,8 @@ export class GameMode {
     const sim = this.sim, world = sim.world;
     this.setupObjectives(rng);
     const fx = world.frontX;
-    const city = world.settlements.find((s) => s.type === 'city');
+    const cities = world.settlements.filter((s) => s.type === 'city');
+    const cityOf = (side) => cities.reduce((best, c) => ((side === 'blue' ? c.x < best.x : c.x > best.x) ? c : best), cities[0]);
     // Рубежи на время подготовки. В обороне — перед первой линией; наступающий — далеко (≈1.5 км),
     // чтобы не подъехать вплотную до начала боя
     const e = { blue: 1, red: -1 }; // направление на противника
@@ -86,7 +87,7 @@ export class GameMode {
     for (const side of ['blue', 'red']) {
       const dir = e[side];
       // Пункт сбора — у дороги, ~0.9 км за рубежом подготовки
-      const want = [Math.max(200, Math.min(world.W - 200, this.limits[side] - dir * 600)), city.y + (side === 'blue' ? 250 : -250)];
+      const want = [Math.max(200, Math.min(world.W - 200, this.limits[side] - dir * 600)), cityOf(side).y + (side === 'blue' ? 250 : -250)];
       const node = sim.roads.near(want[0], want[1], 900).sort((a, c) => sim.roads.dist(a, want[0], want[1]) - sim.roads.dist(c, want[0], want[1]))[0];
       let p = node !== undefined ? [sim.roads.x[node], sim.roads.y[node]] : want;
       p = sim.nav.nearestPassable(p[0], p[1], 'wheeled') || p;

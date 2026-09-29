@@ -177,8 +177,6 @@ export class Artillery {
     for (const m of damagePower(world, x, y, cal.blast)) {
       sim.msg(m);
       const p = world.power;
-      redraw.x0 = Math.min(redraw.x0, p.main.x - 40); redraw.y0 = Math.min(redraw.y0, p.main.y - 40);
-      redraw.x1 = Math.max(redraw.x1, p.main.x + 40); redraw.y1 = Math.max(redraw.y1, p.main.y + 40);
       sim.events.push({ type: 'forts', bbox: { x0: -100, y0: -100, x1: world.W + 100, y1: world.H + 100 }, power: true });
     }
     refreshCanopy(world, { x0: x - cal.blast * 3, y0: y - cal.blast * 3, x1: x + cal.blast * 3, y1: y + cal.blast * 3 });

@@ -73,7 +73,7 @@ export function drawNight(ctx, world, sim, view, darkness) {
         glows.push([b.x, b.y, 2.5, 'rgba(255,205,130,0.5)']);
       }
     }
-    if (p.main.alive && inView(p.main.x, p.main.y, 60)) hole(p.main.x, p.main.y, 35, 0.6);
+    for (const m of p.mains) if (m.alive && !m.feedCut && inView(m.x, m.y, 60)) hole(m.x, m.y, 35, 0.6);
   }
   // Пожары
   const now = performance.now();

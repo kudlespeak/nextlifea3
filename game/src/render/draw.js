@@ -1512,8 +1512,7 @@ function inQ(q, x, y, pad = 60) {
 function drawPowerGround(ctx, world, q, ppm) {
   const p = world.power;
   if (!p) return;
-  const m = p.main;
-  if (inQ(q, m.x, m.y, 60)) {
+  for (const m of p.mains) if (inQ(q, m.x, m.y, 60)) {
     ctx.save();
     ctx.translate(m.x, m.y);
     ctx.rotate(m.angle);
@@ -1602,11 +1601,12 @@ function drawPowerLines(ctx, world, q, ppm) {
       }
   }
   // ЛЭП 110 кВ: решётчатые опоры и три провода
-  const pl = p.pylons;
+  for (const main of p.mains) {
+  const pl = main.pylons;
   for (let i = 1; i < pl.length; i++) {
     const a = pl[i - 1], b = pl[i];
     if (!inQ(q, a.x, a.y, 300) && !inQ(q, b.x, b.y, 300)) continue;
-    if (p.feedCut && (Math.hypot(a.x - p.feedCut.x, a.y - p.feedCut.y) < 1 || Math.hypot(b.x - p.feedCut.x, b.y - p.feedCut.y) < 1)) continue;
+    if (main.feedCut && (Math.hypot(a.x - main.feedCut.x, a.y - main.feedCut.y) < 1 || Math.hypot(b.x - main.feedCut.x, b.y - main.feedCut.y) < 1)) continue;
     const L = Math.hypot(b.x - a.x, b.y - a.y);
     const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
     for (const o of [-3, 0, 3]) {
@@ -1634,5 +1634,6 @@ function drawPowerLines(ctx, world, q, ppm) {
     ctx.moveTo(t.x - 2, t.y - 2); ctx.lineTo(t.x + 2, t.y + 2);
     ctx.moveTo(t.x + 2, t.y - 2); ctx.lineTo(t.x - 2, t.y + 2);
     ctx.stroke();
+  }
   }
 }
