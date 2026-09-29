@@ -239,12 +239,15 @@ export function drawDW(ctx, sim, view, side, ui) {
     ctx.beginPath(); ctx.ellipse(gx, gy, Math.max(2 * dpr, 1.2 * z), Math.max(1.2 * dpr, 0.6 * z), 0, 0, Math.PI * 2); ctx.fill();
     // Опознание: свои — модель; чужие — силуэт по классу (ложную цель от ударной на радаре не отличить)
     const showType = own ? d.type : D.cls === 'decoy' ? 'shahed' : d.type;
-    if (z >= 2.5) {
-      const r = spriteFor(`dwd:${showType}`, () => buildDrone(showType), d.heading, z * 1.6, { shadow: false }, now);
-      if (r) drawSprite(ctx, r, sx, sy, z * 1.6, r.residual);
-      // винт — мерцающий диск
-      ctx.fillStyle = 'rgba(30,30,30,0.25)';
-      ctx.beginPath(); ctx.arc(sx - Math.cos(d.heading) * 2.4 * z, sy - Math.sin(d.heading) * 2.4 * z, 0.5 * z, 0, Math.PI * 2); ctx.fill();
+    if (z >= 1.2) {
+      const k = Math.max(z * 1.6, (D.cls === 'interceptor' ? 12 : 8) * dpr); // не мельче читаемого
+      const r = spriteFor(`dwd:${showType}`, () => buildDrone(showType), d.heading, k, { shadow: false }, now);
+      if (r) drawSprite(ctx, r, sx, sy, k, r.residual);
+      // толкающий винт — мерцающий диск за хвостом
+      if (D.cls !== 'interceptor') {
+        ctx.fillStyle = 'rgba(40,40,40,0.28)';
+        ctx.beginPath(); ctx.arc(sx - Math.cos(d.heading) * 1.8 * k, sy - Math.sin(d.heading) * 1.8 * k, 0.45 * k, 0, Math.PI * 2); ctx.fill();
+      }
     } else {
       const s = (D.cls === 'interceptor' ? 4 : D.cls === 'recon' ? 5 : 6) * dpr;
       ctx.save();
@@ -262,7 +265,7 @@ export function drawDW(ctx, sim, view, side, ui) {
     }
     // Ночью у реактивных — факел двигателя
     if (d.type === 'geran3' && night > 0.3) { ctx.fillStyle = 'rgba(255,170,80,0.8)'; ctx.beginPath(); ctx.arc(sx - Math.cos(d.heading) * 8 * dpr, sy - Math.sin(d.heading) * 8 * dpr, 2 * dpr, 0, Math.PI * 2); ctx.fill(); }
-    if (!own && z < 2.5) {
+    if (!own && z < 1.2) {
       ctx.font = `700 ${9 * dpr}px "PT Sans", sans-serif`;
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffb0a6';
