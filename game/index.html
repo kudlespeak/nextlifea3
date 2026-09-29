@@ -38,6 +38,23 @@
     #help { font-size: 12px; }
     kbd { font-family: inherit; background: rgba(255,255,255,0.1); border-radius: 3px; padding: 0 4px; }
     #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 14px; font-size: 13px; pointer-events: none; transition: opacity 0.3s; }
+    #timebar { top: 12px; left: 50%; transform: translateX(-50%); padding: 6px; display: flex; gap: 4px; align-items: center; }
+    #clock { font-weight: 700; font-size: 14px; padding: 0 10px; min-width: 132px; text-align: center; font-variant-numeric: tabular-nums; }
+    #timebar button { padding: 4px 9px; }
+    #selpanel { bottom: 12px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; flex-direction: column; gap: 6px; width: min(460px, calc(100vw - 24px)); max-height: min(210px, 34vh); }
+    #selpanel .head { display: flex; gap: 6px; align-items: center; }
+    #selpanel .head .grow { flex: 1; font-weight: 700; font-size: 13px; }
+    #sel-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+    .unit-row { display: flex; gap: 8px; align-items: center; font-size: 12.5px; line-height: 1.2; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+    .unit-row:hover { background: rgba(255,255,255,0.06); }
+    .unit-row canvas { width: 33px; height: 22px; flex: none; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .st { color: var(--muted); font-size: 12px; }
+    #btn-stealth.active { background: rgba(140, 220, 120, 0.2); border-color: #9be07f; color: #c5f5b0; }
+    @media (max-width: 900px) {
+      #top { display: none; }
+      #selpanel { bottom: 124px; }
+    }
     @media (max-width: 640px) {
       #minimap { width: 150px; height: 100px; }
       #help { display: none; }
@@ -50,11 +67,30 @@
 
   <div id="top" class="panel">
     <h1>Линия фронта · прототип карты</h1>
-    <div class="sides">Стороны: <b class="blue">Синие</b> vs <b class="red">Красные</b> · этап 1: местность</div>
+    <div class="sides">Стороны: <b class="blue">Синие</b> vs <b class="red">Красные</b> · этап 2: отряды</div>
     <div id="info"></div>
   </div>
 
+  <div id="timebar" class="panel">
+    <span id="clock">—</span>
+    <button data-speed="0" title="Пауза (Пробел)">⏸</button>
+    <button data-speed="1" title="Клавиша 1">1×</button>
+    <button data-speed="5" title="Клавиша 2">5×</button>
+    <button data-speed="20" title="Клавиша 3">20×</button>
+    <button data-speed="60" title="Клавиша 4">60×</button>
+  </div>
+
+  <div id="selpanel" class="panel">
+    <div class="head">
+      <span id="sel-title" class="grow"></span>
+      <button id="btn-stealth" title="G: маршрут скрытно — вдоль посадок, избегая открытых мест">Скрытно</button>
+      <button id="btn-stop" title="X: остановиться">Стоп</button>
+    </div>
+    <div id="sel-list"></div>
+  </div>
+
   <div id="tools" class="panel">
+    <button id="btn-side" title="Tab: сменить управляемую сторону (для теста)">Сторона</button>
     <button id="btn-labels" title="Подписи (L)">Подписи</button>
     <button id="btn-strike" title="Артудар (B): клик по карте оставляет воронки">Артудар</button>
     <button id="btn-new" title="Сгенерировать другую карту">Новая карта</button>
@@ -65,7 +101,7 @@
   <div id="bottom" class="panel">
     <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
     <span id="coords">—</span>
-    <span id="help"><kbd>ЛКМ</kbd> тянуть · <kbd>колесо</kbd> зум · <kbd>WASD</kbd> · <kbd>B</kbd> артудар · <kbd>L</kbd> подписи</span>
+    <span id="help"><kbd>ЛКМ</kbd> выбор/тянуть · <kbd>Shift</kbd>+рамка · <kbd>ПКМ</kbd> приказ · <kbd>G</kbd> скрытно · <kbd>X</kbd> стоп · <kbd>Пробел</kbd> пауза · <kbd>B</kbd> артудар</span>
   </div>
 
   <div id="loading" class="panel">Прорисовка местности…</div>

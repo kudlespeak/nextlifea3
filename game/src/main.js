@@ -1,6 +1,9 @@
 import { generateWorld, addCraterCluster, addBurn } from './mapgen.js';
 import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
+import { Sim, UNIT_TYPES, SIDES } from './sim/units.js';
+import { T_NAMES } from './sim/nav.js';
+import { drawUnits, drawSymbol, emitDust, pickUnit } from './render/units.js';
 
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed')) || 1337;
@@ -18,11 +21,28 @@ const hud = {
   labels: document.getElementById('btn-labels'),
   newMap: document.getElementById('btn-new'),
   loading: document.getElementById('loading'),
+  clock: document.getElementById('clock'),
+  speeds: document.querySelectorAll('#timebar [data-speed]'),
+  sel: document.getElementById('selpanel'),
+  selList: document.getElementById('sel-list'),
+  selTitle: document.getElementById('sel-title'),
+  stealth: document.getElementById('btn-stealth'),
+  stop: document.getElementById('btn-stop'),
+  side: document.getElementById('btn-side'),
 };
 
 const world = generateWorld(seed);
 const chunks = new ChunkCache(world);
 const strikeRng = new Rng(seed ^ 0x5eed);
+const sim = new Sim(world);
+sim.deployDefault(new Rng(seed ^ 0xa11));
+
+// Состояние интерфейса управления
+const ui = { selected: new Set(), box: null, marks: [] };
+let controlSide = 'blue';
+let stealthOrders = false;
+let timeScale = 5;
+let paused = false;
 
 let dpr = window.devicePixelRatio || 1;
 const cam = { x: world.W / 2, y: world.H / 2, zoom: 0.3 }; // zoom — device px на метр
@@ -31,7 +51,7 @@ let strikeMode = false;
 let dirty = true;
 let mouse = null;
 
-hud.info.textContent = `seed ${seed} · генерация ${world.genTime.toFixed(0)} мс · деревьев ${world.trees.count.toLocaleString('ru')} · зданий ${world.buildings.items.length.toLocaleString('ru')}`;
+hud.info.textContent = `seed ${seed} · карта ${world.genTime.toFixed(0)} мс · навигация ${sim.navTime.toFixed(0)} мс · деревьев ${world.trees.count.toLocaleString('ru')} · зданий ${world.buildings.items.length.toLocaleString('ru')}`;
 
 // ---------- Размеры и камера ----------
 function resize() {
@@ -68,10 +88,21 @@ function zoomAt(sx, sy, factor) {
 }
 
 // ---------- Ввод: мышь, колесо, тач ----------
+// ЛКМ — выбрать отряд / тянуть карту; Shift+ЛКМ — рамка; ПКМ — приказ.
+// На сенсорном экране: тап по отряду — выбор, тап по земле — приказ выбранным.
+const view = { cam, canvas, get dpr() { return dpr; } };
+const selectedUnits = () => sim.units.filter((u) => ui.selected.has(u.id));
 let drag = null;
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
-  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
+  if (e.button === 2) {
+    orderAt(e.clientX, e.clientY);
+    return;
+  }
+  const box = e.shiftKey && !strikeMode;
+  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, box, touch: e.pointerType === 'touch' };
+  if (box) ui.box = { x0: e.clientX * dpr, y0: e.clientY * dpr, x1: e.clientX * dpr, y1: e.clientY * dpr };
 });
 canvas.addEventListener('pointermove', (e) => {
   mouse = [e.clientX, e.clientY];
@@ -79,16 +110,28 @@ canvas.addEventListener('pointermove', (e) => {
   if (drag && drag.id === e.pointerId) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     drag.moved += Math.abs(dx) + Math.abs(dy);
-    cam.x -= (dx * dpr) / cam.zoom;
-    cam.y -= (dy * dpr) / cam.zoom;
     drag.x = e.clientX;
     drag.y = e.clientY;
-    clampCam();
+    if (drag.box) {
+      ui.box.x1 = e.clientX * dpr;
+      ui.box.y1 = e.clientY * dpr;
+    } else {
+      cam.x -= (dx * dpr) / cam.zoom;
+      cam.y -= (dy * dpr) / cam.zoom;
+      clampCam();
+    }
   }
   dirty = true;
 });
 canvas.addEventListener('pointerup', (e) => {
-  if (drag && drag.moved < 5 && strikeMode) strike(...screenToWorld(e.clientX, e.clientY));
+  if (!drag || drag.id !== e.pointerId) return;
+  if (drag.box) {
+    boxSelect(ui.box, e.ctrlKey || e.metaKey);
+    ui.box = null;
+  } else if (drag.moved < 6) {
+    if (strikeMode) strike(...screenToWorld(e.clientX, e.clientY));
+    else clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch);
+  }
   drag = null;
 });
 canvas.addEventListener('pointerleave', () => { mouse = null; dirty = true; });
@@ -96,6 +139,35 @@ canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   zoomAt(e.clientX, e.clientY, Math.pow(1.0015, -e.deltaY));
 }, { passive: false });
+
+function clickAt(cx, cy, additive, touch) {
+  const u = pickUnit(sim, view, cx * dpr, cy * dpr, controlSide);
+  if (u) {
+    if (additive) ui.selected.has(u.id) ? ui.selected.delete(u.id) : ui.selected.add(u.id);
+    else { ui.selected.clear(); ui.selected.add(u.id); }
+  } else if (touch && ui.selected.size) orderAt(cx, cy);
+  else if (!additive) ui.selected.clear();
+  refreshPanel();
+}
+
+function boxSelect(b, additive) {
+  if (!additive) ui.selected.clear();
+  const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+  for (const u of sim.units) {
+    if (u.side !== controlSide) continue;
+    const sx = (u.x - cam.x) * cam.zoom + canvas.width / 2, sy = (u.y - cam.y) * cam.zoom + canvas.height / 2;
+    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) ui.selected.add(u.id);
+  }
+  refreshPanel();
+}
+
+function orderAt(cx, cy) {
+  const units = selectedUnits();
+  if (!units.length) return;
+  const [x, y] = screenToWorld(cx, cy);
+  sim.orderMove(units, x, y, { stealth: stealthOrders });
+  ui.marks.push({ x, y, t: performance.now(), stealth: stealthOrders });
+}
 
 let pinch = null;
 canvas.addEventListener('touchstart', (e) => {
@@ -122,6 +194,18 @@ addEventListener('keydown', (e) => {
   if (e.key === '-') zoomAt(innerWidth / 2, innerHeight / 2, 0.8);
   if (e.code === 'KeyB') toggleStrike();
   if (e.code === 'KeyL') toggleLabels();
+  if (e.code === 'KeyG') toggleStealth();
+  if (e.code === 'KeyX') { sim.stop(selectedUnits()); refreshPanel(); }
+  if (e.code === 'Escape') { ui.selected.clear(); refreshPanel(); }
+  if (e.code === 'Space') { e.preventDefault(); setSpeed(paused ? timeScale : 0); }
+  if (e.code === 'Tab') { e.preventDefault(); switchSide(); }
+  if (e.code === 'KeyA' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    for (const u of sim.units) if (u.side === controlSide) ui.selected.add(u.id);
+    refreshPanel();
+  }
+  const speedKeys = { Digit1: 1, Digit2: 5, Digit3: 20, Digit4: 60 };
+  if (speedKeys[e.code]) setSpeed(speedKeys[e.code]);
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
@@ -135,6 +219,28 @@ function toggleLabels() {
   hud.labels.classList.toggle('active', showLabels);
   dirty = true;
 }
+function toggleStealth() {
+  stealthOrders = !stealthOrders;
+  hud.stealth.classList.toggle('active', stealthOrders);
+}
+function switchSide() {
+  controlSide = controlSide === 'blue' ? 'red' : 'blue';
+  ui.selected.clear();
+  hud.side.textContent = `Сторона: ${SIDES[controlSide].name}`;
+  hud.side.style.color = SIDES[controlSide].fill;
+  refreshPanel();
+}
+function setSpeed(v) {
+  if (v === 0) paused = true;
+  else { paused = false; timeScale = v; }
+  hud.speeds.forEach((b) => b.classList.toggle('active', paused ? b.dataset.speed === '0' : Number(b.dataset.speed) === timeScale));
+}
+hud.speeds.forEach((b) => (b.onclick = () => setSpeed(Number(b.dataset.speed))));
+setSpeed(timeScale);
+hud.stealth.onclick = toggleStealth;
+hud.stop.onclick = () => { sim.stop(selectedUnits()); refreshPanel(); };
+hud.side.onclick = switchSide;
+switchSide(); switchSide();
 hud.strike.onclick = toggleStrike;
 hud.labels.onclick = toggleLabels;
 hud.labels.classList.add('active');
@@ -210,8 +316,26 @@ function drawLevel(level, requestMissing, need) {
     }
 }
 
+let lastNow = performance.now();
+let panelTimer = 0;
 function frame(now) {
   chunks.frame++;
+  const dtReal = Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
+  lastNow = now;
+  // Симуляция: шаги не длиннее 0.25 игровой секунды
+  if (!paused) {
+    let gdt = dtReal * timeScale;
+    while (gdt > 1e-6) {
+      const step = Math.min(0.25, gdt);
+      sim.update(step);
+      gdt -= step;
+    }
+  }
+  sim.processQueue(8);
+  emitDust(sim, paused ? 0 : dtReal, timeScale);
+  dirty = true;
+  panelTimer += dtReal;
+  if (panelTimer > 0.2) { panelTimer = 0; updatePanel(); }
   // Клавиатура
   const pan = (12 * dpr) / cam.zoom;
   if (keys.has('w') || keys.has('arrowup') || keys.has('ц')) { cam.y -= pan; dirty = true; }
@@ -259,6 +383,8 @@ function frame(now) {
     if (rendered < need.length || rendered > 0) dirty = true;
     hud.loading.style.opacity = need.length > rendered ? 1 : 0;
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawUnits(ctx, sim, view, ui);
     drawOverlay(now);
     drawMinimap();
     updateHud();
@@ -311,6 +437,10 @@ function drawMinimap() {
       const e = chunks.get(0, cx, cy);
       if (e) mctx.drawImage(e.canvas, cx * size * miniScale, cy * size * miniScale, size * miniScale, size * miniScale);
     }
+  for (const u of sim.units) {
+    mctx.fillStyle = SIDES[u.side].fill;
+    mctx.fillRect(u.x * miniScale - 1.5, u.y * miniScale - 1.5, 3, 3);
+  }
   if (!ov) return;
   const hw = canvas.width / 2 / cam.zoom, hh = canvas.height / 2 / cam.zoom;
   mctx.strokeStyle = '#ffd36b';
@@ -332,6 +462,59 @@ function updateHud() {
   }
 }
 
+// ---------- Панели: время и выбранные отряды ----------
+function fmtTime(sec) {
+  const d = Math.floor(sec / 86400) + 1;
+  const h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return `День ${d} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+function fmtEta(sec) {
+  if (sec < 60) return `${Math.round(sec)} с`;
+  if (sec < 3600) return `${Math.round(sec / 60)} мин`;
+  return `${Math.floor(sec / 3600)} ч ${Math.round((sec % 3600) / 60)} мин`;
+}
+const STATE_TEXT = { idle: 'стоит', planning: 'прокладка маршрута', moving: 'марш' };
+
+function refreshPanel() {
+  const units = selectedUnits();
+  hud.sel.style.display = units.length ? 'flex' : 'none';
+  hud.selList.innerHTML = '';
+  for (const u of units.slice(0, 12)) {
+    const row = document.createElement('div');
+    row.className = 'unit-row';
+    const c = document.createElement('canvas');
+    c.width = 44; c.height = 30;
+    drawSymbol(c.getContext('2d'), 22, 15, 18, u.side, u.def.symbol);
+    row.appendChild(c);
+    const info = document.createElement('div');
+    info.innerHTML = `<b>${u.label}</b> <span class="muted">${u.def.name}</span><div class="st" data-id="${u.id}"></div>`;
+    row.appendChild(info);
+    row.onclick = () => { cam.x = u.x; cam.y = u.y; };
+    hud.selList.appendChild(row);
+  }
+  if (units.length > 12) {
+    const more = document.createElement('div');
+    more.className = 'muted';
+    more.textContent = `и ещё ${units.length - 12}…`;
+    hud.selList.appendChild(more);
+  }
+  hud.selTitle.textContent = `Выбрано: ${units.length}`;
+  updatePanel();
+}
+
+function updatePanel() {
+  hud.clock.textContent = fmtTime(sim.time);
+  for (const el of hud.selList.querySelectorAll('.st')) {
+    const u = sim.units.find((q) => q.id === Number(el.dataset.id));
+    if (!u) continue;
+    const terr = T_NAMES[sim.nav.classAt(u.x, u.y)];
+    let t = `${STATE_TEXT[u.state]} · ${terr}`;
+    if (u.state === 'moving') t += ` · ${(u.speed * 3.6).toFixed(0)} км/ч · прибытие ~${fmtEta(u.eta)}`;
+    if (u.state === 'idle' && u.noRoute && sim.time - u.noRoute < 30) t += ' · нет маршрута!';
+    el.textContent = t;
+  }
+}
+
 // Стартовая отрисовка обзорного уровня, затем цикл
 for (let cy = 0; cy * chunks.worldSize(0) < world.H; cy++)
   for (let cx = 0; cx * chunks.worldSize(0) < world.W; cx++) chunks.render(0, cx, cy);
@@ -339,4 +522,4 @@ hud.loading.style.opacity = 0;
 requestAnimationFrame(frame);
 
 // Для отладки из консоли
-window.game = { world, cam, chunks, CHUNK_PX };
+window.game = { world, cam, chunks, sim, ui, CHUNK_PX };
