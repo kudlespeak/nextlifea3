@@ -63,7 +63,7 @@ export class Combat {
 
   soldierFire(u, s, dark) {
     const sim = this.sim;
-    const w = WEAPONS[s.weapon] || WEAPONS.rifle;
+    let w = WEAPONS[s.weapon] || WEAPONS.rifle;
     s.nextShot = sim.time + w.interval * (0.8 + sim.rng.next() * 0.4) * (s.moving ? 1.6 : 1);
     if (!this.canFire(u)) return;
     if (s.pose === 'inside') return; // из глубины комнаты не стреляют — только у окна
@@ -72,14 +72,19 @@ export class Combat {
     if (!t) return;
     // По технике из автомата не стреляют — не тратим патроны
     if (!t.soldiers && !w.at) return;
+    // Оператор ПТУР по пехоте работает из автомата
+    const wid = s.weapon === 'atgm' && t.soldiers ? 'rifle' : s.weapon;
+    if (wid !== s.weapon) w = WEAPONS.rifle;
+    if (wid !== s.weapon && Math.hypot(t.x - s.x, t.y - s.y) > WEAPONS.rifle.range) return;
     u.firedAt = sim.time;
     if (s.mag !== undefined) {
-      s.mag = Math.max(0, s.mag - (AMMO_USE[s.weapon] || 0.0125));
+      s.mag = Math.max(0, s.mag - (AMMO_USE[wid] || 0.0125));
       if (s.mag <= 0 && !u.ammoWarned) { u.ammoWarned = sim.time; sim.msg(`${u.label}: у бойцов кончаются патроны — нужен подвоз`, u.side); }
       if (s.mag > 0.3) u.ammoWarned = 0;
     }
     const nightK = 1 - dark * (1 - FACTIONS[u.side].night) * 0.8;
     let shooter = (s.moving ? 0.35 : 1) * (s.pose === 'prone' || s.pose === 'trench' || s.pose === 'window' ? 1.15 : 1) * (1 - Math.min(0.7, s.supp / 10)) * nightK * (s.wounded ? 0.7 : 1);
+    if (!t.soldiers && s.weapon === 'atgm') { this.missile(u, t, s.x, s.y, s); return; }
     if (!t.soldiers) {
       // По технике — только противотанковым средством
       if (!w.at) return;
@@ -95,7 +100,17 @@ export class Combat {
     const targets = t.soldiers.filter((q) => !q.dead && !q.under);
     if (!targets.length) return;
     const ts = targets[Math.floor(sim.rng.next() * targets.length)];
-    const d = Math.max(20, Math.hypot(ts.x - s.x, ts.y - s.y));
+    const dReal = Math.hypot(ts.x - s.x, ts.y - s.y);
+    // Ближний бой: ручная граната (в траншею, за угол, в окно)
+    if (dReal < 32 && (s.grenades ?? 0) > 0 && sim.rng.chance(0.35)) {
+      s.grenades--;
+      s.shotAt = sim.time; s.aim = Math.atan2(ts.y - s.y, ts.x - s.x);
+      t.underFire = sim.time;
+      const miss = Math.max(1, dReal * 0.12);
+      sim.art.explode(ts.x + sim.rng.float(-miss, miss), ts.y + sim.rng.float(-miss, miss), 'grenade', 'ground', u.side, true);
+      return;
+    }
+    const d = Math.max(20, dReal);
     let p = Math.min(0.9, w.p100 * Math.pow(w.fall, d / 100 - 1)) * shooter * (BULLET_EXPOSE[ts.pose] ?? 1);
     // Стена между — пуля не пройдёт
     if (ts.building && ts.pose === 'inside') p = 0;
@@ -117,6 +132,16 @@ export class Combat {
     u.nextShot = sim.time + w.interval * (0.8 + sim.rng.next() * 0.4) * (u.state === 'moving' ? 1.5 : 1);
     if (!this.canFire(u)) return;
     if (u.rounds !== undefined && u.rounds <= 0) return;
+    // БМП: по бронетехнике издалека — ПТУР с башни
+    if (u.atgmLeft > 0) {
+      const tv = this.pickTarget(u, u.x, u.y, 3000, true);
+      if (tv && !tv.soldiers && (tv.def.armor ?? 0) >= 0.4 && Math.hypot(tv.x - u.x, tv.y - u.y) > 350) {
+        u.atgmLeft--;
+        this.missile(u, tv, u.x, u.y);
+        u.nextShot = sim.time + 20;
+        return;
+      }
+    }
     const range = u.def.gun?.range || w.range;
     const t = this.pickTarget(u, u.x, u.y, range, !!w.at);
     if (!t) return;
@@ -153,6 +178,23 @@ export class Combat {
         if (s && sim.rng.chance(BULLET_EXPOSE[s.pose] ?? 1)) this.wound(t, s, w.dmg * sim.rng.float(0.7, 1.3), u.label);
       }
     }
+  }
+
+  // Пуск ПТУР: высокая вероятность попадания, ночью — хуже
+  missile(u, t, x, y, s = null) {
+    const sim = this.sim;
+    const w = WEAPONS.atgm;
+    const d = Math.hypot(t.x - x, t.y - y);
+    const dark = sim.vision.darkness();
+    const p = Math.min(0.92, w.p100 * Math.pow(w.fall, d / 100 - 1)) * (1 - dark * (1 - FACTIONS[u.side].night) * 0.5) * (t.state === 'moving' ? 0.85 : 1);
+    const hit = sim.rng.chance(p);
+    this.tracers.push({ x0: x, y0: y, x1: t.x + (hit ? 0 : sim.rng.float(-15, 15)), y1: t.y + (hit ? 0 : sim.rng.float(-15, 15)), t: sim.time, side: u.side, heavy: true, missile: true });
+    if (s) { s.shotAt = sim.time; s.aim = Math.atan2(t.y - y, t.x - x); }
+    u.firedAt = sim.time;
+    t.underFire = sim.time;
+    sim.art.effects.push({ type: 'muzzle', x, y, h: Math.atan2(t.y - y, t.x - x), t: performance.now(), small: true });
+    if (hit) { this.hitVehicle(t, w.at, u); sim.art.explode(t.x, t.y, 'atgm', 'ground', u.side, true); }
+    sim.msg(`${u.label}: пуск ПТУР по ${t.def.short}${hit ? ' — попадание' : ' — промах'}`, u.side);
   }
 
   hitVehicle(t, power, shooter) {

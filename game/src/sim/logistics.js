@@ -11,12 +11,13 @@ export const RES = ['ammo', 'shells', 'fuel'];
 export const RES_NAMES = { ammo: 'патроны', shells: 'снаряды', fuel: 'топливо' };
 
 // Расход стрелкового боекомплекта за одну очередь / выстрел (доля от полного)
-export const AMMO_USE = { rifle: 1 / 80, mg: 1 / 60, gl: 1 / 10, sniper: 1 / 40, cannon: 1 / 40, autocannon: 1 / 60, hmg: 1 / 70 };
+export const AMMO_USE = { atgm: 1 / 4, rifle: 1 / 80, mg: 1 / 60, gl: 1 / 10, sniper: 1 / 40, cannon: 1 / 40, autocannon: 1 / 60, hmg: 1 / 70 };
 // Сколько ед. боеприпасов в полном боекомплекте машины; ёмкость бака (ед. топлива) и запас хода, км
 const VEH = {
   tank: { ammo: 4, fuel: 5, range: 30 }, ifv: { ammo: 3, fuel: 3, range: 40 }, apc: { ammo: 2, fuel: 3, range: 55 },
   btm: { ammo: 0, fuel: 4, range: 30 }, truck: { ammo: 0, fuel: 2, range: 90 }, medevac: { ammo: 0, fuel: 2, range: 90 },
-  arty: { ammo: 0, fuel: 2, range: 80 },
+  arty: { ammo: 0, fuel: 2, range: 80 }, spg: { ammo: 0, fuel: 4, range: 35 }, mlrs: { ammo: 0, fuel: 2, range: 80 },
+  fuel: { ammo: 0, fuel: 2, range: 90 }, armcar: { ammo: 2, fuel: 2, range: 70 }, sam: { ammo: 0, fuel: 2, range: 70 },
 };
 const TRUCK_CAP = { ammo: 50, shells: 70, fuel: 30 };
 const DEPOT_START = { ammo: 500, shells: 700, fuel: 300 };
@@ -43,7 +44,10 @@ export class Logistics {
     if (u.soldiers) for (const s of u.soldiers) s.mag = 1;
     const v = VEH[u.type];
     if (v) { u.fuel = 1; if (v.ammo) u.rounds = 1; }
-    if (u.type === 'truck') { u.cargoRes = { ...TRUCK_CAP }; u.autoSupply = true; }
+    if (u.type === 'truck') { u.cargoRes = { ...TRUCK_CAP }; u.autoSupply = true; u.cap = TRUCK_CAP; }
+    if (u.type === 'fuel') { u.cargoRes = { ammo: 0, shells: 0, fuel: 90 }; u.autoSupply = true; u.cap = { ammo: 0, shells: 0, fuel: 90 }; }
+    if (u.type === 'ifv') u.atgmLeft = 2; // ПТУР на башне
+    if (u.soldiers) for (const s of u.soldiers) s.grenades = 2;
   }
 
   // Расход топлива на пройденный путь
@@ -100,6 +104,7 @@ export class Logistics {
         if (s.dead || s.evac || q <= 0) continue;
         const d = Math.min(1 - (s.mag ?? 1), q);
         s.mag = (s.mag ?? 1) + d; q -= d;
+        if (s.mag > 0.9) s.grenades = 2;
       }
       const v = VEH[u.type];
       if (q > 0 && v?.ammo && u.rounds !== undefined) { const d = Math.min((1 - u.rounds) * v.ammo, q); u.rounds += d / v.ammo; q -= d; }
@@ -126,7 +131,7 @@ export class Logistics {
       for (const d of this.depots) {
         if (!d.alive || d.side !== u.side || Math.hypot(u.x - d.x, u.y - d.y) > RANGE_DEPOT) continue;
         if (u.cargoRes) {
-          for (const r of RES) { const q = Math.min(TRUCK_CAP[r] - u.cargoRes[r], d.stock[r], 12 * step); u.cargoRes[r] += q; d.stock[r] -= q; }
+          for (const r of RES) { const q = Math.min(u.cap[r] - u.cargoRes[r], d.stock[r], 12 * step); u.cargoRes[r] += q; d.stock[r] -= q; }
         }
         this.give(d.stock, u, 3 * step);
       }
@@ -149,7 +154,8 @@ export class Logistics {
     const sim = this.sim;
     if (t.pending || sim.queue.some((q) => q.unit === t)) return;
     if (t.supplying && sim.time - t.supplying < 6) return; // ещё разгружается
-    const load = RES.reduce((a, r) => a + t.cargoRes[r] / TRUCK_CAP[r], 0) / RES.length;
+    const rs = RES.filter((r) => t.cap[r] > 0);
+    const load = rs.reduce((a, r) => a + t.cargoRes[r] / t.cap[r], 0) / rs.length;
     const depot = this.nearestDepot(t);
     if (load < 0.2 && depot) {
       if (Math.hypot(t.x - depot.x, t.y - depot.y) > RANGE_DEPOT * 0.6) this.goTo(t, depot.x, depot.y, 'на склад за грузом');

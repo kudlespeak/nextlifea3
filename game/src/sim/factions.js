@@ -33,6 +33,12 @@ export const FACTIONS = {
       truck: { name: 'Грузовик «Атлас»', short: 'Атлас' },
       uav: { name: 'Расчёт БПЛА «Сокол»', short: 'БПЛА', drones: { recon: 2, fpv: 4, bomber: 1 } },
       medevac: { name: 'Санитарная машина «Ангел»', short: 'Санитарка' },
+      atgm: { name: 'Расчёт ПТУР «Копьё»', short: 'ПТУР' },
+      spg: { name: 'САУ «Гром» 155 мм', short: 'Гром', caliber: 155, ammo: 36, reload: 7 },
+      mlrs: { name: 'РСЗО «Шквал» 122 мм', short: 'Шквал' },
+      fuel: { name: 'Топливозаправщик «Атлас-Т»', short: 'Заправщик' },
+      armcar: { name: 'Бронеавтомобиль «Варан»', short: 'Варан', armor: 0.25, gun: { range: 1300, acc: 0.5 } },
+      sam: { name: 'ЗРК «Щит»', short: 'Щит' },
     },
   },
   red: {
@@ -65,6 +71,12 @@ export const FACTIONS = {
       truck: { name: 'Грузовик «Урал-К»', short: 'Урал' },
       uav: { name: 'Расчёт БПЛА «Оса»', short: 'БПЛА', drones: { recon: 1, fpv: 7, bomber: 1 } },
       medevac: { name: 'Санитарная машина «МТ-Л»', short: 'Санитарка' },
+      atgm: { name: 'Расчёт ПТУР «Корнет-К»', short: 'ПТУР' },
+      spg: { name: 'САУ «Мста-К» 152 мм', short: 'Мста', caliber: 152, ammo: 46, reload: 8 },
+      mlrs: { name: 'РСЗО «Град-К» 122 мм', short: 'Град' },
+      fuel: { name: 'Топливозаправщик «Урал-Т»', short: 'Заправщик' },
+      armcar: { name: 'Бронеавтомобиль «Тигр-К»', short: 'Тигр', armor: 0.25, gun: { range: 1200, acc: 0.45 } },
+      sam: { name: 'ЗРК «Тор-К»', short: 'Тор' },
     },
   },
 };
@@ -80,13 +92,14 @@ export const WEAPONS = {
   // техника
   cannon: { name: 'Танковая пушка', range: 2500, interval: 11, p100: 0.9, fall: 0.94, dmg: 100, supp: 5, at: 0.9, blast: 5 },
   autocannon: { name: 'Автоматическая пушка', range: 1800, interval: 4.5, p100: 0.4, fall: 0.86, dmg: 80, supp: 5, at: 0.35, blast: 2 },
+  atgm:   { name: 'ПТУР', range: 3000, interval: 35, p100: 0.9, fall: 0.985, dmg: 100, supp: 4, at: 1.15 },
   hmg:    { name: 'Крупнокалиберный пулемёт', range: 1400, interval: 3.5, p100: 0.25, fall: 0.8, dmg: 70, supp: 4, at: 0.08 },
 };
 
 export const ROLE_WEAPON = {
-  'Пулемётчик': 'mg', 'Гранатомётчик': 'gl', 'Снайпер': 'sniper',
+  'Пулемётчик': 'mg', 'Гранатомётчик': 'gl', 'Снайпер': 'sniper', 'Оператор ПТУР': 'atgm',
 };
-export const VEHICLE_WEAPON = { tank: 'cannon', ifv: 'autocannon', apc: 'hmg' };
+export const VEHICLE_WEAPON = { tank: 'cannon', ifv: 'autocannon', apc: 'hmg', armcar: 'hmg' };
 
 export function sideName(side) {
   return FACTIONS[side].short;

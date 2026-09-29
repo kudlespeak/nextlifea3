@@ -93,6 +93,7 @@ export class Drones {
       }
     }
     this.antiAir(dt);
+    this.samFire();
     this.list = this.list.filter((d) => !d.dead || sim.time - (d.deadAt || sim.time) < 1);
   }
 
@@ -113,6 +114,26 @@ export class Drones {
     d.dead = true;
     d.deadAt = this.sim.time;
     this.sim.msg(`${d.op.label}: ${KINDS[d.kind].name} потерян — ${why}`, d.side);
+  }
+
+  // ЗРК: сбивает дроны противника в радиусе 5 км, ракета раз в 8 с
+  samFire() {
+    const sim = this.sim;
+    if (sim.game?.prep) return;
+    for (const u of sim.units) {
+      if (u.dead || u.type !== 'sam' || u.state === 'moving' || (u.missiles ?? 1) <= 0) continue;
+      if (sim.time < (u.nextShot || 0)) continue;
+      const d = this.list.find((q) => !q.dead && q.side !== u.side && Math.hypot(q.x - u.x, q.y - u.y) < 5000);
+      if (!d) continue;
+      u.nextShot = sim.time + 8;
+      u.missiles = (u.missiles ?? 16) - 1;
+      u.aim = Math.atan2(d.y - u.y, d.x - u.x); u.aimAt = sim.time; u.recoil = sim.time;
+      sim.combat.tracers.push({ x0: u.x, y0: u.y, x1: d.x, y1: d.y, t: sim.time, side: u.side, heavy: true, missile: true });
+      if (sim.rng.chance(0.7)) {
+        d.dead = true; d.deadAt = sim.time;
+        sim.msg(`${u.label}: ракетой сбит дрон противника (${KINDS[d.kind].name})`, u.side);
+      }
+    }
   }
 
   // Пехота стреляет по дронам в пределах 120 м

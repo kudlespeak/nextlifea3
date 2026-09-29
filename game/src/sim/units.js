@@ -48,6 +48,12 @@ export const UNIT_TYPES = {
   mortar: { name: 'Миномётный расчёт 82 мм', short: 'Миномёт', move: 'foot', symbol: 'mortar', men: 4, spacing: 50, accel: 1.5, turn: 3, caliber: 82, reload: 5, setup: 30, ammo: 60 },
   truck: { name: 'Грузовик снабжения', short: 'Грузовик', move: 'wheeled', symbol: 'supply', men: 2, spacing: 45, accel: 1.6, turn: 0.9, carry: 8, seats: 18 },
   uav:   { name: 'Расчёт БПЛА', short: 'БПЛА', move: 'foot', symbol: 'uav', men: 3, spacing: 50, accel: 1.5, turn: 3 },
+  atgm:  { name: 'Расчёт ПТУР', short: 'ПТУР', move: 'foot', symbol: 'atgm', men: 3, spacing: 50, accel: 1.5, turn: 3 },
+  spg:   { name: 'САУ', short: 'САУ', move: 'tracked', symbol: 'spg', men: 4, spacing: 60, accel: 1.6, turn: 1.1, caliber: 152, reload: 8, setup: 25, ammo: 40 },
+  mlrs:  { name: 'РСЗО', short: 'РСЗО', move: 'wheeled', symbol: 'mlrs', men: 3, spacing: 60, accel: 1.4, turn: 0.9, caliber: 'r122', reload: 0.6, setup: 40, ammo: 40 },
+  fuel:  { name: 'Топливозаправщик', short: 'Заправщик', move: 'wheeled', symbol: 'fuel', men: 2, spacing: 45, accel: 1.5, turn: 0.9 },
+  armcar: { name: 'Бронеавтомобиль', short: 'Броневик', move: 'wheeled', symbol: 'recon', men: 4, spacing: 50, accel: 2.6, turn: 1.3, seats: 5 },
+  sam:   { name: 'ЗРК', short: 'ЗРК', move: 'wheeled', symbol: 'sam', men: 3, spacing: 60, accel: 1.5, turn: 1.0 },
   medevac: { name: 'Санитарная машина', short: 'Санитарка', move: 'wheeled', symbol: 'medic', men: 2, spacing: 45, accel: 1.8, turn: 1.0, carry: 6 },
 };
 
@@ -63,6 +69,7 @@ const ROLES = {
   eng: ['Командир', 'Сапёр', 'Сапёр', 'Сапёр', 'Пулемётчик', 'Сапёр', 'Сапёр', 'Медик'],
   mortar: ['Командир расчёта', 'Наводчик', 'Заряжающий', 'Подносчик'],
   uav: ['Командир расчёта', 'Оператор', 'Оператор'],
+  atgm: ['Командир расчёта', 'Оператор ПТУР', 'Подносчик'],
 };
 // Кто идёт первым при зачистке (штурмовая «двойка», командир третьим)
 const CLEAR_ORDER = ['Стрелок', 'Гранатомётчик', 'Командир', 'Пулемётчик', 'Помощник пулемётчика', 'Сапёр', 'Снайпер', 'Медик'];

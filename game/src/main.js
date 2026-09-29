@@ -893,8 +893,8 @@ function updateReserve() {
 
 // ================= Список подразделений =================
 const GROUPS = [
-  ['Пехота', ['inf']], ['Инженеры', ['eng', 'btm']], ['Бронетехника', ['tank', 'ifv', 'apc']],
-  ['Артиллерия', ['mortar', 'arty']], ['Дроны', ['uav']], ['Тыл', ['truck', 'medevac']],
+  ['Пехота', ['inf', 'atgm']], ['Инженеры', ['eng', 'btm']], ['Бронетехника', ['tank', 'ifv', 'apc', 'armcar']],
+  ['Артиллерия', ['mortar', 'arty', 'spg', 'mlrs']], ['ПВО и дроны', ['sam', 'uav']], ['Тыл', ['truck', 'fuel', 'medevac']],
 ];
 function buildRoster() {
   const list = $('roster-list');
@@ -1347,7 +1347,13 @@ function frame(now) {
     if (chunks.render(n.level, n.cx, n.cy, t0 + 10)) rendered++;
     if (chunks.busy()) break;
   }
-  $('loading').style.opacity = need.some((n) => n.level === 0 && !chunks.get(0, n.cx, n.cy)) ? 1 : 0;
+  {
+    // «Прорисовка…» — только если под центром экрана вообще нечего показать
+    const has = (l) => chunks.get(l, Math.floor(cam.x / chunks.worldSize(l)), Math.floor(cam.y / chunks.worldSize(l)));
+    let any = false;
+    for (let l = 0; l <= L && !any; l++) any = !!has(l);
+    $('loading').style.opacity = any ? 0 : 1;
+  }
 
   const fog = fogSide();
   ctx.setTransform(1, 0, 0, 1, 0, 0);

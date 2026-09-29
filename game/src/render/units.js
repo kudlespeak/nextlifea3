@@ -5,6 +5,7 @@ import { SIDES } from '../sim/units.js';
 import { FACTIONS } from '../sim/factions.js';
 import { DRONE_KINDS } from '../sim/drones.js';
 import { T } from '../sim/nav.js';
+import { vehicleSprite, turretSprite, soldierSprite, soldierKind, SOLDIER_FRAMES } from './sprites.js';
 
 const SPRITE_ZOOM = 1.6; // device px/м, с которого рисуем технику
 
@@ -110,23 +111,43 @@ export function drawSymbol(ctx, x, y, s, side, symbol, opts = {}) {
       ctx.moveTo(-iw, ih * 0.45); ctx.lineTo(iw, ih * 0.45);
       ctx.stroke();
       break;
+    case 'fuel':
+      ctx.beginPath();
+      ctx.moveTo(-iw, ih * 0.45); ctx.lineTo(iw, ih * 0.45);
+      ctx.stroke();
+      // Капля
+      ctx.beginPath(); ctx.moveTo(0, -ih * 0.6); ctx.quadraticCurveTo(ih * 0.4, 0, 0, ih * 0.2); ctx.quadraticCurveTo(-ih * 0.4, 0, 0, -ih * 0.6); ctx.fill();
+      break;
+    case 'atgm':
+      // Пехота + ракета
+      ctx.beginPath();
+      ctx.moveTo(-iw, ih); ctx.lineTo(0, -ih * 0.7); ctx.lineTo(iw, ih);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -ih * 0.7); ctx.lineTo(0, ih); ctx.stroke();
+      break;
+    case 'spg':
+      ctx.beginPath(); ctx.arc(0, -ih * 0.15, s * 0.12, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, ih * 0.55, iw * 0.55, ih * 0.22, 0, 0, Math.PI * 2); ctx.stroke();
+      break;
+    case 'mlrs':
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      for (const dx of [-0.5, 0, 0.5]) { ctx.moveTo(dx * iw, -ih * 0.2); ctx.lineTo(dx * iw, -ih * 0.8); }
+      ctx.stroke();
+      break;
+    case 'recon':
+      ctx.beginPath(); ctx.moveTo(-iw, ih); ctx.lineTo(iw, -ih); ctx.stroke();
+      ctx.beginPath(); ctx.arc(-iw * 0.4, ih * 0.55, s * 0.06, 0, Math.PI * 2); ctx.arc(iw * 0.4, ih * 0.55, s * 0.06, 0, Math.PI * 2); ctx.fill();
+      break;
+    case 'sam':
+      ctx.beginPath(); ctx.arc(0, ih * 0.5, iw * 0.55, Math.PI, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, ih * 0.5); ctx.lineTo(0, -ih * 0.7); ctx.stroke();
+      break;
   }
   ctx.restore();
 }
 
 // ---------- Техника сверху (координаты в метрах, ось X — вперёд) ----------
-// Палитра камуфляжа текущей отрисовываемой машины (зависит от стороны)
-let P = FACTIONS.red.camo;
-
-function shadowRect(ctx, x, y, w, h) {
-  ctx.fillStyle = 'rgba(10,12,6,0.45)';
-  ctx.fillRect(x + 0.7, y + 0.7, w, h);
-}
-
-function rrect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
-}
 
 // Анимационное состояние машины: пробег (гусеницы/колёса), угол башни, откат ствола
 function vehAnim(u, now) {
@@ -142,248 +163,6 @@ function vehAnim(u, now) {
   return { odo: u.odo || 0, tur: a.tur - u.heading, recoil: rk * rk, moving: u.state === 'moving' && u.speed > 0.3, now };
 }
 
-// Гусеница: лента с траками, которые «бегут» с пробегом
-function track(ctx, x, y, L, w, odo) {
-  ctx.fillStyle = P.track;
-  ctx.fillRect(x, y, L, w);
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-  ctx.lineWidth = 0.09;
-  const step = 0.42, off = -((odo % step) + step) % step;
-  ctx.beginPath();
-  for (let t = x + off + step; t < x + L; t += step) { ctx.moveTo(t, y + 0.04); ctx.lineTo(t, y + w - 0.04); }
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.06)';
-  ctx.fillRect(x, y, L, w * 0.25);
-}
-
-// Колесо сверху: шина с протектором, «бегущим» при движении
-function wheel(ctx, x, y, odo) {
-  ctx.fillStyle = '#1d1e18';
-  ctx.fillRect(x - 0.52, y - 0.2, 1.04, 0.4);
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-  ctx.lineWidth = 0.06;
-  const ph = ((odo / 0.35) % 1 + 1) % 1;
-  ctx.beginPath();
-  for (let k = 0; k < 3; k++) { const t = x - 0.52 + ((k + ph) / 3) * 1.04; ctx.moveTo(t, y - 0.2); ctx.lineTo(t, y + 0.2); }
-  ctx.stroke();
-}
-
-// Камуфляжные пятна по корпусу (детерминированно по id машины)
-function blotches(ctx, u, x, y, w, h) {
-  ctx.save();
-  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-  let seed = u.id * 9301 + 49297;
-  const rnd = () => ((seed = (seed * 233280 + 12345) % 1000003) / 1000003);
-  for (let i = 0; i < 7; i++) {
-    ctx.fillStyle = i % 2 ? P.dark : P.spot || P.light;
-    ctx.globalAlpha = 0.55;
-    ctx.beginPath();
-    ctx.ellipse(x + rnd() * w, y + rnd() * h, 0.4 + rnd() * 0.9, 0.25 + rnd() * 0.5, rnd() * 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-  // Контур и блик сверху
-  ctx.strokeStyle = 'rgba(15,16,10,0.7)';
-  ctx.lineWidth = 0.09;
-  ctx.strokeRect(x, y, w, h);
-  ctx.fillStyle = 'rgba(255,255,230,0.08)';
-  ctx.fillRect(x, y, w, h * 0.35);
-}
-
-function panelLines(ctx, lines) {
-  ctx.strokeStyle = 'rgba(0,0,0,0.28)';
-  ctx.lineWidth = 0.06;
-  ctx.beginPath();
-  for (const [x0, y0, x1, y1] of lines) { ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); }
-  ctx.stroke();
-}
-
-function gun(ctx, x0, len, w, recoil, brake = true) {
-  const r = recoil * 0.45;
-  ctx.fillStyle = P.dark;
-  ctx.fillRect(x0 - r, -w / 2, len, w);
-  if (brake) ctx.fillRect(x0 + len - 0.35 - r, -w * 0.85, 0.35, w * 1.7);
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  ctx.fillRect(x0 - r, -w / 2, len, w * 0.3);
-}
-
-const SPRITES = {
-  tank(ctx, u, z, A) {
-    shadowRect(ctx, -3.7, -1.85, 7.4, 3.7);
-    track(ctx, -3.6, -1.82, 7.2, 0.72, A.odo);
-    track(ctx, -3.6, 1.1, 7.2, 0.72, A.odo);
-    // Корпус: крылья, лобовой лист, МТО с решётками
-    ctx.fillStyle = P.dark;
-    ctx.fillRect(-3.55, -1.25, 7.1, 2.5);
-    rrect(ctx, -3.3, -1.12, 6.7, 2.24, 0.25);
-    ctx.fillStyle = P.body;
-    ctx.fill();
-    blotches(ctx, u, -3.3, -1.12, 6.7, 2.24);
-    ctx.beginPath(); ctx.moveTo(2.3, -1.12); ctx.lineTo(3.55, -0.75); ctx.lineTo(3.55, 0.75); ctx.lineTo(2.3, 1.12); ctx.closePath();
-    ctx.fillStyle = P.light; ctx.fill();
-    ctx.fillStyle = P.dark;
-    for (let i = 0; i < 5; i++) ctx.fillRect(-3.15 + i * 0.3, -0.85, 0.16, 1.7); // решётки МТО
-    panelLines(ctx, [[-1.6, -1.12, -1.6, 1.12], [2.3, -1.12, 2.3, 1.12]]);
-    // Бочки/ящики ЗИП на крыльях
-    ctx.fillStyle = '#4a4a38';
-    ctx.fillRect(-3.1, -1.5, 0.9, 0.3); ctx.fillRect(-3.1, 1.2, 0.9, 0.3);
-    // Башня
-    ctx.save();
-    ctx.translate(0.1, 0);
-    ctx.rotate(A.tur);
-    gun(ctx, 1.2, 4.7, 0.24, A.recoil);
-    ctx.beginPath();
-    if (u.side === 'blue') {
-      ctx.moveTo(1.7, -1.05); ctx.lineTo(1.7, 1.05); ctx.lineTo(-1.1, 1.35); ctx.lineTo(-2.5, 1.0); ctx.lineTo(-2.5, -1.0); ctx.lineTo(-1.1, -1.35); ctx.closePath();
-    } else ctx.ellipse(0, 0, 1.6, 1.32, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.save(); ctx.translate(0.25, 0.25); ctx.fill(); ctx.restore();
-    ctx.fillStyle = P.light;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 0.1; ctx.stroke();
-    if (u.side === 'red') {
-      ctx.fillStyle = P.dark;
-      for (const [bx, by] of [[1.15, -0.85], [1.15, 0.85], [0.7, -1.15], [0.7, 1.15], [1.35, -0.4], [1.35, 0.4]]) ctx.fillRect(bx - 0.22, by - 0.18, 0.44, 0.36);
-    } else {
-      ctx.strokeStyle = P.dark; ctx.lineWidth = 0.1; ctx.strokeRect(-2.45, -0.8, 0.6, 1.6); // корзина
-    }
-    // Люки и прицел
-    ctx.fillStyle = P.dark;
-    ctx.beginPath(); ctx.arc(-0.5, -0.5, 0.36, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(-0.5, 0.55, 0.3, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#1b2224'; ctx.fillRect(0.8, 0.45, 0.35, 0.28);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.beginPath(); ctx.arc(-0.55, -0.55, 0.14, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  },
-  ifv(ctx, u, z, A) {
-    shadowRect(ctx, -3.4, -1.65, 6.8, 3.3);
-    track(ctx, -3.4, -1.62, 6.8, 0.6, A.odo);
-    track(ctx, -3.4, 1.02, 6.8, 0.6, A.odo);
-    rrect(ctx, -3.3, -1.15, 6.6, 2.3, 0.25);
-    ctx.fillStyle = P.body; ctx.fill();
-    blotches(ctx, u, -3.3, -1.15, 6.6, 2.3);
-    ctx.beginPath(); ctx.moveTo(1.9, -1.15); ctx.lineTo(3.3, -0.6); ctx.lineTo(3.3, 0.6); ctx.lineTo(1.9, 1.15); ctx.closePath();
-    ctx.fillStyle = P.light; ctx.fill();
-    ctx.fillStyle = P.dark;
-    ctx.fillRect(-3.2, -0.85, 1.25, 0.65); ctx.fillRect(-3.2, 0.2, 1.25, 0.65); // десантные люки
-    ctx.fillRect(2.3, -0.9, 0.5, 0.35); // люк мехвода
-    panelLines(ctx, [[-1.8, -1.15, -1.8, 1.15], [1.9, -1.15, 1.9, 1.15]]);
-    ctx.save();
-    ctx.translate(0.3, 0);
-    ctx.rotate(A.tur);
-    gun(ctx, 0.5, 2.9, 0.14, A.recoil, false);
-    ctx.fillStyle = P.dark; ctx.fillRect(0.4, 0.35, 1.0, 0.16); // спарка / ПТУР
-    ctx.beginPath(); ctx.roundRect(-0.9, -0.8, 1.8, 1.6, 0.35);
-    ctx.fillStyle = P.light; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 0.08; ctx.stroke();
-    ctx.fillStyle = P.dark; ctx.beginPath(); ctx.arc(-0.3, -0.3, 0.25, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  },
-  apc(ctx, u, z, A) {
-    shadowRect(ctx, -3.8, -1.45, 7.6, 2.9);
-    for (let i = 0; i < 4; i++) {
-      const x = -2.8 + i * 1.75;
-      wheel(ctx, x, -1.28, A.odo);
-      wheel(ctx, x, 1.28, A.odo);
-    }
-    ctx.beginPath();
-    ctx.moveTo(-3.7, -1.12); ctx.lineTo(2.4, -1.12); ctx.lineTo(3.8, -0.45); ctx.lineTo(3.8, 0.45); ctx.lineTo(2.4, 1.12); ctx.lineTo(-3.7, 1.12);
-    ctx.closePath();
-    ctx.fillStyle = P.body; ctx.fill();
-    blotches(ctx, u, -3.7, -1.12, 6.1, 2.24);
-    ctx.fillStyle = P.light; ctx.fillRect(2.0, -0.95, 1.2, 1.9);
-    ctx.fillStyle = '#243034'; ctx.fillRect(2.95, -0.7, 0.3, 0.5); ctx.fillRect(2.95, 0.2, 0.3, 0.5); // смотровые
-    ctx.fillStyle = P.dark;
-    ctx.fillRect(-3.5, -0.75, 0.9, 1.5); // решётка МТО
-    ctx.fillRect(-1.6, -0.9, 0.8, 0.5); ctx.fillRect(-1.6, 0.4, 0.8, 0.5); // люки
-    ctx.save();
-    ctx.translate(0.9, 0);
-    ctx.rotate(A.tur);
-    gun(ctx, 0.3, 2.3, 0.12, A.recoil, false);
-    ctx.beginPath(); ctx.arc(0, 0, 0.62, 0, Math.PI * 2);
-    ctx.fillStyle = P.light; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 0.08; ctx.stroke();
-    ctx.restore();
-  },
-  truck(ctx, u, z, A) {
-    shadowRect(ctx, -4, -1.25, 8, 2.5);
-    for (const x of [-3, -1.9, 2.7]) { wheel(ctx, x, -1.18, A.odo); wheel(ctx, x, 1.18, A.odo); }
-    // Кабина с капотом
-    ctx.fillStyle = '#56603d';
-    ctx.fillRect(1.85, -1.1, 1.5, 2.2);
-    ctx.fillStyle = '#4c5536';
-    ctx.fillRect(3.3, -0.95, 0.9, 1.9);
-    ctx.fillStyle = '#2b373b';
-    ctx.fillRect(3.05, -0.95, 0.28, 1.9); // лобовое стекло
-    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(3.07, -0.9, 0.08, 0.8);
-    // Кузов: тент с дугами или ящики со снарядами
-    if (u.cargoRes && (u.cargoRes.ammo + u.cargoRes.shells) > 5 && u.type === 'truck') {
-      ctx.fillStyle = '#4a4834'; ctx.fillRect(-4, -1.18, 5.7, 2.36);
-      const fill = Math.min(1, (u.cargoRes.ammo + u.cargoRes.shells) / 120);
-      const n = Math.round(fill * 12);
-      for (let i = 0; i < n; i++) { ctx.fillStyle = i % 3 ? '#6d6644' : '#5c6a42'; ctx.fillRect(-3.8 + (i % 4) * 1.35, -1.0 + Math.floor(i / 4) * 0.68, 1.2, 0.58); }
-      ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.06; ctx.strokeRect(-4, -1.18, 5.7, 2.36);
-    } else {
-      ctx.fillStyle = '#666b4c';
-      ctx.fillRect(-4, -1.2, 5.7, 2.4);
-      ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-      ctx.lineWidth = 0.1;
-      ctx.beginPath();
-      for (let x = -3.4; x < 1.6; x += 0.9) { ctx.moveTo(x, -1.2); ctx.lineTo(x, 1.2); }
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(-4, -1.2, 5.7, 0.8);
-    }
-    if (u.type === 'medevac') {
-      ctx.fillStyle = '#e8e4d8'; ctx.fillRect(-2.2, -0.55, 1.1, 1.1);
-      ctx.fillStyle = '#c22'; ctx.fillRect(-1.8, -0.45, 0.3, 0.9); ctx.fillRect(-2.1, -0.15, 0.9, 0.3);
-    }
-  },
-  arty(ctx, u, z, A) {
-    // Тягач + орудие на прицепе (ствол назад по-походному) или развёрнутое орудие
-    SPRITES.truck(ctx, u, z, A);
-    ctx.fillStyle = P.dark;
-    ctx.beginPath();
-    ctx.moveTo(-4.2, 0); ctx.lineTo(-7, -1.1); ctx.lineTo(-7, 1.1);
-    ctx.closePath();
-    ctx.fill();
-    wheel(ctx, -7.3, -1.2, A.odo); wheel(ctx, -7.3, 1.2, A.odo);
-    ctx.fillStyle = P.body;
-    ctx.fillRect(-7.9, -1.05, 1.5, 2.1);
-    ctx.save();
-    ctx.translate(-7.1, 0);
-    ctx.fillStyle = '#3d4230';
-    ctx.fillRect(-4.3 + A.recoil * 0.8, -0.13, 4.5, 0.26);
-    ctx.fillRect(-4.5 + A.recoil * 0.8, -0.22, 0.4, 0.44);
-    ctx.restore();
-  },
-  btm(ctx, u, z, A) {
-    // Гусеничный тягач с траншейным рабочим органом сзади
-    shadowRect(ctx, -4.5, -1.6, 9, 3.2);
-    track(ctx, -3, -1.6, 6.6, 0.6, A.odo);
-    track(ctx, -3, 1.0, 6.6, 0.6, A.odo);
-    ctx.fillStyle = '#5a5a3c';
-    ctx.fillRect(-2.9, -1.15, 6.4, 2.3);
-    ctx.fillStyle = '#6a6a44';
-    ctx.fillRect(1.6, -1.1, 1.8, 2.2);
-    ctx.fillStyle = '#2f3a3e';
-    ctx.fillRect(3.0, -0.9, 0.35, 1.8);
-    ctx.fillStyle = '#3b3a30';
-    ctx.fillRect(-5.2, -0.55, 2.4, 1.1);
-    ctx.save();
-    ctx.translate(-5.2, 0);
-    ctx.rotate((A.odo + (u.task?.type === 'dig' ? A.now / 400 : 0)) % (Math.PI * 2));
-    ctx.strokeStyle = '#2a2922';
-    ctx.lineWidth = 0.35;
-    ctx.beginPath(); ctx.arc(0, 0, 1.2, 0, Math.PI * 2); ctx.stroke();
-    ctx.lineWidth = 0.2;
-    ctx.beginPath();
-    for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; ctx.moveTo(Math.cos(a) * 0.9, Math.sin(a) * 0.9); ctx.lineTo(Math.cos(a) * 1.45, Math.sin(a) * 1.45); }
-    ctx.stroke();
-    ctx.restore();
-  },
-};
-SPRITES.medevac = SPRITES.truck;
 
 // ---------- Пыль ----------
 const dust = [];
@@ -526,12 +305,18 @@ export function drawUnits(ctx, sim, view, ui, fogSide = null) {
       ctx.rotate(u.heading);
       // Лёгкое покачивание корпуса на ходу
       if (A.moving && u.def.move !== 'foot') ctx.translate(Math.sin(A.odo * 1.7) * 0.04, 0);
-      P = FACTIONS[u.side].camo;
-      (SPRITES[u.type] || SPRITES.truck)(ctx, u, z, A);
-      // Опознавательная полоса цвета стороны
-      if (u.def.move !== 'foot') {
-        ctx.fillStyle = SIDES[u.side].color;
-        ctx.fillRect(-1.2, -0.25, 0.6, 0.5);
+      // Кэшированный спрайт корпуса (кадр гусениц/колёс по пробегу) и башни
+      const frame = Math.floor(A.odo / 0.09) & 3;
+      const hs = vehicleSprite(u.type, u.side, frame);
+      ctx.drawImage(hs.canvas, -hs.w / 2, -hs.h / 2, hs.w, hs.h);
+      const ts = turretSprite(u.type, u.side);
+      if (ts) {
+        ctx.save();
+        ctx.translate(hs.pivot?.[0] || 0, hs.pivot?.[1] || 0);
+        ctx.rotate(A.tur);
+        ctx.translate(-A.recoil * 0.35, 0);
+        ctx.drawImage(ts.canvas, -ts.size / 2, -ts.size / 2, ts.size, ts.size);
+        ctx.restore();
       }
       ctx.restore();
       if (u.passengers?.length) {
@@ -680,7 +465,7 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
   // Пикселей на «метр силуэта»: фигуры чуть крупнее натуры (как принято в тактике сверху),
   // не меньше 15 px — чтобы позу и оружие было видно и при среднем зуме
   // Фигуры чуть крупнее натуры, но в одном масштабе с техникой
-  const m = z * 1.35;
+  const m = z * 1.55;
   if (m < 7 * dpr) {
     // Издалека — просто точки бойцов
     for (const s of u.soldiers) {
@@ -704,25 +489,18 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
     an.mv += ((moved > 0.001 ? 1 : 0) - an.mv) * Math.min(1, dtr / 120);
     an.walk = s.walk || 0; an.t = now;
     if (s.shotAt !== an.shot) { an.shot = s.shotAt; an.flash = now; }
+    const kind = soldierKind(s);
     if (s.dead) {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(s.heading + 0.6);
-      ctx.fillStyle = 'rgba(90,20,15,0.55)';
-      ctx.beginPath(); ctx.ellipse(-0.3 * m, 0.1 * m, 0.7 * m, 0.45 * m, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#2e3026';
-      ctx.beginPath(); ctx.ellipse(-0.5 * m, 0, 0.6 * m, 0.22 * m, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#2e3026'; ctx.lineWidth = Math.max(1, 0.12 * m);
-      ctx.beginPath(); ctx.moveTo(-1.0 * m, 0.1 * m); ctx.lineTo(-1.35 * m, 0.35 * m); ctx.moveTo(-0.3 * m, -0.2 * m); ctx.lineTo(0.1 * m, -0.5 * m); ctx.stroke();
-      ctx.fillStyle = HELMET[u.side];
-      ctx.beginPath(); ctx.arc(0.12 * m, 0, 0.14 * m, 0, Math.PI * 2); ctx.fill();
+      const sp = soldierSprite(u.side, kind, 'dead', 0);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(s.heading + 0.6);
+      ctx.drawImage(sp.canvas, -sp.size / 2 * m, -sp.size / 2 * m, sp.size * m, sp.size * m);
       ctx.restore();
       continue;
     }
     ctx.globalAlpha = s.under ? (ui.underground ? 0.95 : 0.25) : 1;
     if (isSel || selUnit) {
       ctx.beginPath();
-      ctx.arc(x, y, 0.95 * m, 0, Math.PI * 2);
+      ctx.arc(x, y, 0.75 * m, 0, Math.PI * 2);
       ctx.strokeStyle = isSel ? '#fff27a' : 'rgba(184,255,107,0.75)';
       ctx.lineWidth = (isSel ? 2 : 1.2) * dpr;
       ctx.stroke();
@@ -730,83 +508,25 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
     // Недавно стрелял и стоит — развёрнут на цель
     const firing = s.shotAt !== undefined && sim.time - s.shotAt < 8 && an.mv < 0.5;
     const hd = firing && s.aim !== undefined ? s.aim : s.heading;
+    const flash = now - an.flash < 90;
+    const sprPose = pose === 'prone' ? 'prone' : pose === 'trench' || pose === 'window' || pose === 'inside' ? 'cover' : pose === 'crouch' ? 'crouch' : 'stand';
+    // Кадр шага: по пройденному пути (шаг ≈ 0.8 м), стоя — нейтральный
+    const frame = an.mv > 0.3 ? Math.floor(((s.walk || 0) / (sprPose === 'prone' ? 0.5 : 1.6)) * SOLDIER_FRAMES) % SOLDIER_FRAMES : 0;
+    const sp = soldierSprite(u.side, kind, sprPose, frame);
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(hd);
-    const body = camo.body, dark = '#1c1e16';
-    const wl = (s.role === 'Пулемётчик' || s.role === 'Снайпер' ? 1.05 : 0.8) * m;
-    const shadow = (fn) => { ctx.save(); ctx.translate(0.25 * m, 0.25 * m); ctx.fillStyle = 'rgba(10,12,6,0.45)'; fn(); ctx.restore(); };
-    const flash = now - an.flash < 90;
-    if (pose === 'prone') {
-      shadow(() => { ctx.beginPath(); ctx.ellipse(-0.55 * m, 0, 0.85 * m, 0.26 * m, 0, 0, Math.PI * 2); ctx.fill(); });
-      // Ноги: ползком — переставляются
-      const k = Math.sin((s.walk || 0) * 5) * 0.12 * an.mv;
-      ctx.strokeStyle = camo.dark;
-      ctx.lineWidth = Math.max(1, 0.15 * m);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(-0.95 * m, 0.08 * m); ctx.lineTo((-1.45 + k) * m, 0.3 * m);
-      ctx.moveTo(-0.95 * m, -0.08 * m); ctx.lineTo((-1.45 - k) * m, -0.3 * m);
-      ctx.stroke();
-      ctx.fillStyle = body;
-      ctx.beginPath(); ctx.ellipse(-0.5 * m, 0, 0.6 * m, 0.25 * m, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = camo.dark; ctx.fillRect(-0.85 * m, -0.16 * m, 0.4 * m, 0.32 * m); // рюкзак
-      ctx.strokeStyle = dark; ctx.lineWidth = Math.max(1, 0.1 * m);
-      ctx.beginPath(); ctx.moveTo(0.05 * m, 0.08 * m); ctx.lineTo(0.05 * m + wl, 0.08 * m); ctx.stroke();
-      ctx.fillStyle = HELMET[u.side];
-      ctx.beginPath(); ctx.arc(0.12 * m, 0, 0.17 * m, 0, Math.PI * 2); ctx.fill();
-      if (flash) muzzle(ctx, 0.05 * m + wl, 0.08 * m, m);
-    } else if (pose === 'trench' || pose === 'window' || pose === 'inside') {
-      ctx.strokeStyle = dark;
-      ctx.lineWidth = Math.max(1, 0.1 * m);
-      if (pose !== 'inside') { ctx.beginPath(); ctx.moveTo(0, 0.05 * m); ctx.lineTo(wl, 0.05 * m); ctx.stroke(); }
-      ctx.fillStyle = body;
-      ctx.beginPath(); ctx.ellipse(-0.02 * m, 0, 0.17 * m, 0.3 * m, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = HELMET[u.side];
-      ctx.beginPath(); ctx.arc(0, 0, 0.17 * m, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = Math.max(0.8, 0.04 * m);
-      ctx.stroke();
-      if (flash && pose !== 'inside') muzzle(ctx, wl, 0.05 * m, m);
-    } else {
-      const sc = pose === 'crouch' ? 0.82 : 1;
-      const ph = (s.walk || 0) * (Math.PI / 0.8);
-      const sw = Math.sin(ph) * 0.3 * an.mv * sc;
-      shadow(() => { ctx.beginPath(); ctx.ellipse(-0.05 * m, 0, 0.3 * m * sc, 0.34 * m * sc, 0, 0, Math.PI * 2); ctx.fill(); });
-      // Ноги — шаг
-      ctx.strokeStyle = camo.dark;
-      ctx.lineWidth = Math.max(1, 0.13 * m);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(0, 0.12 * m * sc); ctx.lineTo(sw * m, 0.13 * m * sc);
-      ctx.moveTo(0, -0.12 * m * sc); ctx.lineTo(-sw * m, -0.13 * m * sc);
-      ctx.stroke();
-      // Рюкзак, корпус, руки с оружием
-      ctx.fillStyle = camo.dark;
-      ctx.fillRect(-0.36 * m * sc, -0.2 * m * sc, 0.2 * m * sc, 0.4 * m * sc);
-      ctx.fillStyle = body;
-      ctx.beginPath(); ctx.ellipse(pose === 'crouch' ? 0.04 * m : 0, 0, 0.19 * m * sc, 0.33 * m * sc, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = body;
-      ctx.lineWidth = Math.max(1, 0.1 * m);
-      ctx.beginPath();
-      ctx.moveTo(0.02 * m, 0.28 * m * sc); ctx.lineTo(0.3 * m, 0.14 * m);
-      ctx.moveTo(0.02 * m, -0.28 * m * sc); ctx.lineTo((0.22 + sw * 0.3) * m, -0.02 * m);
-      ctx.stroke();
-      ctx.strokeStyle = dark;
-      ctx.lineWidth = Math.max(1, 0.09 * m);
-      ctx.beginPath(); ctx.moveTo(0.05 * m, 0.1 * m); ctx.lineTo(0.05 * m + wl * sc, 0.1 * m); ctx.stroke();
-      if (s.weapon === 'gl') { ctx.lineWidth = Math.max(1.2, 0.16 * m); ctx.beginPath(); ctx.moveTo(-0.3 * m, -0.18 * m); ctx.lineTo(0.5 * m, -0.18 * m); ctx.stroke(); }
-      ctx.fillStyle = HELMET[u.side];
-      ctx.beginPath(); ctx.arc(pose === 'crouch' ? 0.1 * m : 0.02 * m, 0, 0.16 * m, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.beginPath(); ctx.arc(pose === 'crouch' ? 0.06 * m : -0.02 * m, -0.05 * m, 0.07 * m, 0, Math.PI * 2); ctx.fill();
-      if (flash) muzzle(ctx, 0.05 * m + wl * sc, 0.1 * m, m);
+    ctx.drawImage(sp.canvas, -sp.size / 2 * m, -sp.size / 2 * m, sp.size * m, sp.size * m);
+    if (flash && pose !== 'inside') {
+      const L = kind === 'mg' ? 1.1 : kind === 'sniper' ? 1.25 : 0.9;
+      muzzle(ctx, (sprPose === 'prone' ? 0.1 : 0.1) * m + L * m, 0.07 * m, m);
     }
     ctx.restore();
-    ctx.fillStyle = s.role === 'Командир' ? '#fff' : s.role === 'Медик' ? '#ff6b6b' : SIDES[u.side].color;
-    ctx.beginPath();
-    ctx.arc(x, y, Math.max(1.2 * dpr, 0.07 * m), 0, Math.PI * 2);
-    ctx.fill();
+    // Командир отделения — маленький значок над каской (вблизи всё видно по спрайту)
+    if (s.role === 'Командир') {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(x - 0.35 * m, y - 0.35 * m, Math.max(1.5 * dpr, 0.06 * m), 0, Math.PI * 2); ctx.fill();
+    }
     if (s.wounded) {
       // Ранен: красный крест (жёлтый — легко, красный — тяжело)
       const c = s.wounded === 2 ? '#ff3b30' : '#ffb020';

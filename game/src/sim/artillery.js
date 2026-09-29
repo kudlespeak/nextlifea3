@@ -22,6 +22,9 @@ export const CALIBERS = {
   fpv: { name: 'FPV', blast: 2.2, lethal: 7, danger: 25, frags: 260, crater: 0.5, dmg: 0.3 },
   he30: { name: '30-мм ОФ', blast: 1.4, lethal: 5, danger: 18, frags: 70, crater: 0.3, dmg: 0.15 },
   he125: { name: '125-мм ОФС', blast: 4, lethal: 13, danger: 50, frags: 600, crater: 1.3, dmg: 1.2 },
+  r122: { name: '122-мм реактивный снаряд', blast: 5, lethal: 20, danger: 75, frags: 900, crater: 2.0, speed: 700, sigma: 0.013, minR: 3000, maxR: 20000, dmg: 2 },
+  grenade: { name: 'Ручная граната', blast: 1.5, lethal: 6, danger: 18, frags: 180, crater: 0.2, dmg: 0.05 },
+  atgm: { name: 'ПТУР', blast: 2, lethal: 6, danger: 20, frags: 150, crater: 0.4, dmg: 0.6 },
   152: { name: '152-мм ОФС', blast: 7, lethal: 28, danger: 100, frags: 1700, crater: 3.2, speed: 560, sigma: 0.006, minR: 1500, maxR: 20000, dmg: 3 },
 };
 
