@@ -476,50 +476,79 @@ function trenchLine(ctx, pts, toS, color, width, alpha, dash) {
   ctx.globalAlpha = 1;
 }
 
-// Бойцы по отдельности: тело, направление оружия, роль
+// Бойцы по отдельности. Поза видна по силуэту сверху:
+//  стоя — плечи поперёк направления; пригнувшись — компактнее;
+//  лёжа — вытянутый силуэт вдоль направления; в укрытии — только каска и плечи.
 function drawSoldiers(ctx, u, toS, z, dpr, ui) {
   const selUnit = ui.selected.has(u.id);
-  const r = Math.max(0.45, 1.6 / z) * z; // в пикселях
+  // Пикселей на «метр силуэта»: не меньше 13 px, чтобы позу было видно и при среднем зуме
+  const m = Math.max(z, 13 * dpr);
   for (const s of u.soldiers) {
     const [x, y] = toS(s.x, s.y);
     const isSel = ui.soldier && ui.soldier.unitId === u.id && ui.soldier.idx === s.idx;
-    ctx.globalAlpha = s.under ? (ui.underground ? 0.95 : 0.3) : 1;
+    const pose = s.pose || 'stand';
+    ctx.globalAlpha = s.under ? (ui.underground ? 0.95 : 0.25) : 1;
     if (isSel || selUnit) {
       ctx.beginPath();
-      ctx.arc(x, y, r * 2.1, 0, Math.PI * 2);
+      ctx.arc(x, y, 0.95 * m, 0, Math.PI * 2);
       ctx.strokeStyle = isSel ? '#fff27a' : 'rgba(184,255,107,0.75)';
       ctx.lineWidth = (isSel ? 2 : 1.2) * dpr;
       ctx.stroke();
     }
-    ctx.fillStyle = 'rgba(10,12,6,0.45)';
-    ctx.beginPath();
-    ctx.arc(x + r * 0.35, y + r * 0.35, r, 0, Math.PI * 2);
-    ctx.fill();
-    // Оружие
-    const wl = (s.role === 'Пулемётчик' || s.role === 'Снайпер' ? 1.4 : 1.0) * Math.max(r * 1.6, 0.9 * z);
-    ctx.strokeStyle = '#1c1e16';
-    ctx.lineWidth = Math.max(1, r * 0.35);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.cos(s.heading) * wl, y + Math.sin(s.heading) * wl);
-    ctx.stroke();
-    ctx.fillStyle = '#3c4230';
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    // Метка стороны / роли
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(s.heading);
+    const body = '#3c4230', dark = '#262a1d';
+    const wl = (s.role === 'Пулемётчик' || s.role === 'Снайпер' ? 1.15 : 0.85) * m;
+    const shadow = (fn) => { ctx.save(); ctx.translate(0.25 * m, 0.25 * m); ctx.fillStyle = 'rgba(10,12,6,0.45)'; fn(); ctx.restore(); };
+    if (pose === 'prone') {
+      shadow(() => { ctx.beginPath(); ctx.ellipse(-0.55 * m, 0, 0.85 * m, 0.26 * m, 0, 0, Math.PI * 2); ctx.fill(); });
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = Math.max(1, 0.14 * m);
+      ctx.beginPath();
+      ctx.moveTo(-1.0 * m, 0.08 * m); ctx.lineTo(-1.45 * m, 0.28 * m);
+      ctx.moveTo(-1.0 * m, -0.08 * m); ctx.lineTo(-1.45 * m, -0.28 * m);
+      ctx.stroke();
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.ellipse(-0.5 * m, 0, 0.62 * m, 0.24 * m, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#1c1e16';
+      ctx.beginPath(); ctx.moveTo(0.05 * m, 0.06 * m); ctx.lineTo(0.05 * m + wl, 0.06 * m); ctx.stroke();
+      ctx.fillStyle = '#4a5036';
+      ctx.beginPath(); ctx.arc(0.12 * m, 0, 0.16 * m, 0, Math.PI * 2); ctx.fill();
+    } else if (pose === 'trench' || pose === 'window' || pose === 'inside') {
+      ctx.strokeStyle = '#1c1e16';
+      ctx.lineWidth = Math.max(1, 0.12 * m);
+      if (pose !== 'inside') { ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(wl, 0); ctx.stroke(); }
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.ellipse(0, 0, 0.16 * m, 0.3 * m, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4a5036';
+      ctx.beginPath(); ctx.arc(0, 0, 0.17 * m, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = Math.max(0.8, 0.05 * m);
+      ctx.stroke();
+    } else {
+      const sc = pose === 'crouch' ? 0.8 : 1;
+      shadow(() => { ctx.beginPath(); ctx.ellipse(0, 0, 0.22 * m * sc, 0.34 * m * sc, 0, 0, Math.PI * 2); ctx.fill(); });
+      ctx.strokeStyle = '#1c1e16';
+      ctx.lineWidth = Math.max(1, 0.12 * m);
+      ctx.beginPath(); ctx.moveTo(0.05 * m, 0.1 * m); ctx.lineTo(0.05 * m + wl * sc, 0.1 * m); ctx.stroke();
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.ellipse(pose === 'crouch' ? 0.05 * m : 0, 0, 0.2 * m * sc, 0.33 * m * sc, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4a5036';
+      ctx.beginPath(); ctx.arc(pose === 'crouch' ? 0.12 * m : 0.02 * m, 0, 0.15 * m, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
     ctx.fillStyle = s.role === 'Командир' ? '#fff' : s.role === 'Медик' ? '#ff6b6b' : SIDES[u.side].color;
     ctx.beginPath();
-    ctx.arc(x, y, r * 0.45, 0, Math.PI * 2);
+    ctx.arc(x, y, Math.max(1.2 * dpr, 0.07 * m), 0, Math.PI * 2);
     ctx.fill();
     if (s.mode === 'dig' && z > 3) {
-      // Лопата мелькает
       const t = (performance.now() / 300 + s.idx) % 1;
       ctx.strokeStyle = '#8a7a5a';
       ctx.lineWidth = 1 * dpr;
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.lineTo(x + Math.cos(s.heading + t) * r * 2, y + Math.sin(s.heading + t) * r * 2);
+      ctx.lineTo(x + Math.cos(s.heading + t) * m * 0.7, y + Math.sin(s.heading + t) * m * 0.7);
       ctx.stroke();
     }
   }

@@ -9,6 +9,7 @@ import {
 import { SpatialIndex, PointBins, Mask, M } from './spatial.js';
 import { buildFortifications } from './forts.js';
 import { seedBattleDamage } from './damage.js';
+import { generateInterior } from './interiors.js';
 
 export const WORLD_W = 6000;
 export const WORLD_H = 4000;
@@ -188,6 +189,9 @@ export function generateWorld(seed) {
 
   // ---------- Следы боёв: гарь, колеи, воронки, подбитая техника ----------
   seedBattleDamage(world, rng, frontX);
+
+  // ---------- Планировки зданий, крыши, дорожки к дверям ----------
+  finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0));
 
   world.genTime = performance.now() - t0;
   return world;
@@ -497,7 +501,16 @@ function buildVillageStreet(world, rng, street, density) {
         const dd = setback + 4 + hd + rng.float(4, depth * 0.4);
         const ox = p[0] + nx * dd + t[0] * rng.float(-plotW * 0.3, plotW * 0.3);
         const oy = p[1] + ny * dd + t[1] * rng.float(-plotW * 0.3, plotW * 0.3);
-        addBuilding(world, { x: ox, y: oy, w: ow, h: od, angle: ang + (rng.chance(0.5) ? Math.PI / 2 : 0), roof: rng.pick(['#7a7872', '#6d5a4a', '#8c8a84', '#6a6f72']), style: 'shed', height: 3 });
+        tryBuilding(world, { x: ox, y: oy, w: ow, h: od, angle: ang + (rng.chance(0.5) ? Math.PI / 2 : 0), roof: rng.pick(['#7a7872', '#6d5a4a', '#8c8a84', '#6a6f72']), style: 'shed', height: 3 });
+      }
+      // Теплица и машина во дворе
+      if (rng.chance(0.3)) {
+        const dd = setback + 4 + hd + rng.float(8, depth * 0.5);
+        tryBuilding(world, { x: p[0] + nx * dd + t[0] * rng.float(-plotW * 0.25, plotW * 0.25), y: p[1] + ny * dd + t[1] * rng.float(-plotW * 0.25, plotW * 0.25), w: 3, h: rng.float(5, 8), angle: ang, roof: '#dfe6e4', style: 'greenhouse', height: 2.2 });
+      }
+      if (rng.chance(0.35)) {
+        const side2 = along > 0 ? -1 : 1;
+        tryBuilding(world, { x: p[0] + nx * (setback + 3) + t[0] * side2 * plotW * 0.3, y: p[1] + ny * (setback + 3) + t[1] * side2 * plotW * 0.3, w: 1.8, h: 4.3, angle: ang, roof: rng.pick(['#8a2f2a', '#d8d6cf', '#2f4f7a', '#3b3b3b', '#6b6f4a', '#a8a39a']), style: 'car', height: 1.5 });
       }
       // Фруктовые деревья
       const nT = rng.int(3, 10);
@@ -509,6 +522,13 @@ function buildVillageStreet(world, rng, street, density) {
       }
     }
   }
+}
+
+// Постройка без наложения на другие здания и дороги
+function tryBuilding(world, b) {
+  const poly = rectCorners(b.x, b.y, b.w + 0.8, b.h + 0.8, b.angle);
+  if (!world.mask.polyFree(poly, M.BUILD | M.ROAD | M.WATER, 1)) return null;
+  return addBuilding(world, b);
 }
 
 function addBuilding(world, b) {
@@ -892,4 +912,29 @@ export function addBurn(world, rng, x, y, size) {
   const b = { kind: 'burn', poly, x, y };
   addItem(world.scars, b, 4);
   return b;
+}
+
+// Планировки, вид крыш и дорожки от крыльца к улице
+function finishBuildings(world, rng) {
+  for (const b of world.buildings.items) {
+    b.interior = generateInterior(b, world, rng);
+    const house = b.style === 'gable' && b.w * b.h < 200;
+    if (house) {
+      b.hip = rng.chance(0.5);
+      if (rng.chance(0.75)) b.chimney = [rng.float(-0.3, 0.3) * b.w, rng.float(-0.2, 0.2) * b.h];
+    }
+    if (!b.interior || !(house || b.style === 'flat')) continue;
+    for (const d of b.interior.doors) {
+      if (!d.ext) continue;
+      const [x0, y0] = d.p;
+      let end = null;
+      for (let r = 1.5; r < 30; r += 1) {
+        const x = x0 + d.n[0] * r, y = y0 + d.n[1] * r;
+        if (world.mask.has(x, y, M.ROAD)) { end = [x, y]; break; }
+        if (world.mask.has(x, y, M.WATER)) break;
+      }
+      if (end) addItem(world.areas, { kind: 'path', line: [[x0 + d.n[0] * 0.8, y0 + d.n[1] * 0.8], end], width: b.style === 'flat' ? 2.2 : 1.2 }, 2);
+      if (house) break;
+    }
+  }
 }

@@ -26,7 +26,7 @@
     #top .sides b.blue { color: #6fa8ff; }
     #top .sides b.red { color: #ff7b72; }
     #info { font-size: 11px; color: var(--muted); margin-top: 4px; }
-    #tools { top: 12px; right: 12px; padding: 6px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: min(400px, calc(50vw - 200px)); }
+    #tools { top: 12px; right: 12px; padding: 6px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: min(430px, calc(50vw - 200px)); }
     button { font: inherit; font-size: 13px; color: var(--text); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
     button:hover { background: rgba(255, 255, 255, 0.12); }
     button.active { background: rgba(255, 211, 107, 0.2); border-color: var(--accent); color: var(--accent); }
@@ -54,6 +54,9 @@
     .soldiers { display: flex; flex-wrap: wrap; gap: 4px; }
     .soldier { font-size: 11.5px; padding: 3px 7px; }
     .soldier.active { background: rgba(255, 242, 122, 0.2); border-color: #fff27a; color: #fff6b0; }
+    #stances button { padding: 3px 8px; font-size: 12px; }
+    #stances button.active, #btn-basement.active { background: rgba(255, 211, 107, 0.2); border-color: var(--accent); color: var(--accent); }
+    #selpanel .head { flex-wrap: wrap; }
     #btn-clear.active { background: rgba(255, 157, 107, 0.2); border-color: #ff9d6b; color: #ffc8a8; }
     #btn-stealth.active { background: rgba(140, 220, 120, 0.2); border-color: #9be07f; color: #c5f5b0; }
     @media (max-width: 900px) {
@@ -88,9 +91,17 @@
   <div id="selpanel" class="panel">
     <div class="head">
       <span id="sel-title" class="grow"></span>
+      <button id="btn-basement" title="V: укрыться в подвале / погребе — затем клик по зданию">В подвал</button>
       <button id="btn-clear" title="C: зачистить траншею — затем клик по точке на траншее">Зачистить</button>
       <button id="btn-stealth" title="G: маршрут скрытно — вдоль посадок, избегая открытых мест">Скрытно</button>
       <button id="btn-stop" title="X: остановиться">Стоп</button>
+    </div>
+    <div id="stances" class="head">
+      <span class="muted">Поза:</span>
+      <button data-stance="auto" title="N: по обстановке">Авто</button>
+      <button data-stance="stand" title="Z">Стоя</button>
+      <button data-stance="crouch" title="H">Пригнуться</button>
+      <button data-stance="prone" title="P">Лёжа</button>
     </div>
     <div id="sel-task" class="muted"></div>
     <div id="sel-list"></div>
@@ -101,6 +112,7 @@
     <button id="btn-labels" title="Подписи (L)">Подписи</button>
  <button id="btn-forts" title="O: показать окопы схемой / подземный слой">Окопы</button>
     <button id="btn-dig" title="T: выкопать траншею по точкам">Копать траншею</button>
+ <button id="btn-interior" title="I: показывать планировки зданий всегда">Интерьеры: вблизи</button>
     <button id="btn-strike" title="Артудар (B): клик по карте оставляет воронки">Артудар</button>
     <button id="btn-new" title="Сгенерировать другую карту">Новая карта</button>
   </div>
@@ -110,7 +122,7 @@
   <div id="bottom" class="panel">
     <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
     <span id="coords">—</span>
-    <span id="help"><kbd>ЛКМ</kbd> выбор/тянуть · <kbd>Shift</kbd>+рамка · <kbd>ПКМ</kbd> приказ · <kbd>G</kbd> скрытно · <kbd>X</kbd> стоп · <kbd>Пробел</kbd> пауза · <kbd>C</kbd> зачистить · <kbd>O</kbd> окопы · <kbd>T</kbd> копать · <kbd>B</kbd> артудар</span>
+    <span id="help"><kbd>ЛКМ</kbd> выбор/тянуть · <kbd>Shift</kbd>+рамка · <kbd>ПКМ</kbd> приказ · <kbd>G</kbd> скрытно · <kbd>X</kbd> стоп · <kbd>Пробел</kbd> пауза · <kbd>C</kbd> зачистить · <kbd>V</kbd> подвал · <kbd>Z/H/P/N</kbd> позы · <kbd>I</kbd> интерьеры · <kbd>O</kbd> окопы · <kbd>T</kbd> копать · <kbd>B</kbd> артудар</span>
   </div>
 
   <div id="toast" class="panel"></div>

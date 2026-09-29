@@ -6,7 +6,19 @@ import { NavGrid, MOVE, T } from './nav.js';
 import { TrenchGraph } from './trenchgraph.js';
 import { digTrench } from '../forts.js';
 import { Rng } from '../rng.js';
-import { resample } from '../geom.js';
+import { resample, pointInPoly } from '../geom.js';
+import { LocalGrid } from './localnav.js';
+
+// Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
+export const POSES = {
+  stand:  { name: 'стоя', speed: 1, exposure: 1 },
+  crouch: { name: 'пригнувшись', speed: 0.6, exposure: 0.6 },
+  prone:  { name: 'лёжа', speed: 0.2, exposure: 0.3 },
+  trench: { name: 'в траншее', speed: 0.8, exposure: 0.12 },
+  window: { name: 'у окна', speed: 1, exposure: 0.35 },
+  inside: { name: 'в здании', speed: 1, exposure: 0.15 },
+  under:  { name: 'в укрытии под землёй', speed: 0.7, exposure: 0 },
+};
 
 export const SIDES = {
   blue: { name: 'Синие', color: '#4f8dff', fill: '#80b4ff', enemy: [1, 0] },
@@ -64,6 +76,7 @@ export class Unit {
         return {
           idx: i, role, x: x + ox * c - oy * s, y: y + ox * s + oy * c, heading: this.heading,
           mode: 'follow', path: null, pathIdx: 0, speed: 1.4, under: false, startAt: 0, waitUntil: 0, face: null,
+          stance: 'auto', pose: 'crouch', slot: null, building: null, afterPath: null, inTrench: false,
         };
       });
     }
@@ -148,10 +161,52 @@ export class Sim {
     this.centroid(u);
     u.mode = 'field';
     for (const s of u.soldiers) {
-      s.mode = 'follow';
-      s.path = null;
-      s.under = false;
+      s.slot = null;
+      const exit = this.exitPath(s);
+      if (exit) {
+        s.path = exit;
+        s.pathIdx = 1;
+        s.mode = 'path';
+        s.speed = 1.6;
+        s.face = null;
+        s.startAt = 0;
+        s.afterPath = 'follow';
+      } else {
+        s.mode = 'follow';
+        s.path = null;
+        s.under = false;
+      }
+      s.building = null;
     }
+  }
+
+  // Выход из подвала / здания / подземного хода на улицу
+  exitPath(s) {
+    const pts = [{ x: s.x, y: s.y, under: s.under }];
+    let x = s.x, y = s.y;
+    const b = s.building;
+    if (s.under && b?.interior?.basement) {
+      const acc = nearestPt(b.interior.basement.access, x, y);
+      pts.push({ x: acc[0], y: acc[1], under: true }, { x: acc[0], y: acc[1], under: false });
+      x = acc[0]; y = acc[1];
+    } else if (s.under) {
+      // Из блиндажа / подземного хода — по графу к ближайшему выходу на поверхность
+      const g = this.trenches;
+      const a = g.nearest(x, y, 6), t = g.nearest(x, y, 80, true);
+      const nodes = a >= 0 && t >= 0 ? g.path(a, t) : null;
+      if (nodes) for (const id of nodes) pts.push({ x: g.nodes[id].x, y: g.nodes[id].y, under: g.nodes[id].under });
+      return pts.length > 1 ? pts : null;
+    }
+    if (b?.interior) {
+      const doors = b.interior.doors.filter((d) => d.ext);
+      if (!doors.length) return pts.length > 1 ? pts : null;
+      const d = doors.reduce((best, q) => (Math.hypot(q.p[0] - x, q.p[1] - y) < Math.hypot(best.p[0] - x, best.p[1] - y) ? q : best));
+      const out = [d.p[0] + d.n[0] * 2.5, d.p[1] + d.n[1] * 2.5];
+      const grid = new LocalGrid(this.world, bboxPts([[x, y], out], 6));
+      const fp = grid.path(x, y, out[0], out[1]);
+      if (fp) for (const q of fp.slice(1)) pts.push({ x: q[0], y: q[1], under: false });
+    }
+    return pts.length > 1 ? pts : null;
   }
 
   resetTask(u) {
@@ -226,6 +281,14 @@ export class Sim {
     const from = g.nearest(s.x, s.y, 3) >= 0 ? g.nearest(s.x, s.y, 3) : g.nearest(s.x, s.y, 80, true);
     const pts = [{ x: s.x, y: s.y, under: s.under }];
     const nodes = from >= 0 ? g.path(from, targetNode) : null;
+    // По земле до входа в траншею — с обходом домов и заборов
+    if (nodes && !s.under) {
+      const e = g.nodes[nodes[0]];
+      if (Math.hypot(e.x - s.x, e.y - s.y) > 3) {
+        const fp = new LocalGrid(this.world, bboxPts([[s.x, s.y], [e.x, e.y]], 6)).path(s.x, s.y, e.x, e.y);
+        if (fp) for (const q of fp.slice(1, -1)) pts.push({ x: q[0], y: q[1], under: false });
+      }
+    }
     if (nodes) for (const id of nodes) pts.push({ x: g.nodes[id].x, y: g.nodes[id].y, under: g.nodes[id].under });
     else pts.push({ x: g.nodes[targetNode].x, y: g.nodes[targetNode].y, under: g.nodes[targetNode].under });
     s.path = pts;
@@ -299,16 +362,126 @@ export class Sim {
     u.task = { type: 'manual' };
     const a = g.nearest(s.x, s.y, 3);
     const b = g.nearest(x, y, 5);
-    if (a >= 0 && b >= 0) this.soldierTo(u, s, b, { speed: 1.5 });
+    const target = this.buildingAt(x, y);
+    if (a >= 0 && b >= 0 && !target) this.soldierTo(u, s, b, { speed: 1.5 });
     else {
-      s.path = [{ x: s.x, y: s.y, under: s.under }, { x, y, under: false }];
+      // Сначала выбраться из подвала/траншейного укрытия, затем — точный путь с обходом стен
+      const pre = s.under ? this.exitPath(s) || [{ x: s.x, y: s.y, under: s.under }] : [{ x: s.x, y: s.y, under: false }];
+      const last = pre[pre.length - 1];
+      const fp = new LocalGrid(this.world, bboxPts([[last.x, last.y], [x, y]], 8)).path(last.x, last.y, x, y);
+      const pts = [...pre];
+      if (fp) for (const q of fp.slice(1)) pts.push({ x: q[0], y: q[1], under: false });
+      else pts.push({ x, y, under: false });
+      s.path = pts;
       s.pathIdx = 1;
       s.mode = 'path';
       s.speed = 1.5;
       s.face = null;
       s.startAt = 0;
     }
+    s.slot = null;
+    s.building = target;
     u.state = 'moving';
+  }
+
+  // Здание под точкой (с планировкой)
+  buildingAt(x, y) {
+    for (const b of this.world.buildings.query({ x0: x - 0.5, y0: y - 0.5, x1: x + 0.5, y1: y + 0.5 }))
+      if (b.interior && pointInPoly(x, y, b.poly)) return b;
+    return null;
+  }
+
+  solidAt(x, y) {
+    for (const b of this.world.buildings.query({ x0: x - 0.3, y0: y - 0.3, x1: x + 0.3, y1: y + 0.3 }))
+      if (pointInPoly(x, y, b.poly)) return true;
+    return false;
+  }
+
+  // Занять здание: бойцы у окон, в первую очередь — смотрящих на противника
+  orderGarrison(u, b) {
+    if (!u.soldiers || !b?.interior) return false;
+    this.resetTask(u);
+    if (Math.hypot(u.x - b.x, u.y - b.y) > 120) {
+      u.pending = { type: 'garrison', b };
+      const d = b.interior.doors.find((q) => q.ext) || { p: [b.x, b.y], n: [0, 0] };
+      this.moveSingle(u, d.p[0] + d.n[0] * 6, d.p[1] + d.n[1] * 6);
+      return true;
+    }
+    const enemy = SIDES[u.side].enemy;
+    const slots = b.interior.windows
+      .map((w) => ({ p: [w.p[0] - w.n[0] * 0.6, w.p[1] - w.n[1] * 0.6], face: Math.atan2(w.n[1], w.n[0]), score: w.n[0] * enemy[0] + w.n[1] * enemy[1], kind: 'window' }))
+      .sort((a, c) => c.score - a.score);
+    // Если окон меньше, чем людей, — остальные в комнатах
+    for (const r of b.interior.rooms) slots.push({ p: r.c, face: null, score: -2, kind: 'inside' });
+    // Разнесём по окнам: не ближе 1.5 м друг к другу
+    const chosen = [];
+    for (const sl of slots) {
+      if (chosen.length >= u.soldiers.length) break;
+      if (chosen.every((c) => Math.hypot(c.p[0] - sl.p[0], c.p[1] - sl.p[1]) > 1.5 || sl.kind === 'inside')) chosen.push(sl);
+    }
+    this.sendToSlots(u, b, chosen, false);
+    u.task = { type: 'garrison', b };
+    return true;
+  }
+
+  // Укрыться в подвале / погребе
+  orderBasement(u, b) {
+    const bs = b?.interior?.basement;
+    if (!u.soldiers || !bs) return false;
+    this.resetTask(u);
+    if (Math.hypot(u.x - b.x, u.y - b.y) > 120) {
+      u.pending = { type: 'basement', b };
+      const d = b.interior.doors.find((q) => q.ext) || { p: [b.x, b.y], n: [0, 0] };
+      this.moveSingle(u, d.p[0] + d.n[0] * 6, d.p[1] + d.n[1] * 6);
+      return true;
+    }
+    const chosen = u.soldiers.map((_, i) => ({ p: bs.spots[i % bs.spots.length], face: null, kind: 'basement' }));
+    this.sendToSlots(u, b, chosen, true);
+    u.task = { type: 'basement', b };
+    if (u.soldiers.length > bs.capacity) this.msg(`${u.label}: ${bs.kind} тесный — все не поместятся с удобством`);
+    return true;
+  }
+
+  sendToSlots(u, b, slots, basement) {
+    const bs = b.interior.basement;
+    const grid = new LocalGrid(this.world, bboxPts([...u.soldiers.map((q) => [q.x, q.y]), ...b.poly], 6));
+    const free = [...slots];
+    u.mode = 'trench';
+    u.state = 'moving';
+    for (const s of u.soldiers) {
+      let bi = 0, bd = Infinity;
+      free.forEach((sl, i) => {
+        const d = Math.hypot(sl.p[0] - s.x, sl.p[1] - s.y);
+        if (d < bd) { bd = d; bi = i; }
+      });
+      const sl = free.splice(bi, 1)[0] || slots[0];
+      const pre = s.under && s.building !== b ? this.exitPath(s) || [{ x: s.x, y: s.y, under: s.under }] : [{ x: s.x, y: s.y, under: s.under }];
+      const start = pre[pre.length - 1];
+      const pts = [...pre];
+      const goal = basement ? nearestPt(bs.access, start.x, start.y) : sl.p;
+      if (!(s.under && s.building === b && basement)) {
+        const fp = grid.path(start.x, start.y, goal[0], goal[1]);
+        if (fp) for (const q of fp.slice(1)) pts.push({ x: q[0], y: q[1], under: false });
+        else pts.push({ x: goal[0], y: goal[1], under: false });
+      }
+      if (basement) {
+        pts.push({ x: goal[0], y: goal[1], under: true, wait: 1.5 }); // спуск по лестнице/в лаз
+        pts.push({ x: sl.p[0], y: sl.p[1], under: true });
+      }
+      s.path = pts;
+      s.pathIdx = 1;
+      s.mode = 'path';
+      s.speed = 1.5;
+      s.face = sl.face;
+      s.startAt = 0;
+      s.slot = sl.kind;
+      s.building = b;
+    }
+  }
+
+  setStance(u, stance, idx = null) {
+    if (!u.soldiers) return;
+    for (const s of u.soldiers) if (idx === null || s.idx === idx) s.stance = stance;
   }
 
   // Рыть траншею по точкам — пехота, сапёры или траншейная машина
@@ -369,6 +542,8 @@ export class Sim {
       const node = this.trenches.nearest(p.x, p.y, 12, true);
       if (node >= 0) this.doOccupy(u, node);
     } else if (p.type === 'clear') this.orderClear(u, p.x, p.y);
+    else if (p.type === 'garrison') this.orderGarrison(u, p.b);
+    else if (p.type === 'basement') this.orderBasement(u, p.b);
   }
 
   // ================= Шаг симуляции =================
@@ -394,11 +569,15 @@ export class Sim {
         const dx = tx - s.x, dy = ty - s.y;
         const d = Math.hypot(dx, dy);
         if (d > 0.2) {
-          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0));
+          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed);
           const step = Math.min(d, v * dt);
-          s.x += (dx / d) * step;
-          s.y += (dy / d) * step;
+          const nx = s.x + (dx / d) * step, ny = s.y + (dy / d) * step;
+          // Сквозь дома не ходим — скользим вдоль стены
+          if (!this.solidAt(nx, ny) || this.solidAt(s.x, s.y)) { s.x = nx; s.y = ny; }
+          else if (!this.solidAt(nx, s.y)) s.x = nx;
+          else if (!this.solidAt(s.x, ny)) s.y = ny;
           s.heading = Math.atan2(dy, dx);
+          s.moving = true;
         } else if (u.state !== 'moving') s.heading = u.heading;
       } else if (s.mode === 'dig') {
         const dx = s.tx - s.x, dy = s.ty - s.y;
@@ -413,6 +592,8 @@ export class Sim {
         anyPath = true;
         this.followPath(s, dt);
       }
+      s.pose = this.poseOf(u, s);
+      s.moving = false;
     }
     if (u.mode !== 'field') {
       this.centroid(u);
@@ -432,18 +613,22 @@ export class Sim {
       const dx = wp.x - s.x, dy = wp.y - s.y;
       const d = Math.hypot(dx, dy);
       if (d > 0.01) s.heading = Math.atan2(dy, dx);
-      const step = s.speed * remaining;
+      s.moving = true;
+      const speed = s.speed * (s.stance === 'auto' ? 1 : POSES[s.stance].speed);
+      const step = speed * remaining;
       if (step >= d) {
         s.x = wp.x;
         s.y = wp.y;
         s.under = !!wp.under;
-        remaining -= d / s.speed;
+        remaining -= d / speed;
         if (wp.wait) s.waitUntil = this.time - remaining + wp.wait;
         s.pathIdx++;
         if (s.pathIdx >= s.path.length) {
           s.path = null;
-          s.mode = 'hold';
+          s.mode = s.afterPath || 'hold';
+          s.afterPath = null;
           if (s.face !== null) s.heading = s.face;
+          s.inTrench = this.trenches.nearest(s.x, s.y, 1.3) >= 0;
         }
       } else {
         s.x += (dx / d) * step;
@@ -453,6 +638,21 @@ export class Sim {
     }
   }
 
+  // Поза: ручная, либо по обстановке
+  poseOf(u, s) {
+    if (s.under) return 'under';
+    const moving = s.moving && !(s.waitUntil > this.time) && !(s.startAt > this.time);
+    if (!moving && s.slot === 'window') return 'window';
+    if (!moving && s.slot === 'inside') return 'inside';
+    if (!moving && s.mode === 'hold' && s.inTrench) return 'trench';
+    if (s.stance !== 'auto') return s.stance;
+    if (u.task?.type === 'clear' || u.task?.type === 'garrison') return 'crouch';
+    if (moving) return 'stand';
+    if (s.mode === 'dig') return 'crouch';
+    if (s.mode === 'hold') return s.building ? 'inside' : 'prone';
+    return 'crouch';
+  }
+
   finishTrenchTask(u) {
     u.state = 'idle';
     const t = u.task;
@@ -460,6 +660,8 @@ export class Sim {
       this.cleared.push({ side: u.side, line: t.line, t: this.time });
       this.msg(`${u.label}: траншея зачищена (${Math.round(lineLen(t.line))} м)`);
     } else if (t?.type === 'occupy') this.msg(`${u.label}: позиция занята`);
+    else if (t?.type === 'garrison') this.msg(`${u.label}: здание занято, бойцы у окон`);
+    else if (t?.type === 'basement') this.msg(`${u.label}: укрылись (${t.b.interior.basement.kind})`);
     u.task = null;
   }
 
@@ -533,7 +735,8 @@ export class Sim {
       const maxTurn = def.turn * remaining;
       u.heading += Math.max(-maxTurn, Math.min(maxTurn, da));
 
-      const terrain = MOVE[def.move][this.nav.classAt(u.x, u.y)] || MOVE[def.move][T.OPEN] * 0.3;
+      let terrain = MOVE[def.move][this.nav.classAt(u.x, u.y)] || MOVE[def.move][T.OPEN] * 0.3;
+      if (u.soldiers) terrain *= Math.min(...u.soldiers.map((q) => (q.stance === 'auto' ? 1 : POSES[q.stance].speed)));
       const turnPenalty = def.move === 'foot' ? 1 : Math.max(0.25, Math.cos(Math.min(Math.abs(da), 1.5)));
       const left = d + this.pathLeft(u);
       const brake = Math.sqrt(2 * def.accel * Math.max(0, left));
@@ -665,4 +868,19 @@ function lineLen(pts) {
   let L = 0;
   for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
   return L;
+}
+
+function nearestPt(pts, x, y) {
+  let best = pts[0], bd = Infinity;
+  for (const p of pts) {
+    const d = Math.hypot(p[0] - x, p[1] - y);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+function bboxPts(pts, pad) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  return { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
 }

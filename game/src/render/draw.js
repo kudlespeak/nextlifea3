@@ -646,6 +646,16 @@ function drawBuildings(ctx, world, q, ppm) {
   for (const bd of list) drawBuilding(ctx, bd, ppm);
 }
 
+// Освещение скатов: солнце с северо-запада
+const SUN = [-0.7071, -0.7071];
+function facet(ctx, pts, nx, ny, base = 0.22) {
+  const k = nx * SUN[0] + ny * SUN[1]; // >0 — к солнцу
+  ctx.beginPath();
+  pathPoly(ctx, pts);
+  ctx.fillStyle = k >= 0 ? `rgba(255,250,235,${(k * base * 0.8).toFixed(3)})` : `rgba(0,0,0,${(-k * base * 1.2).toFixed(3)})`;
+  ctx.fill();
+}
+
 function drawBuilding(ctx, bd, ppm) {
   if (bd.style === 'silo') {
     const g = ctx.createRadialGradient(bd.x - bd.r * 0.35, bd.y - bd.r * 0.35, bd.r * 0.1, bd.x, bd.y, bd.r);
@@ -658,56 +668,183 @@ function drawBuilding(ctx, bd, ppm) {
     return;
   }
   const p = bd.poly;
+  const c = Math.cos(bd.angle), s = Math.sin(bd.angle);
+  const W = (u, v) => [bd.x + u * c - v * s, bd.y + u * s + v * c];
+  const hw = bd.w / 2, hh = bd.h / 2;
+
+  if (bd.style === 'car') {
+    ctx.save();
+    ctx.translate(bd.x, bd.y);
+    ctx.rotate(bd.angle);
+    ctx.fillStyle = bd.roof;
+    ctx.beginPath();
+    ctx.roundRect(-hw, -hh, bd.w, bd.h, 0.5);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(30,40,45,0.8)';
+    ctx.fillRect(-hw + 0.2, -hh + 0.9, bd.w - 0.4, 0.7); // лобовое
+    ctx.fillRect(-hw + 0.2, hh - 1.0, bd.w - 0.4, 0.5); // заднее
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(-hw + 0.25, -hh + 1.7, bd.w - 0.5, 1.6); // крыша
+    ctx.restore();
+    return;
+  }
+  if (bd.style === 'greenhouse') {
+    ctx.beginPath();
+    pathPoly(ctx, p);
+    ctx.fillStyle = 'rgba(222,232,230,0.72)';
+    ctx.fill();
+    if (ppm >= 1.5) {
+      ctx.beginPath();
+      for (let v = -hh + 0.8; v < hh; v += 0.8) {
+        const [ax, ay] = W(-hw, v), [bx, by] = W(hw, v);
+        ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+      }
+      ctx.strokeStyle = 'rgba(120,130,125,0.6)';
+      ctx.lineWidth = 0.08;
+      ctx.stroke();
+    }
+    return;
+  }
+
   ctx.beginPath();
   pathPoly(ctx, p);
   ctx.fillStyle = bd.roof;
   ctx.fill();
 
   const long = bd.w >= bd.h;
-  // Середины коротких сторон — конёк
-  const mid = (a, c) => [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
   if (bd.style === 'gable' || bd.style === 'barn') {
-    const r0 = long ? mid(p[0], p[3]) : mid(p[0], p[1]);
-    const r1 = long ? mid(p[1], p[2]) : mid(p[3], p[2]);
-    // Затенённый скат (на юго-восток)
+    // Скаты в локальных координатах: конёк вдоль длинной стороны
+    const L = long ? hw : hh, S = long ? hh : hw;
+    const LW = (a, b) => (long ? W(a, b) : W(b, a)); // a — вдоль конька, b — поперёк
+    const n1 = long ? [-s, c] : [c, s]; // нормаль «+поперёк» в мире
+    if (bd.hip) {
+      const r = Math.max(0, L - S);
+      facet(ctx, [LW(-L, -S), LW(L, -S), LW(r, 0), LW(-r, 0)], -n1[0], -n1[1]);
+      facet(ctx, [LW(-L, S), LW(L, S), LW(r, 0), LW(-r, 0)], n1[0], n1[1]);
+      const ax = long ? [c, s] : [-s, c];
+      facet(ctx, [LW(L, -S), LW(L, S), LW(r, 0)], ax[0], ax[1]);
+      facet(ctx, [LW(-L, -S), LW(-L, S), LW(-r, 0)], -ax[0], -ax[1]);
+      if (ppm >= 0.8) {
+        const e = 'rgba(255,255,240,0.22)';
+        strokeLine(ctx, [LW(-r, 0), LW(r, 0)], 0.3, e);
+        for (const [sa, sb] of [[-L, -S], [L, -S], [L, S], [-L, S]]) strokeLine(ctx, [LW(sa, sb), LW(Math.sign(sa) * r, 0)], 0.2, e);
+      }
+    } else {
+      facet(ctx, [LW(-L, -S), LW(L, -S), LW(L, 0), LW(-L, 0)], -n1[0], -n1[1]);
+      facet(ctx, [LW(-L, S), LW(L, S), LW(L, 0), LW(-L, 0)], n1[0], n1[1]);
+      if (ppm >= 0.8) strokeLine(ctx, [LW(-L, 0), LW(L, 0)], 0.3, 'rgba(255,255,240,0.25)');
+    }
+    // Ряды черепицы / шифера
+    if (ppm >= 3) {
+      ctx.save();
+      ctx.beginPath();
+      pathPoly(ctx, p);
+      ctx.clip();
+      ctx.beginPath();
+      for (let b2 = -S + 0.35; b2 < S; b2 += 0.35) {
+        const [ax, ay] = LW(-L, b2), [bx, by] = LW(L, b2);
+        ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+      }
+      ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+      ctx.lineWidth = 0.06;
+      ctx.stroke();
+      ctx.restore();
+    }
+    // Свесы крыши
     ctx.beginPath();
-    if (long) { ctx.moveTo(r0[0], r0[1]); ctx.lineTo(r1[0], r1[1]); ctx.lineTo(p[2][0], p[2][1]); ctx.lineTo(p[3][0], p[3][1]); }
-    else { ctx.moveTo(r0[0], r0[1]); ctx.lineTo(r1[0], r1[1]); ctx.lineTo(p[2][0], p[2][1]); ctx.lineTo(p[1][0], p[1][1]); }
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.fill();
-    if (ppm >= 0.8) strokeLine(ctx, [r0, r1], 0.35, 'rgba(255,255,240,0.25)');
+    pathPoly(ctx, p);
+    ctx.lineWidth = 0.18;
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    if (ppm >= 1) ctx.stroke();
+    // Печная труба
+    if (bd.chimney && ppm >= 1.2) {
+      const [cx, cy] = W(bd.chimney[0], bd.chimney[1]);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(cx - 0.3 + 0.7, cy - 0.3 + 0.7, 0.6, 0.6);
+      ctx.fillStyle = '#6e4f40';
+      ctx.fillRect(cx - 0.3, cy - 0.3, 0.6, 0.6);
+      ctx.fillStyle = '#1e1a16';
+      ctx.fillRect(cx - 0.15, cy - 0.15, 0.3, 0.3);
+    }
   } else if (bd.style === 'flat') {
-    // Парапет и тёмная кромка
+    // Парапет: светлая кромка по периметру, тёмная мембрана внутри
     if (ppm >= 0.7) {
-      ctx.lineWidth = 0.6;
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 0.7;
+      ctx.strokeStyle = 'rgba(235,232,222,0.35)';
+      ctx.stroke();
+      ctx.lineWidth = 0.25;
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
       ctx.stroke();
     }
-    // Вентшахты / выходы на крышу
-    if (ppm >= 1.5 && bd.height > 6) {
-      const n = Math.floor(Math.max(bd.w, bd.h) / 14);
-      ctx.fillStyle = 'rgba(60,58,52,0.55)';
-      const c = Math.cos(bd.angle), s = Math.sin(bd.angle);
-      for (let i = 0; i < n; i++) {
-        const t = (i + 0.5) / n - 0.5;
-        const u = long ? t * bd.w : 0, v = long ? 0 : t * bd.h;
-        ctx.fillRect(bd.x + u * c - v * s - 1, bd.y + u * s + v * c - 1, 2, 2);
+    const it = bd.interior;
+    if (it && ppm >= 1.2 && bd.height > 6) {
+      // Выходы на крышу / машинные отделения лифтов над каждой лестницей
+      for (const st of it.stairs) {
+        const [x, y] = st.p;
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(x - 1.4 + 1.2, y - 1.4 + 1.2, 2.8, 2.8);
+        ctx.fillStyle = '#b3b0a8';
+        ctx.fillRect(x - 1.4, y - 1.4, 2.8, 2.8);
       }
     }
-  } else if (bd.style === 'hangar' && ppm >= 1) {
+    if (it && ppm >= 1.5) {
+      // Козырьки над подъездами
+      for (const d of it.doors) {
+        if (!d.ext) continue;
+        const [x, y] = d.p;
+        const tx = -d.n[1], ty = d.n[0];
+        const q = [[x - tx * 1.3, y - ty * 1.3], [x + tx * 1.3, y + ty * 1.3], [x + tx * 1.3 + d.n[0] * 1.4, y + ty * 1.3 + d.n[1] * 1.4], [x - tx * 1.3 + d.n[0] * 1.4, y - ty * 1.3 + d.n[1] * 1.4]];
+        ctx.beginPath();
+        pathPoly(ctx, q.map(([a, b2]) => [a + 0.4, b2 + 0.4]));
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fill();
+        ctx.beginPath();
+        pathPoly(ctx, q);
+        ctx.fillStyle = '#9d9a92';
+        ctx.fill();
+      }
+      // Балконы на тыльной стороне многоэтажек
+      if (bd.height > 9 && ppm >= 2) {
+        let k = 0;
+        for (const w of it.windows) {
+          const front = it.doors.some((d) => d.ext && d.n[0] * w.n[0] + d.n[1] * w.n[1] > 0.9);
+          if (front || k++ % 2) continue;
+          const [x, y] = w.p;
+          const tx = -w.n[1], ty = w.n[0];
+          const q = [[x - tx * 1.3, y - ty * 1.3], [x + tx * 1.3, y + ty * 1.3], [x + tx * 1.3 + w.n[0] * 1.1, y + ty * 1.3 + w.n[1] * 1.1], [x - tx * 1.3 + w.n[0] * 1.1, y - ty * 1.3 + w.n[1] * 1.1]];
+          ctx.beginPath();
+          pathPoly(ctx, q);
+          ctx.fillStyle = hash2(Math.round(x), Math.round(y), 7) < 0.5 ? '#a9b5b8' : '#bcb8ae';
+          ctx.fill();
+          ctx.lineWidth = 0.08;
+          ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+          ctx.stroke();
+        }
+      }
+    } else if (ppm >= 1.5 && bd.height > 6) {
+      const n = Math.floor(Math.max(bd.w, bd.h) / 14);
+      ctx.fillStyle = 'rgba(60,58,52,0.55)';
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n - 0.5;
+        const [x, y] = W(long ? t * bd.w : 0, long ? 0 : t * bd.h);
+        ctx.fillRect(x - 1, y - 1, 2, 2);
+      }
+    }
+  } else if ((bd.style === 'hangar' || bd.style === 'shed') && ppm >= 1) {
+    // Профнастил
     ctx.save();
     ctx.clip();
-    const c = Math.cos(bd.angle), s = Math.sin(bd.angle);
     ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-    ctx.lineWidth = 0.3;
+    ctx.lineWidth = bd.style === 'shed' ? 0.12 : 0.3;
     ctx.beginPath();
-    for (let u = -bd.w / 2; u < bd.w / 2; u += 1.2) {
-      ctx.moveTo(bd.x + u * c + (bd.h / 2) * s, bd.y + u * s - (bd.h / 2) * c);
-      ctx.lineTo(bd.x + u * c - (bd.h / 2) * s, bd.y + u * s + (bd.h / 2) * c);
+    const step = bd.style === 'shed' ? 0.5 : 1.2;
+    for (let u = -hw; u < hw; u += step) {
+      const [ax, ay] = W(u, -hh), [bx, by] = W(u, hh);
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
     }
     ctx.stroke();
     ctx.restore();
+    facet(ctx, p, 0.3, 0.3, 0.12);
   }
   // Разрушенная кровля
   if (bd.ruined) {

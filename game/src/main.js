@@ -6,6 +6,8 @@ import { T_NAMES } from './sim/nav.js';
 import { drawUnits, drawSymbol, emitDust, pickUnit, pickSoldier } from './render/units.js';
 import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js';
 import { digTrench } from './forts.js';
+import { drawInteriors, buildingAtScreen } from './render/interiors.js';
+import { POSES } from './sim/units.js';
 
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed')) || 1337;
@@ -36,7 +38,11 @@ const hud = {
   clear: document.getElementById('btn-clear'),
   toast: document.getElementById('toast'),
   task: document.getElementById('sel-task'),
+  basement: document.getElementById('btn-basement'),
+  interior: document.getElementById('btn-interior'),
+  stances: document.querySelectorAll('#stances [data-stance]'),
 };
+let interiorsForce = false;
 
 const world = generateWorld(seed);
 const chunks = new ChunkCache(world);
@@ -196,6 +202,31 @@ function orderAt(cx, cy) {
   }
   const foot = units.filter((u) => u.soldiers);
   const rest = units.filter((u) => !u.soldiers);
+  const bld = buildingAtScreen(world, view, cx * dpr, cy * dpr);
+  if (orderMode === 'basement') {
+    setOrderMode(null);
+    // Здание под курсором или ближайшее с подвалом
+    let target = bld?.interior?.basement ? bld : null;
+    if (!target) {
+      let bd = 150;
+      for (const b of world.buildings.query({ x0: x - 150, y0: y - 150, x1: x + 150, y1: y + 150 })) {
+        if (!b.interior?.basement) continue;
+        const d = Math.hypot(b.x - x, b.y - y);
+        if (d < bd) { bd = d; target = b; }
+      }
+    }
+    if (!target) { toast('Рядом нет подвалов и погребов'); return; }
+    for (const u of foot) sim.orderBasement(u, target);
+    toast(`В укрытие: ${target.interior.basement.kind}`);
+    return;
+  }
+  // ПКМ по зданию — пехота занимает его (у окон), техника встаёт рядом
+  if (bld && foot.length) {
+    for (const u of foot) sim.orderGarrison(u, bld);
+    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
+    toast(`Занять здание${bld.interior.floors > 1 ? ` (${bld.interior.floors} эт.)` : ''}: ${foot.length} отд.`);
+    return;
+  }
   if (orderMode === 'clear') {
     setOrderMode(null);
     let ok = 0;
@@ -231,6 +262,7 @@ function orderAt(cx, cy) {
 function setOrderMode(m) {
   orderMode = m;
   hud.clear.classList.toggle('active', m === 'clear');
+  hud.basement.classList.toggle('active', m === 'basement');
   canvas.style.cursor = m ? 'crosshair' : 'grab';
 }
 
@@ -276,6 +308,10 @@ addEventListener('keydown', (e) => {
     else { ui.selected.clear(); refreshPanel(); }
   }
   if (e.code === 'KeyC') setOrderMode(orderMode === 'clear' ? null : 'clear');
+  if (e.code === 'KeyV') setOrderMode(orderMode === 'basement' ? null : 'basement');
+  if (e.code === 'KeyI') toggleInterior();
+  const stanceKeys = { KeyZ: 'stand', KeyH: 'crouch', KeyP: 'prone', KeyN: 'auto' };
+  if (stanceKeys[e.code]) setStance(stanceKeys[e.code]);
   if (e.code === 'KeyO') cycleFortView();
   if (e.code === 'KeyT') toggleDig();
   if (e.code === 'Enter' && dig) finishDig();
@@ -357,6 +393,23 @@ function finishDig() {
 }
 hud.forts.onclick = cycleFortView;
 hud.clear.onclick = () => setOrderMode(orderMode === 'clear' ? null : 'clear');
+hud.basement.onclick = () => setOrderMode(orderMode === 'basement' ? null : 'basement');
+hud.interior.onclick = () => toggleInterior();
+hud.stances.forEach((b) => (b.onclick = () => setStance(b.dataset.stance)));
+function toggleInterior() {
+  interiorsForce = !interiorsForce;
+  hud.interior.classList.toggle('active', interiorsForce);
+  hud.interior.textContent = interiorsForce ? 'Интерьеры: всегда' : 'Интерьеры: вблизи';
+}
+// Поза — выбранному бойцу или всем бойцам выбранных отделений
+function setStance(st) {
+  if (ui.soldier) {
+    const u = sim.units.find((q) => q.id === ui.soldier.unitId);
+    if (u) sim.setStance(u, st, ui.soldier.idx);
+  } else for (const u of selectedUnits()) sim.setStance(u, st);
+  toast(`Поза: ${st === 'auto' ? 'авто (по обстановке)' : POSES[st].name}`);
+  updatePanel();
+}
 hud.dig.onclick = toggleDig;
 hud.forts.textContent = FORT_VIEW_NAMES[fortView];
 hud.strike.onclick = toggleStrike;
@@ -507,6 +560,7 @@ function frame(now) {
     hud.loading.style.opacity = need.length > rendered ? 1 : 0;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawInteriors(ctx, world, sim, view, interiorsForce, ui.underground);
     drawFortOverlay(ctx, world, view, fortView, dig);
     drawUnits(ctx, sim, view, ui);
     drawOverlay(now);
@@ -646,11 +700,15 @@ function refreshPanel() {
   updatePanel();
 }
 
-const TASK_TEXT = { occupy: 'занимает позицию', clear: 'зачистка траншеи', dig: 'роет траншею', manual: 'ручное управление' };
+const TASK_TEXT = { occupy: 'занимает позицию', clear: 'зачистка траншеи', dig: 'роет траншею', manual: 'ручное управление', garrison: 'занимает здание', basement: 'уходит в укрытие' };
 function updatePanel() {
   hud.clock.textContent = fmtTime(sim.time);
   const units = selectedUnits();
   hud.task.textContent = '';
+  const soldierObj = ui.soldier ? sim.units.find((q) => q.id === ui.soldier.unitId)?.soldiers[ui.soldier.idx] : null;
+  const cur = soldierObj ? soldierObj.stance : units.find((u) => u.soldiers)?.soldiers[0].stance;
+  hud.stances.forEach((b) => b.classList.toggle('active', b.dataset.stance === cur));
+  document.getElementById('stances').style.display = units.some((u) => u.soldiers) ? 'flex' : 'none';
   if (units.length === 1) {
     const u = units[0];
     let t = u.task ? `Задача: ${TASK_TEXT[u.task.type]}` : u.mode === 'trench' ? 'В траншее' : '';
@@ -660,8 +718,8 @@ function updatePanel() {
     hud.task.textContent = t;
     if (ui.soldier && ui.soldier.unitId === u.id) {
       const sd = u.soldiers[ui.soldier.idx];
-      const where = sd.under ? 'под землёй' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
-      hud.task.textContent = `${sd.role} · ${sd.mode === 'path' ? 'движется' : 'на месте'} · ${where} · ПКМ — куда идти`;
+      const where = sd.under ? (sd.building ? sd.building.interior.basement?.kind || 'под землёй' : 'под землёй') : sd.building ? 'в здании' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
+      hud.task.textContent = `${sd.role} · ${POSES[sd.pose]?.name || ''} · ${sd.mode === 'path' ? 'движется' : 'на месте'} · ${where} · поза: ${sd.stance === 'auto' ? 'авто' : POSES[sd.stance].name} · ПКМ — куда идти`;
     }
   }
   for (const el of hud.selList.querySelectorAll('.st')) {
