@@ -9,6 +9,11 @@ import { Rng } from '../rng.js';
 import { resample, pointInPoly } from '../geom.js';
 import { LocalGrid } from './localnav.js';
 import { Artillery } from './artillery.js';
+import { Vision } from './vision.js';
+import { Combat } from './combat.js';
+import { Drones } from './drones.js';
+import { GameMode } from './modes.js';
+import { AI } from './ai.js';
 
 // Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
 export const POSES = {
@@ -21,9 +26,12 @@ export const POSES = {
   under:  { name: 'в укрытии под землёй', speed: 0.7, exposure: 0 },
 };
 
+import { FACTIONS, ROLE_WEAPON } from './factions.js';
+
+// Стороны: цвета и направление на противника (названия — из FACTIONS)
 export const SIDES = {
-  blue: { name: 'Синие', color: '#4f8dff', fill: '#80b4ff', enemy: [1, 0] },
-  red: { name: 'Красные', color: '#e5483f', fill: '#ff8f85', enemy: [-1, 0] },
+  blue: { name: FACTIONS.blue.short, color: FACTIONS.blue.color, fill: FACTIONS.blue.fill, enemy: FACTIONS.blue.enemy },
+  red: { name: FACTIONS.red.short, color: FACTIONS.red.color, fill: FACTIONS.red.fill, enemy: FACTIONS.red.enemy },
 };
 
 // dig — скорость рытья полнопрофильной траншеи, м/ч (вручную отделением / машиной)
@@ -36,13 +44,23 @@ export const UNIT_TYPES = {
   tank:  { name: 'Танк', short: 'Танк', move: 'tracked', symbol: 'armor', men: 3, spacing: 55, accel: 1.8, turn: 1.2 },
   arty:  { name: 'Гаубица 152 мм (буксир.)', short: 'Гаубица', move: 'wheeled', symbol: 'arty', men: 7, spacing: 60, accel: 1.2, turn: 0.8, caliber: 152, reload: 10, setup: 90, ammo: 40 },
   mortar: { name: 'Миномётный расчёт 82 мм', short: 'Миномёт', move: 'foot', symbol: 'mortar', men: 4, spacing: 50, accel: 1.5, turn: 3, caliber: 82, reload: 5, setup: 30, ammo: 60 },
-  truck: { name: 'Грузовик снабжения', short: 'Грузовик', move: 'wheeled', symbol: 'supply', men: 2, spacing: 45, accel: 1.6, turn: 0.9 },
+  truck: { name: 'Грузовик снабжения', short: 'Грузовик', move: 'wheeled', symbol: 'supply', men: 2, spacing: 45, accel: 1.6, turn: 0.9, carry: 8 },
+  uav:   { name: 'Расчёт БПЛА', short: 'БПЛА', move: 'foot', symbol: 'uav', men: 3, spacing: 50, accel: 1.5, turn: 3 },
+  medevac: { name: 'Санитарная машина', short: 'Санитарка', move: 'wheeled', symbol: 'medic', men: 2, spacing: 45, accel: 1.8, turn: 1.0, carry: 6 },
 };
+
+// Описание подразделения с учётом стороны (названия, калибры, броня)
+export function unitDef(type, side) {
+  const base = UNIT_TYPES[type];
+  const f = FACTIONS[side]?.units[type] || {};
+  return { ...base, ...f };
+}
 
 const ROLES = {
   inf: ['Командир', 'Пулемётчик', 'Гранатомётчик', 'Стрелок', 'Стрелок', 'Снайпер', 'Помощник пулемётчика', 'Медик', 'Стрелок'],
   eng: ['Командир', 'Сапёр', 'Сапёр', 'Сапёр', 'Пулемётчик', 'Сапёр', 'Сапёр', 'Медик'],
   mortar: ['Командир расчёта', 'Наводчик', 'Заряжающий', 'Подносчик'],
+  uav: ['Командир расчёта', 'Оператор', 'Оператор'],
 };
 // Кто идёт первым при зачистке (штурмовая «двойка», командир третьим)
 const CLEAR_ORDER = ['Стрелок', 'Гранатомётчик', 'Командир', 'Пулемётчик', 'Помощник пулемётчика', 'Сапёр', 'Снайпер', 'Медик'];
@@ -56,7 +74,7 @@ export class Unit {
     this.id = nextId++;
     this.side = side;
     this.type = type;
-    this.def = UNIT_TYPES[type];
+    this.def = unitDef(type, side);
     this.x = x;
     this.y = y;
     this.heading = side === 'blue' ? 0 : Math.PI;
@@ -76,6 +94,10 @@ export class Unit {
     this.hp = 1;
     this.dead = false;
     this.fire = null;
+    this.roe = 'free'; // free — огонь свободно, return — только в ответ, hold — не стрелять
+    this.cargo = 0; // раненые на борту
+    this.underFire = 0;
+    this.firedAt = 0;
     if (ROLES[type]) {
       this.soldiers = ROLES[type].map((role, i) => {
         const [ox, oy] = formationOffset(i);
@@ -85,6 +107,7 @@ export class Unit {
           mode: 'follow', path: null, pathIdx: 0, speed: 1.4, under: false, startAt: 0, waitUntil: 0, face: null,
           stance: 'auto', pose: 'crouch', slot: null, building: null, afterPath: null, inTrench: false,
           hp: 100, dead: false, wounded: 0,
+          weapon: ROLE_WEAPON[role] || 'rifle', supp: 0, nextShot: 0, bleed: 0, treated: false, evac: false,
         };
       });
     }
@@ -116,6 +139,96 @@ export class Sim {
     this.events = []; // для интерфейса: { type: 'forts', bbox } | { type: 'msg', text }
     this.rng = new Rng((world.seed ^ 0x5151) >>> 0);
     this.art = new Artillery(this);
+    this.vision = new Vision(this);
+    this.combat = new Combat(this);
+    this.drones = new Drones(this);
+    this.medpoints = { blue: null, red: null };
+    this.stats = { blue: { kia: 0, wia: 0, evac: 0, lostVeh: 0 }, red: { kia: 0, wia: 0, evac: 0, lostVeh: 0 } };
+    this.puppet = false; // в сетевой игре у гостя симуляция только отображает присланное состояние
+  }
+
+  // Начало партии: время суток, расстановка, режим, ИИ
+  setupGame(cfg) {
+    this.cfg = cfg;
+    this.time = (cfg.startHour ?? 5.5) * 3600;
+    const rng = new Rng((this.world.seed ^ 0xa11) >>> 0);
+    this.game = new GameMode(this, cfg);
+    this.game.deploy(rng);
+    this.ais = (cfg.aiSides || []).map((side) => new AI(this, side, cfg.mode, cfg.difficulty));
+    this.vision.update(true);
+  }
+
+  // Проверка: подразделение уничтожено, если в нём не осталось живых
+  checkUnit(u) {
+    if (!u.soldiers || u.dead) return;
+    const alive = u.soldiers.filter((q) => !q.dead);
+    u.strength = alive.length / u.soldiers.length;
+    if (!alive.length) {
+      u.dead = true;
+      this.msg(`${u.label}: подразделение уничтожено`);
+    }
+  }
+
+  // Эвакуация тяжелораненых: товарищ выносит к санитарной машине / транспорту / в медпункт
+  orderEvac(u) {
+    if (!u.soldiers) return false;
+    const pats = u.soldiers.filter((s) => !s.dead && s.wounded === 2 && !s.evacMove);
+    if (!pats.length) { this.msg(`${u.label}: тяжелораненых нет`, u.side); return false; }
+    const dest = this.evacDest(u);
+    if (!dest) { this.msg(`${u.label}: некуда эвакуировать — нет транспорта и медпункта`, u.side); return false; }
+    const carriers = this.act(u).filter((s) => s.role !== 'Медик');
+    pats.forEach((p, i) => {
+      const c = carriers[i % Math.max(1, carriers.length)];
+      const route = this.footRoute(p.x, p.y, dest.x, dest.y);
+      const delay = c ? Math.hypot(c.x - p.x, c.y - p.y) / 1.5 + 2 : 0;
+      p.path = [{ x: p.x, y: p.y, under: p.under }, ...route.map(([x, y]) => ({ x, y, under: false }))];
+      p.pathIdx = 1; p.mode = 'path'; p.speed = 0.7; p.startAt = this.time + delay; p.face = null;
+      p.evacMove = true; p.evacUnit = u; p.evacDest = dest;
+      if (c) {
+        c.path = [{ x: c.x, y: c.y, under: c.under }, { x: p.x + 0.7, y: p.y, under: p.under }, ...route.map(([x, y]) => ({ x: x + 0.7, y, under: false }))];
+        c.pathIdx = 1; c.mode = 'path'; c.speed = 1.2; c.startAt = 0; c.face = null; c.afterPath = 'follow';
+        // Носильщик ждёт у раненого, чтобы идти вместе
+        c.path[1].wait = Math.max(0, delay - Math.hypot(c.x - p.x, c.y - p.y) / 1.2);
+      }
+    });
+    u.state = 'moving';
+    this.msg(`${u.label}: эвакуация ${pats.length} раненых → ${dest.label}`, u.side);
+    return true;
+  }
+
+  evacDest(u) {
+    let best = null, bd = 900;
+    for (const v of this.units) {
+      if (v.side !== u.side || v.dead || v.soldiers || !v.def.carry) continue;
+      const d = Math.hypot(v.x - u.x, v.y - u.y) * (v.type === 'medevac' ? 0.5 : 1);
+      if (d < bd) { bd = d; best = v; }
+    }
+    if (best) return { x: best.x, y: best.y, vehicle: best, label: best.label };
+    const m = this.medpoints[u.side];
+    return m ? { x: m.x, y: m.y, label: 'медпункт' } : null;
+  }
+
+  // Пеший маршрут: вблизи — точная сетка, далеко — общая
+  footRoute(ax, ay, bx, by) {
+    const d = Math.hypot(bx - ax, by - ay);
+    if (d < 220) {
+      const fp = new LocalGrid(this.world, bboxPts([[ax, ay], [bx, by]], 8)).path(ax, ay, bx, by);
+      if (fp) return fp.slice(1);
+    }
+    const r = this.nav.findPath(ax, ay, bx, by, 'foot');
+    return r ? r.path.slice(1) : [[bx, by]];
+  }
+
+  evacArrive(s) {
+    const u = s.evacUnit, dest = s.evacDest;
+    s.evacMove = false;
+    s.evac = true;
+    s.dead = true; // выбыл из подразделения (жив, но эвакуирован)
+    s.mode = 'dead';
+    if (dest.vehicle && !dest.vehicle.dead) dest.vehicle.cargo++;
+    else this.stats[u.side].evac++;
+    this.msg(`${u.label}: ${s.role.toLowerCase()} эвакуирован (${dest.label})`, u.side);
+    this.checkUnit(u);
   }
 
   // Бойцы, способные выполнять приказы (живые и не тяжело раненые)
@@ -130,8 +243,8 @@ export class Sim {
     return u;
   }
 
-  msg(text) {
-    this.events.push({ type: 'msg', text, t: this.time });
+  msg(text, side = null) {
+    this.events.push({ type: 'msg', text, t: this.time, side });
   }
 
   // ================= Приказы =================
@@ -582,7 +695,22 @@ export class Sim {
   update(dt) {
     this.time += dt;
     this.trenches.ensure();
+    this.vision.update();
     this.art.update();
+    this.drones.update(dt);
+    this.combat.update(dt);
+    this.game?.update(dt);
+    for (const ai of this.ais || []) ai.update();
+    // Санитарные машины и транспорт сдают раненых в медпункте
+    for (const v of this.units) {
+      if (v.dead || !v.cargo) continue;
+      const m = this.medpoints[v.side];
+      if (m && Math.hypot(v.x - m.x, v.y - m.y) < 70) {
+        this.stats[v.side].evac += v.cargo;
+        this.msg(`${v.label}: доставлено в медпункт ${v.cargo} раненых`, v.side);
+        v.cargo = 0;
+      }
+    }
     for (const u of this.units) {
       if (u.dead && !u.soldiers) continue;
       if (u.mode === 'field' && u.state === 'moving') this.moveUnit(u, dt);
@@ -597,14 +725,14 @@ export class Sim {
     let anyPath = false;
     for (const s of u.soldiers) {
       if (s.dead) { s.pose = 'dead'; continue; }
-      if (s.wounded === 2) { s.pose = 'prone'; s.moving = false; continue; }
+      if (s.wounded === 2 && !s.evacMove) { s.pose = 'prone'; s.moving = false; continue; }
       if (s.mode === 'follow') {
         const [ox, oy] = formationOffset(s.idx);
         const tx = u.x + ox * c - oy * sn, ty = u.y + ox * sn + oy * c;
         const dx = tx - s.x, dy = ty - s.y;
         const d = Math.hypot(dx, dy);
         if (d > 0.2) {
-          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1);
+          const v = Math.min(2.8, d * 1.2 + (u.state === 'moving' ? u.speed : 0)) * (s.stance === 'auto' ? 1 : POSES[s.stance].speed) * (s.wounded ? 0.6 : 1) * (s.supp > 6 ? 0.5 : 1);
           const step = Math.min(d, v * dt);
           const nx = s.x + (dx / d) * step, ny = s.y + (dy / d) * step;
           // Сквозь дома не ходим — скользим вдоль стены
@@ -660,6 +788,7 @@ export class Sim {
         s.pathIdx++;
         if (s.pathIdx >= s.path.length) {
           s.path = null;
+          if (s.evacMove) { this.evacArrive(s); return; }
           s.mode = s.afterPath || 'hold';
           s.afterPath = null;
           if (s.face !== null) s.heading = s.face;
@@ -678,6 +807,9 @@ export class Sim {
     if (s.dead) return 'dead';
     if (s.wounded === 2) return 'prone';
     if (s.under) return 'under';
+    // Под плотным огнём — прижимаются к земле (если не в укрытии)
+    const covered = (s.mode === 'hold' && (s.inTrench || s.slot === 'window' || s.slot === 'inside'));
+    if (!covered && s.supp > 4 && s.stance === 'auto') return 'prone';
     const moving = s.moving && !(s.waitUntil > this.time) && !(s.startAt > this.time);
     if (!moving && s.slot === 'window') return 'window';
     if (!moving && s.slot === 'inside') return 'inside';
@@ -747,7 +879,9 @@ export class Sim {
     while (job.built * DIG_PIECE < job.total && ((job.built + 1) * DIG_PIECE <= job.done || job.done >= job.total)) {
       const a = this.pointAt(job, job.built * DIG_PIECE);
       const b = this.pointAt(job, Math.min(job.total, (job.built + 1) * DIG_PIECE));
-      const items = digTrench(this.world, this.rng, [a, b], job.side, SIDES[job.side].enemy);
+      const seed = this.rng.int(0, 2 ** 30);
+      const items = digTrench(this.world, new Rng(seed), [a, b], job.side, SIDES[job.side].enemy);
+      this.events.push({ type: 'net', ev: { k: 'trench', pts: [a, b], side: job.side, s: seed } });
       for (const it of items) this.events.push({ type: 'forts', bbox: it.bbox });
       job.built++;
     }

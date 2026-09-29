@@ -8,10 +8,20 @@
 import { pointInPoly } from '../geom.js';
 import { addCraterCluster } from '../mapgen.js';
 import { M } from '../spatial.js';
+import { Rng } from '../rng.js';
+import { refreshCanopy } from '../mapgen.js';
+import { damagePower } from '../power.js';
 
 export const CALIBERS = {
+  81: { name: '81-мм мина', blast: 3, lethal: 12, danger: 45, frags: 430, crater: 1.1, speed: 240, sigma: 0.009, minR: 90, maxR: 5600, dmg: 1 },
+  155: { name: '155-мм ОФС', blast: 7, lethal: 28, danger: 100, frags: 1650, crater: 3.3, speed: 600, sigma: 0.0045, minR: 1500, maxR: 24000, dmg: 3 },
   82: { name: '82-мм мина', blast: 3, lethal: 12, danger: 45, frags: 450, crater: 1.1, speed: 230, sigma: 0.011, minR: 90, maxR: 4100, dmg: 1 },
   122: { name: '122-мм ОФС', blast: 5, lethal: 20, danger: 75, frags: 1000, crater: 2.2, speed: 520, sigma: 0.007, minR: 1000, maxR: 15000, dmg: 2 },
+  // малые заряды: граната ВОГ со сброса, FPV, осколочные 30 мм (БМП) и 125 мм (танк)
+  vog: { name: 'ВОГ', blast: 1.2, lethal: 5, danger: 20, frags: 110, crater: 0.3, dmg: 0.1 },
+  fpv: { name: 'FPV', blast: 2.2, lethal: 7, danger: 25, frags: 260, crater: 0.5, dmg: 0.3 },
+  he30: { name: '30-мм ОФ', blast: 1.4, lethal: 5, danger: 18, frags: 70, crater: 0.3, dmg: 0.15 },
+  he125: { name: '125-мм ОФС', blast: 4, lethal: 13, danger: 50, frags: 600, crater: 1.3, dmg: 1.2 },
   152: { name: '152-мм ОФС', blast: 7, lethal: 28, danger: 100, frags: 1700, crater: 3.2, speed: 560, sigma: 0.006, minR: 1500, maxR: 20000, dmg: 3 },
 };
 
@@ -82,7 +92,7 @@ export class Artillery {
     // Рассеяние: по дальности больше, по направлению меньше
     const er = gauss(sim.rng) * cal.sigma * d, ed = gauss(sim.rng) * cal.sigma * d * 0.45;
     const x = f.x + ax * er - ay * ed, y = f.y + ay * er + ax * ed;
-    const tof = d / cal.speed + (u.def.caliber === 82 ? 8 : 4);
+    const tof = d / cal.speed + (u.def.caliber < 100 ? 8 : 4);
     this.shells.push({ x0: u.x, y0: u.y, x, y, tLaunch: sim.time, tImpact: sim.time + tof, caliber: u.def.caliber, fuse: f.fuse, side: u.side });
     this.effects.push({ type: 'muzzle', x: u.x, y: u.y, h: u.heading, t: performance.now() });
     u.heading = Math.atan2(ay, ax);
@@ -92,8 +102,20 @@ export class Artillery {
   }
 
   // ---------- Разрыв ----------
-  explode(x, y, caliber, fuse = 'ground', side = null) {
+  explode(x, y, caliber, fuse = 'ground', side = null, quiet = false, seed = null) {
     const sim = this.sim, world = sim.world, rng = sim.rng;
+    const cal = CALIBERS[caliber];
+    if (seed === null) seed = rng.int(0, 2 ** 30);
+    // Мировая часть разрыва детерминирована по seed — для сетевой игры
+    sim.events.push({ type: 'net', ev: { k: 'boom', x, y, c: caliber, f: fuse, s: seed } });
+    const { collapsedDugouts, h } = this.explodeWorld(x, y, caliber, fuse, seed);
+    return this.explodePeople(x, y, caliber, fuse, h, collapsedDugouts, quiet);
+  }
+
+  // Воронка, деревья, здания, блиндажи, электросеть, эффекты (одинаково у всех игроков)
+  explodeWorld(x, y, caliber, fuse, seed) {
+    const sim = this.sim, world = sim.world;
+    const rng = new Rng(seed >>> 0);
     const cal = CALIBERS[caliber];
     const air = fuse === 'air';
     const h = air ? rng.float(5, 10) : 0.3;
@@ -118,7 +140,10 @@ export class Artillery {
       if (dd > cal.blast * 1.5) continue;
       b.damage = (b.damage || 0) + (inside ? cal.dmg : cal.dmg * 0.25) / Math.max(1, (b.w * b.h) / 150);
       if (b.damage >= 0.8) b.ruined = true;
-      if (b.damage >= 2.5 && b.style !== 'silo') b.collapsed = true;
+      if (b.damage >= 2.5 && b.style !== 'silo' && !b.collapsed) {
+        b.collapsed = true;
+        if (b.w * b.h > 30) (sim.fires || []).push({ x: b.x, y: b.y, r: Math.max(15, Math.max(b.w, b.h)), until: sim.time + 900 });
+      }
       redraw.x0 = Math.min(redraw.x0, b.bbox.x0); redraw.y0 = Math.min(redraw.y0, b.bbox.y0);
       redraw.x1 = Math.max(redraw.x1, b.bbox.x1); redraw.y1 = Math.max(redraw.y1, b.bbox.y1);
     }
@@ -132,7 +157,24 @@ export class Artillery {
         sim.msg(`Прямое попадание ${caliber} мм: блиндаж обрушен`);
       }
     }
+    for (const m of damagePower(world, x, y, cal.blast)) {
+      sim.msg(m);
+      const p = world.power;
+      redraw.x0 = Math.min(redraw.x0, p.main.x - 40); redraw.y0 = Math.min(redraw.y0, p.main.y - 40);
+      redraw.x1 = Math.max(redraw.x1, p.main.x + 40); redraw.y1 = Math.max(redraw.y1, p.main.y + 40);
+      sim.events.push({ type: 'forts', bbox: { x0: -100, y0: -100, x1: world.W + 100, y1: world.H + 100 }, power: true });
+    }
+    refreshCanopy(world, { x0: x - cal.blast * 3, y0: y - cal.blast * 3, x1: x + cal.blast * 3, y1: y + cal.blast * 3 });
     sim.events.push({ type: 'forts', bbox: redraw });
+    this.effects.push({ type: 'blast', x, y, caliber, air, h, t: performance.now(), rays: this.rays(x, y, cal, air, rng) });
+    return { collapsedDugouts, h };
+  }
+
+  explodePeople(x, y, caliber, fuse, h, collapsedDugouts, quiet) {
+    const sim = this.sim, rng = sim.rng;
+    const cal = CALIBERS[caliber];
+    const air = fuse === 'air';
+    if (sim.puppet) return { killed: 0, wounded: 0 };
 
     // ---------- Люди ----------
     let killed = 0, wounded = 0;
@@ -180,13 +222,8 @@ export class Artillery {
         if (s.wounded === 2) { s.path = null; s.mode = 'hold'; }
       }
     }
-    for (const u of affected) {
-      const alive = u.soldiers.filter((q) => !q.dead);
-      u.strength = alive.length / u.soldiers.length;
-      if (!alive.length) { u.dead = true; sim.msg(`${u.label}: подразделение уничтожено`); }
-    }
-    this.effects.push({ type: 'blast', x, y, caliber, air, h, t: performance.now(), rays: this.rays(x, y, cal, air) });
-    if (killed || wounded) sim.msg(`Разрыв ${caliber} мм${air ? ' (в воздухе)' : ''}: убито ${killed}, ранено ${wounded}`);
+    for (const u of affected) sim.checkUnit(u);
+    if ((killed || wounded) && !quiet) sim.msg(`Разрыв ${cal.name}${air ? ' (в воздухе)' : ''}: убито ${killed}, ранено ${wounded}`);
     return { killed, wounded };
   }
 
@@ -232,12 +269,12 @@ export class Artillery {
   }
 
   // Лучи осколков для визуализации — обрываются на стенах
-  rays(x, y, cal, air) {
+  rays(x, y, cal, air, rng) {
     const out = [];
-    const n = 42;
+    const n = cal.frags < 150 ? 16 : 42;
     for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + this.sim.rng.float(-0.06, 0.06);
-      let L = cal.lethal * this.sim.rng.float(0.6, 1.6);
+      const a = (i / n) * Math.PI * 2 + rng.float(-0.06, 0.06);
+      let L = cal.lethal * rng.float(0.6, 1.6);
       if (!air) {
         const ex = x + Math.cos(a) * L, ey = y + Math.sin(a) * L;
         const hit = this.firstWall(x, y, ex, ey);
@@ -272,7 +309,9 @@ export class Artillery {
     const w = { kind: 'wreck', x: u.x, y: u.y, angle: u.heading, type, seed: u.id * 7919 };
     w.bbox = { x0: u.x - 10, y0: u.y - 10, x1: u.x + 10, y1: u.y + 10 };
     world.scars.insert(w);
+    (this.sim.fires || []).push({ x: u.x, y: u.y, r: 25, until: this.sim.time + 1200 });
     this.sim.events.push({ type: 'forts', bbox: w.bbox });
+    this.sim.events.push({ type: 'net', ev: { k: 'wreck', id: u.id, x: u.x, y: u.y, a: u.heading, t: type } });
     this.sim.msg(`${u.label}: уничтожен`);
   }
 }

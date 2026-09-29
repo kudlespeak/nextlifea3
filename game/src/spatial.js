@@ -91,6 +91,7 @@ export const M = {
   VILLAGE: 128,
   CITYZONE: 256,
   FORT: 512, // рядом окопы — деревья вблизи становятся прозрачнее
+  CANOPY: 1024, // кроны деревьев — закрывают обзор
 };
 
 export class Mask {
@@ -116,6 +117,12 @@ export class Mask {
       if (this.has(x + Math.cos(ang) * r, y + Math.sin(ang) * r, flags)) return true;
     }
     return false;
+  }
+  clearRect(b, flag) {
+    const res = this.res;
+    const ix0 = Math.max(0, Math.floor(b.x0 / res)), ix1 = Math.min(this.w - 1, Math.floor(b.x1 / res));
+    const iy0 = Math.max(0, Math.floor(b.y0 / res)), iy1 = Math.min(this.h - 1, Math.floor(b.y1 / res));
+    for (let iy = iy0; iy <= iy1; iy++) for (let ix = ix0; ix <= ix1; ix++) this.data[iy * this.w + ix] &= ~flag;
   }
   stampDisc(x, y, r, flag) {
     const res = this.res;

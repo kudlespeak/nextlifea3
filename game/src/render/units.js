@@ -2,6 +2,8 @@
 // маршруты, выделение, пыль из-под колёс.
 
 import { SIDES } from '../sim/units.js';
+import { FACTIONS } from '../sim/factions.js';
+import { DRONE_KINDS } from '../sim/drones.js';
 import { T } from '../sim/nav.js';
 
 const SPRITE_ZOOM = 1.6; // device px/м, с которого рисуем технику
@@ -89,6 +91,20 @@ export function drawSymbol(ctx, x, y, s, side, symbol, opts = {}) {
       }
       break;
     }
+    case 'uav': {
+      // БПЛА: «птичка» над линией
+      ctx.beginPath();
+      ctx.moveTo(-iw * 0.6, -ih * 0.3); ctx.lineTo(0, ih * 0.25); ctx.lineTo(iw * 0.6, -ih * 0.3);
+      ctx.stroke();
+      break;
+    }
+    case 'medic':
+      ctx.lineWidth = Math.max(2, s * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(0, -ih * 0.6); ctx.lineTo(0, ih * 0.6);
+      ctx.moveTo(-ih * 0.6, 0); ctx.lineTo(ih * 0.6, 0);
+      ctx.stroke();
+      break;
     case 'supply':
       ctx.beginPath();
       ctx.moveTo(-iw, ih * 0.45); ctx.lineTo(iw, ih * 0.45);
@@ -99,7 +115,8 @@ export function drawSymbol(ctx, x, y, s, side, symbol, opts = {}) {
 }
 
 // ---------- Техника сверху (координаты в метрах, ось X — вперёд) ----------
-const OLIVE = '#4b5335', OLIVE_L = '#5a6340', OLIVE_D = '#353a26', TRACK = '#26281f';
+// Палитра камуфляжа текущей отрисовываемой машины (зависит от стороны)
+let P = FACTIONS.red.camo;
 
 function shadowRect(ctx, x, y, w, h) {
   ctx.fillStyle = 'rgba(10,12,6,0.45)';
@@ -114,27 +131,35 @@ function rrect(ctx, x, y, w, h, r) {
 const SPRITES = {
   tank(ctx, u) {
     shadowRect(ctx, -3.6, -1.8, 7.2, 3.6);
-    ctx.fillStyle = TRACK;
+    ctx.fillStyle = P.track;
     ctx.fillRect(-3.6, -1.8, 7.2, 0.75);
     ctx.fillRect(-3.6, 1.05, 7.2, 0.75);
     rrect(ctx, -3.4, -1.3, 6.8, 2.6, 0.3);
-    ctx.fillStyle = OLIVE;
+    ctx.fillStyle = P.body;
     ctx.fill();
-    ctx.fillStyle = OLIVE_D;
+    ctx.fillStyle = P.dark;
     ctx.fillRect(-3.3, -0.9, 1.4, 1.8); // МТО
     // Башня и ствол (башня смотрит по ходу)
     ctx.save();
     ctx.translate(0.2, 0);
-    ctx.fillStyle = OLIVE_D;
+    ctx.fillStyle = P.dark;
     ctx.fillRect(1.2, -0.13, 4.6, 0.26);
     ctx.beginPath();
-    ctx.ellipse(0, 0, 1.55, 1.3, 0, 0, Math.PI * 2);
-    ctx.fillStyle = OLIVE_L;
+    if (u.side === 'blue') {
+      // Западный танк: угловатая башня с нишей
+      ctx.moveTo(1.6, -1.1); ctx.lineTo(1.6, 1.1); ctx.lineTo(-1.2, 1.35); ctx.lineTo(-2.2, 0.9); ctx.lineTo(-2.2, -0.9); ctx.lineTo(-1.2, -1.35); ctx.closePath();
+    } else ctx.ellipse(0, 0, 1.55, 1.3, 0, 0, Math.PI * 2);
+    ctx.fillStyle = P.light;
     ctx.fill();
+    if (u.side === 'red') {
+      // Блоки динамической защиты
+      ctx.fillStyle = P.dark;
+      for (const [bx, by] of [[1.1, -0.9], [1.1, 0.9], [0.6, -1.2], [0.6, 1.2]]) ctx.fillRect(bx - 0.25, by - 0.2, 0.5, 0.4);
+    }
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     ctx.lineWidth = 0.12;
     ctx.stroke();
-    ctx.fillStyle = OLIVE_D;
+    ctx.fillStyle = P.dark;
     ctx.beginPath();
     ctx.arc(-0.4, -0.45, 0.35, 0, Math.PI * 2);
     ctx.fill();
@@ -142,28 +167,28 @@ const SPRITES = {
   },
   ifv(ctx) {
     shadowRect(ctx, -3.4, -1.6, 6.8, 3.2);
-    ctx.fillStyle = TRACK;
+    ctx.fillStyle = P.track;
     ctx.fillRect(-3.4, -1.6, 6.8, 0.6);
     ctx.fillRect(-3.4, 1.0, 6.8, 0.6);
     rrect(ctx, -3.3, -1.2, 6.6, 2.4, 0.25);
-    ctx.fillStyle = OLIVE;
+    ctx.fillStyle = P.body;
     ctx.fill();
     ctx.beginPath(); // скошенный нос
     ctx.moveTo(2.2, -1.2); ctx.lineTo(3.3, -0.7); ctx.lineTo(3.3, 0.7); ctx.lineTo(2.2, 1.2);
-    ctx.fillStyle = OLIVE_L;
+    ctx.fillStyle = P.light;
     ctx.fill();
-    ctx.fillStyle = OLIVE_D;
+    ctx.fillStyle = P.dark;
     ctx.fillRect(-3.2, -0.8, 1.2, 0.6); // десантные люки
     ctx.fillRect(-3.2, 0.2, 1.2, 0.6);
     ctx.fillRect(0.6, -0.08, 2.9, 0.16);
     ctx.beginPath();
     ctx.arc(0.4, 0, 0.8, 0, Math.PI * 2);
-    ctx.fillStyle = OLIVE_L;
+    ctx.fillStyle = P.light;
     ctx.fill();
   },
   apc(ctx) {
     shadowRect(ctx, -3.8, -1.45, 7.6, 2.9);
-    ctx.fillStyle = TRACK;
+    ctx.fillStyle = P.track;
     for (let i = 0; i < 4; i++) {
       const x = -2.8 + i * 1.75;
       ctx.fillRect(x - 0.5, -1.5, 1, 0.4);
@@ -174,18 +199,18 @@ const SPRITES = {
     ctx.closePath();
     ctx.fillStyle = '#525a3a';
     ctx.fill();
-    ctx.fillStyle = OLIVE_D;
+    ctx.fillStyle = P.dark;
     ctx.fillRect(1.5, -0.05, 2.2, 0.12);
     ctx.beginPath();
     ctx.arc(1.2, 0, 0.6, 0, Math.PI * 2);
-    ctx.fillStyle = OLIVE_L;
+    ctx.fillStyle = P.light;
     ctx.fill();
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.fillRect(-2.8, -0.9, 3, 1.8);
   },
   truck(ctx) {
     shadowRect(ctx, -4, -1.25, 8, 2.5);
-    ctx.fillStyle = TRACK;
+    ctx.fillStyle = P.track;
     for (const x of [-3, -1.8, 2.6]) { ctx.fillRect(x - 0.45, -1.3, 0.9, 0.3); ctx.fillRect(x - 0.45, 1.0, 0.9, 0.3); }
     ctx.fillStyle = '#58603f';
     ctx.fillRect(1.8, -1.15, 2.2, 2.3); // кабина
@@ -202,20 +227,20 @@ const SPRITES = {
   arty(ctx) {
     // Тягач + орудие на прицепе (ствол назад по-походному)
     SPRITES.truck(ctx);
-    ctx.fillStyle = OLIVE_D;
+    ctx.fillStyle = P.dark;
     ctx.beginPath();
     ctx.moveTo(-4.2, 0); ctx.lineTo(-7, -1.1); ctx.lineTo(-7, 1.1);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = '#3d4230';
     ctx.fillRect(-10.5, -0.12, 4.5, 0.24);
-    ctx.fillStyle = OLIVE;
+    ctx.fillStyle = P.body;
     ctx.fillRect(-7.3, -1.1, 1.3, 2.2);
   },
   btm(ctx) {
     // Гусеничный тягач с траншейным рабочим органом сзади
     shadowRect(ctx, -4.5, -1.6, 9, 3.2);
-    ctx.fillStyle = TRACK;
+    ctx.fillStyle = P.track;
     ctx.fillRect(-3, -1.6, 6.6, 0.6);
     ctx.fillRect(-3, 1.0, 6.6, 0.6);
     ctx.fillStyle = '#5a5a3c';
@@ -288,7 +313,8 @@ export function emitDust(sim, dtReal, timeScale) {
 }
 
 // ---------- Основная отрисовка ----------
-export function drawUnits(ctx, sim, view, ui) {
+export function drawUnits(ctx, sim, view, ui, fogSide = null) {
+  const hidden = (u) => fogSide && u.side !== fogSide && !sim.vision.now[fogSide].has(u.id);
   const { cam, canvas, dpr } = view;
   const toS = (x, y) => [(x - cam.x) * cam.zoom + canvas.width / 2, (y - cam.y) * cam.zoom + canvas.height / 2];
   const sel = ui.selected;
@@ -367,6 +393,7 @@ export function drawUnits(ctx, sim, view, ui) {
     for (const u of sim.units) {
       const [sx, sy] = toS(u.x, u.y);
       if (sx < -200 || sy < -200 || sx > canvas.width + 200 || sy > canvas.height + 200) continue;
+      if (hidden(u)) continue;
       if (u.soldiers) {
         drawSoldiers(ctx, u, toS, z, dpr, ui);
         continue;
@@ -385,7 +412,8 @@ export function drawUnits(ctx, sim, view, ui) {
       ctx.translate(sx, sy);
       ctx.scale(z, z);
       ctx.rotate(u.heading);
-      SPRITES[u.type](ctx, u, z);
+      P = FACTIONS[u.side].camo;
+      (SPRITES[u.type] || SPRITES.truck)(ctx, u, z);
       // Опознавательная полоса цвета стороны
       if (u.def.move !== 'foot') {
         ctx.fillStyle = SIDES[u.side].color;
@@ -401,8 +429,21 @@ export function drawUnits(ctx, sim, view, ui) {
   ctx.textBaseline = 'top';
   ctx.font = `700 ${12.5 * dpr}px "PT Sans", system-ui, sans-serif`;
   const labelAll = z > 0.35 * dpr || sel.size > 0;
+  // Последние известные позиции противника (туман войны)
+  if (fogSide) {
+    ctx.globalAlpha = 0.45;
+    for (const [id, g] of sim.vision.seen[fogSide]) {
+      if (sim.vision.now[fogSide].has(id)) continue;
+      const [gx, gy] = toS(g.x, g.y);
+      if (gx < -40 || gy < -40 || gx > canvas.width + 40 || gy > canvas.height + 40) continue;
+      drawSymbol(ctx, gx, gy, size * 0.85, g.side, g.symbol, { alpha: 0.6 });
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`? ${Math.round((sim.time - g.t) / 60)} мин`, gx, gy + size * 0.55);
+    }
+    ctx.globalAlpha = 1;
+  }
   for (const u of sim.units) {
-    if (u.dead) continue;
+    if (u.dead || hidden(u)) continue;
     let [sx, sy] = toS(u.x, u.y);
     if (sx < -60 || sy < -60 || sx > canvas.width + 60 || sy > canvas.height + 60) continue;
     if (sprites) {
@@ -519,6 +560,7 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui) {
     const [x, y] = toS(s.x, s.y);
     const isSel = ui.soldier && ui.soldier.unitId === u.id && ui.soldier.idx === s.idx;
     const pose = s.pose || 'stand';
+    if (s.evac) continue;
     if (s.dead) {
       // Погибший: тёмное пятно и неподвижный силуэт
       ctx.save();
@@ -691,5 +733,90 @@ export function drawArtillery(ctx, sim, view) {
       }
       ctx.stroke();
     }
+  }
+}
+
+// ---------- Трассеры, дроны, медпункты ----------
+export function drawCombatFx(ctx, sim, view, fogSide) {
+  const { cam, canvas, dpr } = view;
+  const z = cam.zoom;
+  const toS = (x, y) => [(x - cam.x) * z + canvas.width / 2, (y - cam.y) * z + canvas.height / 2];
+  const now = performance.now();
+  // Трассеры (последние 0.35 с реального времени)
+  const tr = sim.combat?.tracers || [];
+  for (let i = tr.length - 1; i >= 0; i--) {
+    const t = tr[i];
+    if (!t.rt) t.rt = now;
+    const age = (now - t.rt) / 350;
+    if (age > 1) { tr.splice(i, 1); continue; }
+    const [x0, y0] = toS(t.x0, t.y0), [x1, y1] = toS(t.x1, t.y1);
+    const a = age, b = Math.min(1, age + 0.35);
+    ctx.strokeStyle = t.side === 'blue' ? `rgba(255,235,150,${0.9 - age * 0.8})` : `rgba(255,170,110,${0.9 - age * 0.8})`;
+    ctx.lineWidth = (t.heavy ? 2 : 1.2) * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a);
+    ctx.lineTo(x0 + (x1 - x0) * b, y0 + (y1 - y0) * b);
+    ctx.stroke();
+  }
+  if (tr.length > 600) tr.splice(0, tr.length - 600);
+  // Медпункты
+  for (const side of ['blue', 'red']) {
+    const m = sim.medpoints?.[side];
+    if (!m || (fogSide && side !== fogSide)) continue;
+    const [x, y] = toS(m.x, m.y);
+    ctx.fillStyle = 'rgba(245,245,240,0.95)';
+    ctx.fillRect(x - 11 * dpr, y - 9 * dpr, 22 * dpr, 18 * dpr);
+    ctx.fillStyle = '#d33';
+    ctx.fillRect(x - 2.5 * dpr, y - 7 * dpr, 5 * dpr, 14 * dpr);
+    ctx.fillRect(x - 7 * dpr, y - 2.5 * dpr, 14 * dpr, 5 * dpr);
+    ctx.font = `700 ${11 * dpr}px "PT Sans", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.lineWidth = 3 * dpr;
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.strokeText('Медпункт', x, y + 11 * dpr);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Медпункт', x, y + 11 * dpr);
+  }
+  // Дроны
+  for (const d of sim.drones?.list || []) {
+    if (d.dead) continue;
+    if (fogSide && d.side !== fogSide) {
+      // Чужой дрон слышно/видно рядом со своими войсками
+      const near = sim.units.some((u) => u.side === fogSide && !u.dead && Math.hypot(u.x - d.x, u.y - d.y) < 300);
+      if (!near) continue;
+    }
+    const [x, y] = toS(d.x, d.y);
+    const s = Math.max(5 * dpr, (d.kind === 'fpv' ? 0.5 : 0.7) * z);
+    const own = !fogSide || d.side === fogSide;
+    if (own && d.state !== 'return') {
+      const [tx, ty] = toS(d.tx, d.ty);
+      ctx.setLineDash([4 * dpr, 4 * dpr]);
+      ctx.strokeStyle = d.kind === 'fpv' ? 'rgba(255,90,70,0.7)' : 'rgba(170,220,255,0.6)';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      if (d.kind === 'recon' && d.state === 'loiter') ctx.arc(tx, ty, DRONE_KINDS.recon.loiter * z, 0, Math.PI * 2);
+      else { ctx.moveTo(x, y); ctx.lineTo(tx, ty); }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Тень (дрон высоко — тень смещена)
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.arc(x + 10 * dpr, y + 10 * dpr, s * 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(d.heading + Math.PI / 4);
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = Math.max(1.5, s * 0.25);
+    ctx.beginPath();
+    ctx.moveTo(-s, -s); ctx.lineTo(s, s); ctx.moveTo(s, -s); ctx.lineTo(-s, s);
+    ctx.stroke();
+    ctx.fillStyle = SIDES[d.side].fill;
+    for (const [px, py] of [[-s, -s], [s, s], [s, -s], [-s, s]]) {
+      ctx.beginPath(); ctx.arc(px, py, s * 0.45, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = d.kind === 'fpv' ? '#c33' : d.kind === 'bomber' ? '#b80' : '#333';
+    ctx.fillRect(-s * 0.35, -s * 0.35, s * 0.7, s * 0.7);
+    ctx.restore();
   }
 }

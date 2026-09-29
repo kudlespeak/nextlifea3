@@ -4,29 +4,32 @@ import { Rng } from './rng.js';
 import { Sim, SIDES, POSES } from './sim/units.js';
 import { T_NAMES } from './sim/nav.js';
 import { CALIBERS } from './sim/artillery.js';
-import { drawUnits, drawSymbol, emitDust, pickUnit, pickSoldier, drawArtillery } from './render/units.js';
+import { FACTIONS } from './sim/factions.js';
+import { MODES } from './sim/modes.js';
+import { drawUnits, drawSymbol, emitDust, pickUnit, pickSoldier, drawArtillery, drawCombatFx } from './render/units.js';
 import { drawFortOverlay, FORT_VIEWS, FORT_VIEW_NAMES } from './render/forts.js';
 import { digTrench } from './forts.js';
 import { drawInteriors, buildingAtScreen } from './render/interiors.js';
+import { drawNight, drawFog } from './render/night.js';
+import { drawFront, drawZones } from './render/modes.js';
+import { daylight } from './power.js';
+import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, applyWorldEvent } from './net.js';
 
-const params = new URLSearchParams(location.search);
-const seed = Number(params.get('seed')) || 1337;
 const $ = (id) => document.getElementById(id);
-
+const params = new URLSearchParams(location.search);
 const canvas = $('map');
 const ctx = canvas.getContext('2d');
 const mini = $('minimap');
 const mctx = mini.getContext('2d');
 
-const world = generateWorld(seed);
-const chunks = new ChunkCache(world);
-const sim = new Sim(world);
-sim.deployDefault(new Rng(seed ^ 0xa11));
-const digRng = new Rng(seed ^ 0xd16);
+// Игровые объекты создаются при старте партии
+let world = null, chunks = null, sim = null, cfg = null;
+let role = 'single'; // single | host | guest
+let net = null;
 
-// ================= Состояние =================
+// ================= Состояние интерфейса =================
 const ui = { selected: new Set(), box: null, marks: [], soldier: null, underground: false };
-let orderMode = null; // null | move | occupy | clear | basement | fire | dig | strike
+let orderMode = null; // move | occupy | clear | basement | fire | dig | strike | recon | fpv | bomber
 let controlSide = 'blue';
 let stealthOrders = false;
 let timeScale = 5;
@@ -34,36 +37,179 @@ let paused = false;
 let fortView = 'off';
 let interiorsForce = false;
 let showLabels = true;
-let dig = null; // { points, cursor }
+let dig = null;
 const fireOpts = { rounds: 3, fuse: 'ground' };
 let dpr = window.devicePixelRatio || 1;
-const cam = { x: world.W / 2, y: world.H / 2, zoom: 1 };
+const cam = { x: 0, y: 0, zoom: 1 };
 let mouse = null;
 let minZoom = 0.05;
 const MAX_ZOOM = 28;
+let digRng = new Rng(1);
 
-$('info').textContent = `seed ${seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.genTime.toFixed(0)} мс · деревьев ${world.trees.count.toLocaleString('ru')} · зданий ${world.buildings.items.length.toLocaleString('ru')}`;
+// ================= Стартовое меню =================
+const menu = {
+  side: 'blue', mode: 'zones', attacker: 'red', startHour: 5, fog: true, difficulty: 'normal', duration: 3600,
+  seed: Number(params.get('seed')) || Math.floor(Math.random() * 1e6), tab: 'single',
+};
+
+function buildMenu() {
+  const f = $('factions');
+  f.innerHTML = '';
+  for (const side of ['blue', 'red']) {
+    const F = FACTIONS[side];
+    const d = document.createElement('div');
+    d.className = 'faction' + (menu.side === side ? ' sel' : '');
+    const kit = ['tank', 'ifv', 'apc', 'arty', 'mortar'].map((t) => F.units[t].name).join(' · ');
+    d.innerHTML = `<div class="flag"><i style="background:${F.flag[0]}"></i><i style="background:${F.flag[1]}"></i></div>
+      <b style="color:${F.fill}">${F.country}</b><div class="army">${F.army} · ${F.motto}</div>
+      <ul>${F.doctrine.map((x) => `<li>${x}</li>`).join('')}</ul><div class="kit">Техника: ${kit}</div>`;
+    d.onclick = () => { menu.side = side; buildMenu(); };
+    f.appendChild(d);
+  }
+  const opts = (id, label, list, key) => {
+    const row = $(id);
+    row.innerHTML = `<span>${label}</span>`;
+    for (const [v, name] of list) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.className = menu[key] === v ? 'sel' : '';
+      b.onclick = () => { menu[key] = v; buildMenu(); };
+      row.appendChild(b);
+    }
+  };
+  const mo = $('opt-mode');
+  mo.innerHTML = '';
+  for (const [k, m] of Object.entries(MODES)) {
+    const b = document.createElement('button');
+    b.textContent = m.name;
+    b.className = menu.mode === k ? 'sel' : '';
+    b.onclick = () => { menu.mode = k; buildMenu(); };
+    mo.appendChild(b);
+  }
+  $('mode-desc').textContent = MODES[menu.mode].desc;
+  $('opt-attacker').style.display = menu.mode === 'assault' ? 'flex' : 'none';
+  opts('opt-attacker', 'Наступает', [['blue', FACTIONS.blue.short], ['red', FACTIONS.red.short]], 'attacker');
+  opts('opt-time', 'Начало', [[5, 'Рассвет 05:00'], [12, 'День 12:00'], [20, 'Сумерки 20:00'], [23, 'Ночь 23:00']], 'startHour');
+  opts('opt-fog', 'Туман войны', [[true, 'Включён'], [false, 'Выключен']], 'fog');
+  opts('opt-diff', 'Сложность ИИ', [['easy', 'Лёгкая'], ['normal', 'Нормальная'], ['hard', 'Тяжёлая']], 'difficulty');
+  opts('opt-dur', 'Длительность', [[1800, '30 мин'], [3600, '60 мин'], [5400, '90 мин']], 'duration');
+  $('opt-seed').value = menu.seed;
+  $('opt-diff').style.display = menu.tab === 'single' ? 'flex' : 'none';
+  $('mp-card').style.display = menu.tab === 'mp' ? 'block' : 'none';
+  $('tab-single').classList.toggle('active', menu.tab === 'single');
+  $('tab-mp').classList.toggle('active', menu.tab === 'mp');
+  $('btn-start').style.display = menu.tab === 'single' || (role === 'host' && net?.guestReady) ? '' : 'none';
+  $('start-hint').textContent = menu.tab === 'single'
+    ? `Вы: ${FACTIONS[menu.side].country}. Противник: ${FACTIONS[menu.side === 'blue' ? 'red' : 'blue'].country} (ИИ).`
+    : role === 'host' ? (net?.guestReady ? 'Соперник подключён — можно начинать.' : 'Ждём соперника…') : 'Создайте комнату или подключитесь по коду.';
+}
+$('tab-single').onclick = () => { menu.tab = 'single'; buildMenu(); };
+$('tab-mp').onclick = () => { menu.tab = 'mp'; buildMenu(); };
+$('opt-seed').onchange = (e) => { menu.seed = Number(e.target.value) || 1; };
+$('seed-rnd').onclick = () => { menu.seed = Math.floor(Math.random() * 1e6); buildMenu(); };
+$('mp-url').value = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host || 'localhost:8080'}/ws`;
+
+function gameConfig() {
+  const enemy = menu.side === 'blue' ? 'red' : 'blue';
+  return {
+    seed: menu.seed, mode: menu.mode, attacker: menu.attacker, startHour: menu.startHour, fog: menu.fog,
+    difficulty: menu.difficulty, duration: menu.duration, playerSide: menu.side,
+    aiSides: menu.tab === 'single' ? [enemy] : [], multiplayer: menu.tab === 'mp',
+  };
+}
+
+$('btn-start').onclick = () => {
+  const c = gameConfig();
+  if (role === 'host') {
+    net.send({ t: 'start', cfg: { ...c, playerSide: c.playerSide === 'blue' ? 'red' : 'blue' } });
+  }
+  startGame(c);
+};
+
+// ---------- Мультиплеер: лобби ----------
+async function connect() {
+  if (net) return net;
+  net = new Net($('mp-url').value);
+  $('mp-status').textContent = 'Подключение к серверу…';
+  try { await net.ready(); } catch { $('mp-status').textContent = 'Не удалось подключиться. Запустите node game/server.js и откройте игру по его адресу.'; net = null; throw new Error('no server'); }
+  net.on('error', (m) => { $('mp-status').textContent = m.text || 'Ошибка связи'; })
+    .on('close', () => { if (sim) log('Связь с сервером потеряна'); else $('mp-status').textContent = 'Соединение закрыто'; })
+    .on('left', () => { if (sim) log('Соперник отключился'); else { net.guestReady = false; buildMenu(); } });
+  return net;
+}
+$('mp-host').onclick = async () => {
+  await connect();
+  role = 'host';
+  net.on('hosted', (m) => { $('mp-code').textContent = m.code; $('mp-status').textContent = `Комната ${m.code}. Сообщите код сопернику.`; buildMenu(); })
+    .on('guest', () => { net.guestReady = true; $('mp-status').textContent = 'Соперник подключился. Настройте игру и нажмите «В бой».'; buildMenu(); })
+    .on('cmd', (m) => execCommand(m.c, m.a));
+  net.send({ t: 'host' });
+};
+$('mp-join').onclick = async () => {
+  await connect();
+  role = 'guest';
+  net.on('joined', (m) => { $('mp-status').textContent = `Вы в комнате ${m.code}. Ждём, пока хост начнёт игру…`; })
+    .on('start', (m) => startGame(m.cfg))
+    .on('snap', (m) => { if (sim) { applySnapshot(sim, m); lastSnap = performance.now(); } })
+    .on('grid', (m) => { if (sim) applyGrid(sim, m); })
+    .on('ev', (m) => { if (!sim) return; for (const e of m.list) applyWorldEvent(sim, e, (b) => chunks.invalidate(b)); })
+    .on('msg', (m) => { if (sim && (!m.side || m.side === controlSide)) log(m.text); });
+  net.send({ t: 'join', code: $('mp-join-code').value.trim() });
+};
+let lastSnap = 0;
+
+buildMenu();
+
+// ================= Запуск партии =================
+function startGame(c) {
+  cfg = c;
+  controlSide = c.playerSide;
+  $('menu-screen').classList.add('hide');
+  $('loading').style.opacity = 1;
+  $('loading').textContent = 'Генерация местности…';
+  setTimeout(() => {
+    world = generateWorld(c.seed);
+    chunks = new ChunkCache(world);
+    sim = new Sim(world);
+    sim.setupGame(c);
+    if (role === 'guest') { sim.puppet = true; sim.ais = []; }
+    digRng = new Rng(c.seed ^ 0xd16);
+    if (c.multiplayer) { timeScale = 1; setSpeed(1); document.querySelector('.timebox').classList.add('mp'); for (const b of document.querySelectorAll('[data-speed]')) b.style.display = 'none'; }
+    $('info').textContent = `seed ${c.seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.genTime.toFixed(0)} мс`;
+    const b = $('side-badge');
+    b.textContent = FACTIONS[controlSide].country;
+    b.className = controlSide;
+    resize();
+    // Камера — у своих позиций
+    const own = sim.units.filter((u) => u.side === controlSide);
+    const front = own.find((u) => u.duty) || own[0];
+    cam.x = front.x; cam.y = front.y;
+    cam.zoom = 0.9 * dpr;
+    mini.width = 540;
+    mini.height = Math.round(540 * world.H / world.W);
+    for (let cy = 0; cy * chunks.worldSize(0) < world.H; cy++)
+      for (let cx = 0; cx * chunks.worldSize(0) < world.W; cx++) chunks.render(0, cx, cy);
+    buildRoster();
+    const enemy = controlSide === 'blue' ? 'red' : 'blue';
+    log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
+    if (c.mode === 'assault') log(c.attacker === controlSide ? 'Ваша задача: взять все опорные пункты противника.' : 'Ваша задача: удержать опорные пункты до конца времени.');
+    $('loading').style.opacity = 0;
+    $('loading').textContent = 'Прорисовка местности…';
+    lastNow = performance.now();
+    requestAnimationFrame(frame);
+  }, 30);
+}
 
 // ================= Камера =================
 function resize() {
   dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(innerWidth * dpr);
   canvas.height = Math.round(innerHeight * dpr);
-  minZoom = Math.min(canvas.width / world.W, canvas.height / world.H) * 0.9;
+  if (world) minZoom = Math.min(canvas.width / world.W, canvas.height / world.H) * 0.9;
   cam.zoom = Math.max(cam.zoom, minZoom);
 }
 addEventListener('resize', resize);
 resize();
-
-// Старт — у своих позиций на передовой, крупно
-{
-  const own = sim.units.filter((u) => u.side === controlSide);
-  const front = own.find((u) => u.label.includes('позиции')) || own[0];
-  const cx = own.reduce((a, u) => a + u.x, 0) / own.length;
-  cam.x = (front.x * 2 + cx) / 3;
-  cam.y = (front.y * 2 + own.reduce((a, u) => a + u.y, 0) / own.length) / 3;
-  cam.zoom = 1.1 * dpr;
-}
 
 function clampCam() {
   cam.zoom = Math.min(MAX_ZOOM, Math.max(minZoom, cam.zoom));
@@ -76,23 +222,49 @@ function zoomAt(sx, sy, factor) {
   cam.zoom *= factor;
   clampCam();
   const [nx, ny] = screenToWorld(sx, sy);
-  cam.x += wx - nx;
-  cam.y += wy - ny;
+  cam.x += wx - nx; cam.y += wy - ny;
   clampCam();
 }
-function focus(x, y, zoom) {
-  cam.x = x; cam.y = y;
-  if (zoom) cam.zoom = Math.max(cam.zoom, zoom);
-  clampCam();
-}
+function focus(x, y, zoom) { cam.x = x; cam.y = y; if (zoom) cam.zoom = Math.max(cam.zoom, zoom); clampCam(); }
 
 const view = { cam, canvas, get dpr() { return dpr; } };
-const selectedUnits = () => sim.units.filter((u) => ui.selected.has(u.id) && !u.dead);
+const selectedUnits = () => (sim ? sim.units.filter((u) => ui.selected.has(u.id) && !u.dead && u.side === controlSide) : []);
+const fogSide = () => (cfg?.fog ? controlSide : null);
+
+// ================= Приказы (единый диспетчер: локально или по сети) =================
+const building = (i) => world.buildings.items[i];
+const bIndex = (b) => world.buildings.items.indexOf(b);
+const unitsById = (ids) => sim.units.filter((u) => ids.includes(u.id) && !u.dead);
+const COMMANDS_IMPL = {
+  move: (ids, x, y, stealth) => sim.orderMove(unitsById(ids), x, y, { stealth }),
+  occupy: (id, x, y) => { const u = unitsById([id])[0]; if (u && !sim.orderOccupy(u, x, y)) sim.orderMove([u], x, y); },
+  garrison: (id, bi) => { const u = unitsById([id])[0]; if (u) sim.orderGarrison(u, building(bi)); },
+  basement: (id, bi) => { const u = unitsById([id])[0]; if (u) sim.orderBasement(u, building(bi)); },
+  clear: (id, x, y) => { const u = unitsById([id])[0]; if (u) sim.orderClear(u, x, y); },
+  soldier: (id, idx, x, y) => { const u = unitsById([id])[0]; if (u) sim.orderSoldier(u, idx, x, y); },
+  dig: (ids, pts) => sim.orderDig(unitsById(ids), pts),
+  fire: (ids, x, y, rounds, fuse) => { for (const t of sim.art.orderFire(unitsById(ids), x, y, { rounds, fuse })) sim.msg(t, sim.units.find((u) => u.id === ids[0])?.side); },
+  stop: (ids) => { const us = unitsById(ids); sim.stop(us); for (const u of us) u.fire = null; },
+  stance: (id, st, idx) => { const u = unitsById([id])[0]; if (u) sim.setStance(u, st, idx); },
+  roe: (ids, roe) => { for (const u of unitsById(ids)) u.roe = roe; },
+  evac: (ids) => { for (const u of unitsById(ids)) sim.orderEvac(u); },
+  drone: (id, kind, x, y, target) => { const u = unitsById([id])[0]; const r = sim.drones.launch(u, kind, x, y, target); if (r) sim.msg(r, u?.side); },
+  recall: (ids) => { for (const u of unitsById(ids)) sim.drones.recall(u); },
+};
+function execCommand(name, args) {
+  const fn = COMMANDS_IMPL[name];
+  if (fn) fn(...args);
+}
+function issue(name, ...args) {
+  if (role === 'guest') net.send({ t: 'cmd', c: name, a: args });
+  else execCommand(name, args);
+}
 
 // ================= Ввод =================
 let drag = null, pinch = null;
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
+  if (!sim) return;
   closeMenu();
   canvas.setPointerCapture(e.pointerId);
   if (e.button === 2) {
@@ -105,6 +277,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (box) ui.box = { x0: e.clientX * dpr, y0: e.clientY * dpr, x1: e.clientX * dpr, y1: e.clientY * dpr };
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (!sim) return;
   mouse = [e.clientX, e.clientY];
   if (dig) dig.cursor = screenToWorld(e.clientX, e.clientY);
   updateHint();
@@ -122,7 +295,7 @@ canvas.addEventListener('pointerup', (e) => {
   drag = null;
 });
 canvas.addEventListener('pointerleave', () => { mouse = null; $('hint').style.display = 'none'; });
-canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.pow(1.0015, -e.deltaY)); }, { passive: false });
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); if (sim) zoomAt(e.clientX, e.clientY, Math.pow(1.0015, -e.deltaY)); }, { passive: false });
 canvas.addEventListener('touchstart', (e) => {
   if (e.touches.length === 2) {
     const [a, b] = e.touches;
@@ -131,7 +304,7 @@ canvas.addEventListener('touchstart', (e) => {
   }
 }, { passive: true });
 canvas.addEventListener('touchmove', (e) => {
-  if (pinch && e.touches.length === 2) {
+  if (pinch && e.touches.length === 2 && sim) {
     const [a, b] = e.touches;
     const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     zoomAt((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2, d / pinch.d);
@@ -142,10 +315,9 @@ canvas.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinch = n
 
 function clickAt(cx, cy, additive, touch) {
   const [x, y] = screenToWorld(cx, cy);
-  if (orderMode === 'strike') { strikeTest(x, y); return; }
+  if (orderMode === 'strike') { if (role !== 'guest') sim.art.explode(x, y, 152, fireOpts.fuse); return; }
   if (orderMode === 'dig') { dig.points.push([x, y]); updateHint(); return; }
   if (orderMode && ui.selected.size) { orderAt(cx, cy); return; }
-  // Вблизи можно выбрать отдельного бойца выделенного отделения
   const sol = pickSoldier(sim, view, cx * dpr, cy * dpr, ui);
   if (sol) { ui.soldier = sol; buildCard(); return; }
   const u = pickUnit(sim, view, cx * dpr, cy * dpr, controlSide);
@@ -170,28 +342,38 @@ function boxSelect(b, additive) {
   selectionChanged();
 }
 
-// ================= Приказы =================
+// Вражеское подразделение под курсором (для FPV-удара) — только видимое
+function enemyAt(cx, cy) {
+  const enemy = controlSide === 'blue' ? 'red' : 'blue';
+  const u = pickUnit(sim, view, cx * dpr, cy * dpr, enemy);
+  return u && (!cfg.fog || sim.vision.now[controlSide].has(u.id)) ? u : null;
+}
+
 function orderAt(cx, cy) {
   const units = selectedUnits();
   if (!units.length) return;
   const [x, y] = screenToWorld(cx, cy);
   const mode = orderMode;
   ui.marks.push({ x, y, t: performance.now(), stealth: stealthOrders });
+  const ids = (us) => us.map((u) => u.id);
   if (mode === 'fire') {
-    const guns = units.filter((u) => u.def.caliber);
-    for (const t of sim.art.orderFire(guns, x, y, fireOpts)) log(t);
+    issue('fire', ids(units.filter((u) => u.def.caliber)), x, y, fireOpts.rounds, fireOpts.fuse);
     setOrderMode(null);
     return;
   }
-  if (ui.soldier && !mode) {
-    const u = sim.units.find((q) => q.id === ui.soldier.unitId);
-    if (u) { sim.orderSoldier(u, ui.soldier.idx, x, y); return; }
+  if (mode === 'recon' || mode === 'fpv' || mode === 'bomber') {
+    const op = units.find((u) => u.type === 'uav');
+    const t = mode === 'fpv' ? enemyAt(cx, cy) : null;
+    issue('drone', op.id, mode, t ? t.x : x, t ? t.y : y, t ? t.id : null);
+    setOrderMode(null);
+    return;
   }
+  if (ui.soldier && !mode) { issue('soldier', ui.soldier.unitId, ui.soldier.idx, x, y); return; }
   const foot = units.filter((u) => u.soldiers);
   const rest = units.filter((u) => !u.soldiers);
   const bld = buildingAtScreen(world, view, cx * dpr, cy * dpr);
   if (mode) setOrderMode(null);
-  if (mode === 'move') { sim.orderMove(units, x, y, { stealth: stealthOrders }); return; }
+  if (mode === 'move') { issue('move', ids(units), x, y, stealthOrders); return; }
   if (mode === 'basement') {
     let target = bld?.interior?.basement ? bld : null;
     if (!target) {
@@ -203,21 +385,19 @@ function orderAt(cx, cy) {
       }
     }
     if (!target) { log('Рядом нет подвалов и погребов'); return; }
-    for (const u of foot) sim.orderBasement(u, target);
-    log(`Приказ: укрыться (${target.interior.basement.kind}) — ${foot.map((u) => u.label).join(', ')}`);
+    for (const u of foot) issue('basement', u.id, bIndex(target));
+    log(`Приказ: укрыться (${target.interior.basement.kind})`);
     return;
   }
   if (mode === 'clear') {
-    let ok = 0;
-    for (const u of foot) if (sim.orderClear(u, x, y)) ok++;
-    log(ok ? `Приказ: зачистить траншею — ${ok} отд.` : 'Для зачистки укажите точку на траншее');
+    for (const u of foot) issue('clear', u.id, x, y);
+    log('Приказ: зачистить траншею');
     return;
   }
-  // Здание или траншея под курсором — занять; иначе — двигаться
   if (bld && foot.length) {
-    for (const u of foot) sim.orderGarrison(u, bld);
-    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
-    log(`Приказ: занять здание${bld.interior.floors > 1 ? ` (${bld.interior.floors} эт.)` : ''} — ${foot.map((u) => u.label).join(', ')}`);
+    for (const u of foot) issue('garrison', u.id, bIndex(bld));
+    if (rest.length) issue('move', ids(rest), x, y, stealthOrders);
+    log(`Приказ: занять здание${bld.interior.floors > 1 ? ` (${bld.interior.floors} эт.)` : ''}`);
     return;
   }
   sim.trenches.ensure();
@@ -232,14 +412,14 @@ function orderAt(cx, cy) {
         const off = (i - (foot.length - 1) / 2) * 45;
         tx += ((b[0] - a[0]) / L) * off; ty += ((b[1] - a[1]) / L) * off;
       }
-      if (!sim.orderOccupy(u, tx, ty)) sim.orderOccupy(u, x, y);
+      issue('occupy', u.id, tx, ty);
     });
-    if (rest.length) sim.orderMove(rest, x, y, { stealth: stealthOrders });
-    log(`Приказ: занять траншею — ${foot.map((u) => u.label).join(', ')}`);
+    if (rest.length) issue('move', ids(rest), x, y, stealthOrders);
+    log('Приказ: занять траншею');
     return;
   }
   if (mode === 'occupy') { log('Укажите траншею или здание'); return; }
-  sim.orderMove(units, x, y, { stealth: stealthOrders });
+  issue('move', ids(units), x, y, stealthOrders);
 }
 
 function setOrderMode(m) {
@@ -256,10 +436,11 @@ function finishDig() {
   if (dig && dig.points.length >= 2) {
     const diggers = selectedUnits().filter((u) => u.def.dig);
     if (diggers.length && !dig.test) {
-      const job = sim.orderDig(diggers, dig.points);
+      issue('dig', diggers.map((u) => u.id), dig.points);
+      const L = dig.points.reduce((a, p, i) => (i ? a + Math.hypot(p[0] - dig.points[i - 1][0], p[1] - dig.points[i - 1][1]) : 0), 0);
       const rate = diggers.reduce((a, u) => a + u.def.dig, 0);
-      log(`Приказ: рыть траншею ${Math.round(job.total)} м (${diggers.map((u) => u.label).join(', ')}) · ~${fmtEta((job.total / rate) * 3600)}`);
-    } else {
+      log(`Приказ: рыть траншею ${Math.round(L)} м · ~${fmtEta((L / rate) * 3600)}`);
+    } else if (role !== 'guest') {
       const created = digTrench(world, digRng, dig.points, controlSide, SIDES[controlSide].enemy);
       for (const c of created) chunks.invalidate(c.bbox);
       sim.trenches.ensure();
@@ -269,14 +450,10 @@ function finishDig() {
   setOrderMode(null);
 }
 
-function strikeTest(x, y) {
-  sim.art.explode(x, y, 152, fireOpts.fuse, null);
-}
-
 // ================= Клавиатура =================
 const keys = new Set();
 addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'INPUT' || !sim) return;
   keys.add(e.code);
   if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.25);
   if (e.key === '-') zoomAt(innerWidth / 2, innerHeight / 2, 0.8);
@@ -289,8 +466,7 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (c === 'F1') { e.preventDefault(); toggleHelp(); return; }
-  if (c === 'Space') { e.preventDefault(); setSpeed(paused ? timeScale : 0); return; }
-  if (c === 'Tab') { e.preventDefault(); switchSide(); return; }
+  if (c === 'Space') { e.preventDefault(); if (!cfg.multiplayer) setSpeed(paused ? timeScale : 0); return; }
   if (c === 'Enter' && orderMode === 'dig') { finishDig(); return; }
   if (c === 'KeyA' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -299,12 +475,11 @@ addEventListener('keydown', (e) => {
     return;
   }
   const speedKeys = { Digit1: 1, Digit2: 5, Digit3: 20, Digit4: 60 };
-  if (speedKeys[c]) { setSpeed(speedKeys[c]); return; }
+  if (speedKeys[c] && !cfg.multiplayer) { setSpeed(speedKeys[c]); return; }
   if (c === 'KeyL') toggleLabels();
   if (c === 'KeyO') cycleFortView();
   if (c === 'KeyI') toggleInterior();
-  if (c === 'KeyB') setOrderMode(orderMode === 'strike' ? null : 'strike');
-  // Команды панели по горячим клавишам
+  if (c === 'KeyB' && !cfg.multiplayer) setOrderMode(orderMode === 'strike' ? null : 'strike');
   for (const cmd of COMMANDS) if (cmd.key === c && cmd.when(selectedUnits())) { cmd.run(); return; }
   for (const st of STANCES) if (st.key === c && selectedUnits().some((u) => u.soldiers)) { setStance(st.id); return; }
 });
@@ -320,18 +495,39 @@ const ICON = {
   fire: '<circle cx="12" cy="12" r="6"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
   stealth: '<path d="M3 3l18 18M10.6 5.1A9 9 0 0 1 12 5c5 0 9 4.5 10 7-.5 1.2-1.4 2.6-2.6 3.8M6.2 6.3C4.2 7.7 2.7 9.8 2 12c1 2.5 5 7 10 7 1.7 0 3.3-.5 4.7-1.3"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
+  evac: '<path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/>',
+  roe: '<path d="M4 12h8M12 8l4 4-4 4"/><circle cx="19" cy="12" r="2"/>',
+  recon: '<circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/>',
+  fpv: '<path d="M5 5l14 14M19 5L5 19"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>',
+  bomber: '<path d="M12 3v10M8 9l4 4 4-4"/><circle cx="12" cy="18" r="3"/>',
+  recall: '<path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
 };
+const ROE_NAMES = { free: 'Огонь свободно', return: 'Только в ответ', hold: 'Не стрелять' };
 const svg = (p) => `<svg class="i" viewBox="0 0 24 24">${p}</svg>`;
 const has = (units, f) => units.some(f);
+const idsOf = (us) => us.map((u) => u.id);
 const COMMANDS = [
   { id: 'move', label: 'Идти', key: 'KeyM', icon: 'move', when: (u) => u.length > 0, run: () => setOrderMode(orderMode === 'move' ? null : 'move'), active: () => orderMode === 'move', tip: 'Двигаться в точку (или просто ПКМ по земле)' },
   { id: 'occupy', label: 'Занять', key: 'KeyE', icon: 'occupy', when: (u) => has(u, (q) => q.soldiers), run: () => setOrderMode(orderMode === 'occupy' ? null : 'occupy'), active: () => orderMode === 'occupy', tip: 'Занять траншею или здание (или ПКМ по ним)' },
   { id: 'clear', label: 'Зачистить', key: 'KeyC', icon: 'clear', when: (u) => has(u, (q) => q.soldiers), run: () => setOrderMode(orderMode === 'clear' ? null : 'clear'), active: () => orderMode === 'clear', tip: 'Зачистить траншею до указанной точки' },
   { id: 'basement', label: 'В подвал', key: 'KeyV', icon: 'basement', when: (u) => has(u, (q) => q.soldiers), run: () => setOrderMode(orderMode === 'basement' ? null : 'basement'), active: () => orderMode === 'basement', tip: 'Укрыться в подвале / погребе' },
+  { id: 'evac', label: 'Эвакуация', key: 'KeyR', icon: 'evac', when: (u) => has(u, (q) => q.soldiers), run: () => issue('evac', idsOf(selectedUnits())), active: () => false, tip: 'Вынести тяжелораненых к санитарке, транспорту или в медпункт' },
   { id: 'dig', label: 'Копать', key: 'KeyT', icon: 'dig', when: (u) => has(u, (q) => q.def.dig), run: () => setOrderMode(orderMode === 'dig' ? null : 'dig'), active: () => orderMode === 'dig', tip: 'Рыть траншею: клики — точки, ПКМ/Enter — копать' },
-  { id: 'fire', label: 'Огонь', key: 'KeyF', icon: 'fire', when: (u) => has(u, (q) => q.def.caliber), run: () => setOrderMode(orderMode === 'fire' ? null : 'fire'), active: () => orderMode === 'fire', tip: 'Огонь по точке' },
+  { id: 'fire', label: 'Огонь', key: 'KeyF', icon: 'fire', when: (u) => has(u, (q) => q.def.caliber), run: () => setOrderMode(orderMode === 'fire' ? null : 'fire'), active: () => orderMode === 'fire', tip: 'Артиллерийский огонь по точке' },
+  { id: 'recon', label: 'Разведка', key: 'KeyJ', icon: 'recon', when: (u) => has(u, (q) => q.type === 'uav'), run: () => setOrderMode(orderMode === 'recon' ? null : 'recon'), active: () => orderMode === 'recon', tip: 'Дрон-разведчик: зависнет над точкой, видит сверху (ночью — тепловизор)' },
+  { id: 'fpv', label: 'FPV-удар', key: 'KeyK', icon: 'fpv', when: (u) => has(u, (q) => q.type === 'uav'), run: () => setOrderMode(orderMode === 'fpv' ? null : 'fpv'), active: () => orderMode === 'fpv', tip: 'FPV-камикадзе: клик по видимой цели или точке' },
+  { id: 'bomber', label: 'Сброс', key: 'KeyU', icon: 'bomber', when: (u) => has(u, (q) => q.type === 'uav'), run: () => setOrderMode(orderMode === 'bomber' ? null : 'bomber'), active: () => orderMode === 'bomber', tip: 'Дрон-сбросчик: 3 гранаты ВОГ на точку' },
+  { id: 'recall', label: 'Вернуть', key: 'KeyY', icon: 'recall', when: (u) => has(u, (q) => q.type === 'uav'), run: () => issue('recall', idsOf(selectedUnits())), active: () => false, tip: 'Вернуть дроны к оператору' },
+  { id: 'roe', label: 'Огонь: свободно', key: 'KeyQ', icon: 'roe', when: (u) => has(u, (q) => q.soldiers || ['tank', 'ifv', 'apc'].includes(q.type)), run: () => {
+    const us = selectedUnits();
+    const order = ['free', 'return', 'hold'];
+    const next = order[(order.indexOf(us[0]?.roe || 'free') + 1) % 3];
+    issue('roe', idsOf(us), next);
+    for (const u of us) u.roe = next;
+    buildCommands();
+  }, active: () => selectedUnits()[0]?.roe !== 'free', tip: 'Режим огня: свободно / только в ответ / не стрелять' },
   { id: 'stealth', label: 'Скрытно', key: 'KeyG', icon: 'stealth', when: (u) => u.length > 0, run: () => { stealthOrders = !stealthOrders; updateCommands(); }, active: () => stealthOrders, tip: 'Маршрут вдоль посадок и балок, избегая открытых мест' },
-  { id: 'stop', label: 'Стоп', key: 'KeyX', icon: 'stop', when: (u) => u.length > 0, run: () => { sim.stop(selectedUnits()); for (const u of selectedUnits()) u.fire = null; }, active: () => false, tip: 'Остановиться, отменить задачу и огонь' },
+  { id: 'stop', label: 'Стоп', key: 'KeyX', icon: 'stop', when: (u) => u.length > 0, run: () => issue('stop', idsOf(selectedUnits())), active: () => false, tip: 'Остановиться, отменить задачу и огонь' },
 ];
 const KEYNAME = (code) => code.replace('Key', '').replace('Digit', '');
 const STANCES = [
@@ -351,11 +547,11 @@ function buildCommands() {
     b.className = 'cmd';
     b.dataset.cmd = c.id;
     b.title = c.tip;
-    b.innerHTML = `${svg(ICON[c.icon])}<span>${c.label}</span><kbd>${KEYNAME(c.key)}</kbd>`;
+    const label = c.id === 'roe' ? ROE_NAMES[units[0]?.roe || 'free'] : c.label;
+    b.innerHTML = `${svg(ICON[c.icon])}<span>${label}</span><kbd>${KEYNAME(c.key)}</kbd>`;
     b.onclick = () => c.run();
     box.appendChild(b);
   }
-  // Опции: позы, параметры огня
   const opts = $('opts');
   opts.innerHTML = '';
   if (units.some((u) => u.soldiers)) {
@@ -395,6 +591,14 @@ function buildCommands() {
     }
     opts.appendChild(f);
   }
+  const op = units.find((u) => u.type === 'uav');
+  if (op) {
+    const left = op.dronesLeft || op.def.drones;
+    const d = document.createElement('div');
+    d.className = 'seg';
+    d.innerHTML = `<span>Дроны</span><span style="min-width:0;color:var(--text)">разведчиков ${left.recon} · FPV ${left.fpv} · сбросчиков ${left.bomber}</span>`;
+    opts.appendChild(d);
+  }
   updateCommands();
 }
 
@@ -413,8 +617,10 @@ function updateCommands() {
 
 function setStance(st) {
   const sd = currentSoldier();
-  if (sd) sim.setStance(sim.units.find((q) => q.id === ui.soldier.unitId), st, ui.soldier.idx);
-  else for (const u of selectedUnits()) sim.setStance(u, st);
+  if (sd) issue('stance', ui.soldier.unitId, st, ui.soldier.idx);
+  else for (const u of selectedUnits()) issue('stance', u.id, st, null);
+  // Сразу показываем в интерфейсе (гостю — до следующего снимка)
+  if (sd) sd.stance = st; else for (const u of selectedUnits()) if (u.soldiers) for (const s of u.soldiers) s.stance = st;
   updateCommands();
 }
 
@@ -446,7 +652,6 @@ function buildCard() {
     for (const u of units) cnt[u.def.short] = (cnt[u.def.short] || 0) + 1;
     $('card-sub').textContent = Object.entries(cnt).map(([k, v]) => `${k} ×${v}`).join(' · ');
   }
-  // Бойцы отделения
   const box = $('soldiers');
   box.innerHTML = '';
   if (one?.soldiers) {
@@ -455,10 +660,7 @@ function buildCard() {
       c.className = 'chip';
       c.dataset.sid = s.idx;
       c.innerHTML = `<b>${s.idx + 1}. ${s.role}</b><small></small><div class="bar"><i></i></div>`;
-      c.onclick = () => {
-        ui.soldier = ui.soldier && ui.soldier.idx === s.idx ? null : { unitId: one.id, idx: s.idx };
-        buildCard();
-      };
+      c.onclick = () => { ui.soldier = ui.soldier && ui.soldier.idx === s.idx ? null : { unitId: one.id, idx: s.idx }; buildCard(); };
       c.ondblclick = () => focus(s.x, s.y, 6 * dpr);
       box.appendChild(c);
     }
@@ -476,42 +678,45 @@ function updateCard() {
     if (one.soldiers) {
       const alive = one.soldiers.filter((s) => !s.dead);
       const w = alive.filter((s) => s.wounded).length;
-      stats.push(`Личный состав <b>${alive.length}/${one.soldiers.length}</b>${w ? ` · ранено <b>${w}</b>` : ''}`);
-    } else stats.push(`Состояние <b>${Math.round((one.hp ?? 1) * 100)}%</b>`);
+      const ev = one.soldiers.filter((s) => s.evac).length;
+      stats.push(`Личный состав <b>${alive.length}/${one.soldiers.length}</b>${w ? ` · ранено <b>${w}</b>` : ''}${ev ? ` · эвакуировано ${ev}` : ''}`);
+      const supp = alive.reduce((a, s) => a + s.supp, 0) / Math.max(1, alive.length);
+      if (supp > 3) stats.push('<b style="color:var(--bad)">под огнём</b>');
+    } else stats.push(`Состояние <b>${Math.round((one.hp ?? 1) * 100)}%</b>${one.cargo ? ` · раненых на борту <b>${one.cargo}</b>` : ''}`);
     if (one.def.caliber) stats.push(`Боезапас <b>${one.ammo}/${one.def.ammo}</b> · ${CALIBERS[one.def.caliber].name}`);
     stats.push(`${STATE_TEXT[one.state] || ''} · ${T_NAMES[sim.nav.classAt(one.x, one.y)]}`);
-    if (one.state === 'moving' && one.mode === 'field') stats.push(`${(one.speed * 3.6).toFixed(0)} км/ч · прибытие ~${fmtEta(one.eta)}`);
+    if (one.state === 'moving' && one.mode === 'field' && one.speed) stats.push(`${(one.speed * 3.6).toFixed(0)} км/ч${one.eta ? ` · прибытие ~${fmtEta(one.eta)}` : ''}`);
   } else {
     const men = units.reduce((a, u) => a + (u.soldiers ? u.soldiers.filter((s) => !s.dead).length : 0), 0);
     stats.push(`Подразделений <b>${units.length}</b>`);
     if (men) stats.push(`Бойцов <b>${men}</b>`);
   }
   $('card-stats').innerHTML = stats.map((s) => `<span>${s}</span>`).join('');
-  // Задача
   let task = '';
   if (one) {
-    if (one.fire) task = `Огонь: осталось ${one.fire.rounds} выстр. ${sim.time < one.fire.next ? `· готовность через ${Math.ceil(one.fire.next - sim.time)} с` : ''}`;
+    if (one.fire) task = `Ведёт огонь${one.fire.rounds ? `: осталось ${one.fire.rounds} выстр.` : ''}${one.fire.next && sim.time < one.fire.next ? ` · готовность через ${Math.ceil(one.fire.next - sim.time)} с` : ''}`;
     else if (one.task) {
       task = `Задача: ${TASK_TEXT[one.task.type] || one.task.type}`;
-      if (one.task.type === 'dig') task += ` · ${Math.round((one.task.job.done / one.task.job.total) * 100)}%`;
-      if (one.task.type === 'clear') task += ` · ${Math.round((one.task.progress / Math.max(1, one.task.line.length - 1)) * 100)}%`;
+      if (one.task.type === 'dig' && one.task.job) task += ` · ${Math.round((one.task.job.done / one.task.job.total) * 100)}%`;
+      if (one.task.type === 'clear' && one.task.line) task += ` · ${Math.round((one.task.progress / Math.max(1, one.task.line.length - 1)) * 100)}%`;
     } else if (one.mode === 'trench') task = 'Бойцы действуют по отдельности (траншея / здание)';
     if (one.pending) task += ' · выдвигается к месту';
     if (one.noRoute && sim.time - one.noRoute < 30) task += ' · нет маршрута!';
+    if (one.roe && one.roe !== 'free') task += ` · ${ROE_NAMES[one.roe].toLowerCase()}`;
   }
   const sd = currentSoldier();
   if (sd) {
-    const where = sd.under ? (sd.building?.interior?.basement?.kind || 'под землёй') : sd.building ? 'в здании' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
-    task = `Выбран боец: ${sd.role} · ${POSES[sd.pose]?.name || (sd.dead ? 'погиб' : '')} · ${where} — ПКМ: куда идти`;
+    const where = sd.under ? 'в укрытии под землёй' : sd.building ? 'в здании' : sim.trenches.nearest(sd.x, sd.y, 1.5) >= 0 ? 'в траншее' : 'на открытой местности';
+    task = `Выбран боец: ${sd.role} · ${sd.dead ? (sd.evac ? 'эвакуирован' : 'погиб') : `${POSES[sd.pose]?.name || ''} · ${where}`} — ПКМ: куда идти`;
   }
   $('task').textContent = task;
-  // Чипы бойцов
   if (one?.soldiers) {
     for (const c of document.querySelectorAll('#soldiers .chip')) {
       const s = one.soldiers[Number(c.dataset.sid)];
+      if (!s) continue;
       c.classList.toggle('active', !!ui.soldier && ui.soldier.idx === s.idx);
       c.classList.toggle('dead', s.dead);
-      c.querySelector('small').textContent = s.dead ? 'погиб' : `${s.wounded === 2 ? 'тяжело ранен · ' : s.wounded ? 'ранен · ' : ''}${POSES[s.pose]?.name || ''}`;
+      c.querySelector('small').textContent = s.evac ? 'эвакуирован' : s.dead ? 'погиб' : `${s.wounded === 2 ? (s.treated ? 'тяжело ранен, перевязан · ' : 'тяжело ранен, кровотечение · ') : s.wounded ? 'ранен · ' : ''}${s.supp > 4 ? 'подавлен · ' : ''}${POSES[s.pose]?.name || ''}`;
       const bar = c.querySelector('.bar > i');
       bar.style.width = `${s.hp}%`;
       bar.style.background = s.hp > 70 ? 'var(--ok)' : s.hp > 30 ? 'var(--warn)' : 'var(--bad)';
@@ -519,15 +724,13 @@ function updateCard() {
   }
   updateCommands();
 }
-
 $('card-close').onclick = () => { ui.selected.clear(); selectionChanged(); };
 
 // ================= Список подразделений =================
 const GROUPS = [
   ['Пехота', ['inf']], ['Инженеры', ['eng', 'btm']], ['Бронетехника', ['tank', 'ifv', 'apc']],
-  ['Артиллерия', ['mortar', 'arty']], ['Тыл', ['truck']],
+  ['Артиллерия', ['mortar', 'arty']], ['Дроны', ['uav']], ['Тыл', ['truck', 'medevac']],
 ];
-let rosterKey = '';
 function buildRoster() {
   const list = $('roster-list');
   list.innerHTML = '';
@@ -565,11 +768,9 @@ function buildRoster() {
       list.appendChild(r);
     }
   }
-  rosterKey = controlSide;
 }
 
 function updateRoster() {
-  if (rosterKey !== controlSide) buildRoster();
   for (const r of document.querySelectorAll('#roster-list .r-row')) {
     const u = sim.units.find((q) => q.id === Number(r.dataset.id));
     if (!u) continue;
@@ -579,12 +780,14 @@ function updateRoster() {
     if (u.dead) st = 'уничтожено';
     else if (u.fire) st = `огонь · ${u.ammo} выстр.`;
     else if (u.task) st = TASK_TEXT[u.task.type] || '';
+    else if (u.soldiers && u.soldiers.some((s) => !s.dead && s.supp > 4)) st = 'под огнём';
     else if (u.mode === 'trench') st = 'на позиции';
     else st = STATE_TEXT[u.state];
+    if (u.soldiers && u.soldiers.some((s) => !s.dead && s.wounded === 2)) st += ' · раненые';
     r.querySelector('.r-state').textContent = st;
     const val = u.dead ? 0 : u.soldiers ? u.soldiers.filter((q) => !q.dead).length / u.soldiers.length : u.hp ?? 1;
     const bar = r.querySelector('.bar > i');
-    bar.style.width = `${val * 100}%`;
+    bar.style.width = `${Math.max(0, val) * 100}%`;
     bar.style.background = val > 0.66 ? 'var(--ok)' : val > 0.33 ? 'var(--warn)' : 'var(--bad)';
   }
 }
@@ -598,8 +801,8 @@ $('roster-toggle').onclick = () => {
 function log(text) {
   const box = $('log');
   const ev = document.createElement('div');
-  ev.className = 'ev' + (/убит|уничтож|обруш|погиб/.test(text) ? ' loss' : '');
-  ev.innerHTML = `<time>${fmtClock(sim.time)}</time><span></span>`;
+  ev.className = 'ev' + (/убит|уничтож|обруш|погиб|умер|тяжело ранен|обесточ/.test(text) ? ' loss' : '');
+  ev.innerHTML = `<time>${sim ? fmtClock(sim.time) : ''}</time><span></span>`;
   ev.querySelector('span').textContent = text;
   box.prepend(ev);
   while (box.children.length > 9) box.lastChild.remove();
@@ -609,7 +812,7 @@ function log(text) {
 // ================= Подсказка у курсора =================
 function updateHint() {
   const h = $('hint');
-  if (!mouse) { h.style.display = 'none'; return; }
+  if (!mouse || !sim) { h.style.display = 'none'; return; }
   const [x, y] = screenToWorld(mouse[0], mouse[1]);
   const units = selectedUnits();
   let text = '';
@@ -619,8 +822,7 @@ function updateHint() {
       const cal = CALIBERS[g.def.caliber];
       const d = Math.hypot(x - g.x, y - g.y);
       const ok = d >= cal.minR && d <= cal.maxR;
-      text = ok
-        ? `<b>Огонь</b> · ${(d / 1000).toFixed(2)} км · рассеяние ±${Math.round(cal.sigma * d * 2)} м · ${fireOpts.rounds} выстр. · ${fireOpts.fuse === 'air' ? 'воздушный подрыв' : 'контакт'}`
+      text = ok ? `<b>Огонь</b> · ${(d / 1000).toFixed(2)} км · рассеяние ±${Math.round(cal.sigma * d * 2)} м · ${fireOpts.rounds} выстр. · ${fireOpts.fuse === 'air' ? 'воздушный подрыв' : 'контакт'}`
         : `<b>Вне досягаемости</b> · ${(d / 1000).toFixed(2)} км (можно ${cal.minR}–${cal.maxR} м)`;
     }
   } else if (orderMode === 'dig') {
@@ -628,7 +830,12 @@ function updateHint() {
     let L = 0;
     for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
     text = dig.points.length ? `<b>Траншея</b> ${Math.round(L)} м · ЛКМ — ещё точка · ПКМ/Enter — копать` : '<b>Траншея</b>: кликните начало';
-  } else if (orderMode === 'clear') text = '<b>Зачистить</b>: укажите точку на траншее';
+  } else if (orderMode === 'fpv') {
+    const t = enemyAt(mouse[0], mouse[1]);
+    text = t ? `<b>FPV-удар</b> по цели: ${t.def.short}` : '<b>FPV-удар</b>: кликните видимую цель или точку';
+  } else if (orderMode === 'recon') text = '<b>Разведка</b>: точка для зависания дрона';
+  else if (orderMode === 'bomber') text = '<b>Сброс</b>: точка сброса 3 гранат';
+  else if (orderMode === 'clear') text = '<b>Зачистить</b>: укажите точку на траншее';
   else if (orderMode === 'basement') text = '<b>В подвал</b>: укажите здание (или рядом)';
   else if (orderMode === 'occupy') text = '<b>Занять</b>: траншею или здание';
   else if (orderMode === 'move') text = '<b>Идти</b>: укажите точку';
@@ -651,20 +858,8 @@ function setSpeed(v) {
   else { paused = false; timeScale = v; }
   for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('active', paused ? b.dataset.speed === '0' : Number(b.dataset.speed) === timeScale);
 }
-for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => setSpeed(Number(b.dataset.speed));
+for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => { if (!cfg?.multiplayer) setSpeed(Number(b.dataset.speed)); };
 setSpeed(timeScale);
-
-function switchSide() {
-  controlSide = controlSide === 'blue' ? 'red' : 'blue';
-  ui.selected.clear();
-  ui.soldier = null;
-  const b = $('side-badge');
-  b.textContent = SIDES[controlSide].name;
-  b.className = controlSide;
-  selectionChanged();
-}
-$('side-badge').onclick = switchSide;
-$('side-badge').textContent = SIDES[controlSide].name;
 
 function toggleLabels() { showLabels = !showLabels; $('btn-labels').classList.toggle('active', showLabels); }
 function cycleFortView() {
@@ -683,15 +878,50 @@ $('btn-help').onclick = () => toggleHelp();
 $('help-close').onclick = () => toggleHelp(false);
 $('help').onclick = (e) => { if (e.target.id === 'help') toggleHelp(false); };
 $('btn-menu').onclick = (e) => { e.stopPropagation(); $('menu').classList.toggle('open'); };
-$('btn-strike').onclick = () => { closeMenu(); setOrderMode('strike'); };
-$('btn-dig-test').onclick = () => { closeMenu(); setOrderMode('dig'); dig.test = true; };
-$('btn-new').onclick = () => { location.search = `?seed=${Math.floor(Math.random() * 1e6)}`; };
+$('btn-strike').onclick = () => { closeMenu(); if (!cfg?.multiplayer) setOrderMode('strike'); };
+$('btn-dig-test').onclick = () => { closeMenu(); if (cfg?.multiplayer) return; setOrderMode('dig'); dig.test = true; };
+$('btn-new').onclick = () => { location.href = location.pathname; };
+$('side-badge').onclick = () => {};
+$('end-menu').onclick = () => { location.href = location.pathname; };
+
+// Табло: режим, очки/территория, оставшееся время, время суток
+function updateScoreboard() {
+  const g = sim.game;
+  if (!g) return;
+  const left = Math.max(0, g.endAt - sim.time);
+  const light = daylight(sim.time);
+  const sun = light > 0.6 ? '☀' : light > 0.1 ? '◐' : '☾';
+  let mid = '';
+  if (g.mode === 'zones') mid = `<span class="b">${Math.floor(g.score.blue)}</span> : <span class="r">${Math.floor(g.score.red)}</span> <span class="m">/ 500</span>`;
+  else if (g.mode === 'assault') { const att = g.cfg.attacker; mid = `<span class="m">взято</span> <span class="${att === 'blue' ? 'b' : 'r'}">${g.zones.filter((z) => z.owner === att).length}/${g.zones.length}</span>`; }
+  else {
+    const t = g.territory(), i = g.initTerr || t;
+    const d = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+    mid = `<span class="b">${d(t.blue - i.blue)}</span> : <span class="r">${d(t.red - i.red)}</span> <span class="m">продвижение</span>`;
+  }
+  $('scoreboard').innerHTML = `${mid} <span class="m">· ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}</span> <span title="Время суток">${sun}</span>`;
+  if (g.winner && !$('end-screen').classList.contains('show')) showEnd();
+}
+
+function showEnd() {
+  const g = sim.game;
+  const win = g.winner === controlSide;
+  $('end-title').textContent = g.winner === 'draw' ? 'Ничья' : win ? 'Победа' : 'Поражение';
+  $('end-title').style.color = g.winner === 'draw' ? 'var(--text)' : win ? 'var(--ok)' : 'var(--bad)';
+  $('end-reason').textContent = `${g.winner === 'draw' ? '' : FACTIONS[g.winner].country + ': '}${g.reason}`;
+  const row = (side) => {
+    const us = sim.units.filter((u) => u.side === side);
+    const sol = us.flatMap((u) => u.soldiers || []);
+    return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>погибло ${sol.filter((s) => s.dead && !s.evac).length}</td><td>эвакуировано ${sol.filter((s) => s.evac).length + (sim.stats[side].evac || 0)}</td><td>потеряно техники ${us.filter((u) => !u.soldiers && u.dead).length}</td></tr>`;
+  };
+  $('end-stats').innerHTML = row('blue') + row('red');
+  $('end-screen').classList.add('show');
+  paused = true;
+}
 
 // ================= Миникарта =================
-mini.width = 540;
-mini.height = 360;
-const miniScale = mini.width / world.W;
 mini.addEventListener('pointerdown', (e) => {
+  if (!sim) return;
   const moveTo = (ev) => {
     const r = mini.getBoundingClientRect();
     cam.x = ((ev.clientX - r.left) / r.width) * world.W;
@@ -705,6 +935,7 @@ mini.addEventListener('pointerdown', (e) => {
 });
 
 function drawMinimap() {
+  const miniScale = mini.width / world.W;
   mctx.setTransform(1, 0, 0, 1, 0, 0);
   mctx.fillStyle = '#15170f';
   mctx.fillRect(0, 0, mini.width, mini.height);
@@ -714,8 +945,17 @@ function drawMinimap() {
       const e = chunks.get(0, cx, cy);
       if (e) mctx.drawImage(e.canvas, cx * size * miniScale, cy * size * miniScale, size * miniScale, size * miniScale);
     }
+  const dark = 1 - daylight(sim.time);
+  if (dark > 0.05) { mctx.fillStyle = `rgba(6,10,26,${0.6 * dark})`; mctx.fillRect(0, 0, mini.width, mini.height); }
+  for (const z of sim.game?.zones || []) {
+    mctx.strokeStyle = z.owner ? FACTIONS[z.owner].fill : '#ddd';
+    mctx.lineWidth = 2;
+    mctx.beginPath(); mctx.arc(z.x * miniScale, z.y * miniScale, Math.max(4, z.r * miniScale), 0, Math.PI * 2); mctx.stroke();
+  }
+  const fog = fogSide();
   for (const u of sim.units) {
     if (u.dead) continue;
+    if (fog && u.side !== fog && !sim.vision.now[fog].has(u.id)) continue;
     mctx.fillStyle = ui.selected.has(u.id) ? '#b8ff6b' : SIDES[u.side].fill;
     mctx.fillRect(u.x * miniScale - 3, u.y * miniScale - 3, 6, 6);
   }
@@ -757,7 +997,6 @@ function drawLevel(level, requestMissing, need) {
     }
 }
 
-// Кольца дальности и эллипс рассеяния для выбранной артиллерии
 function drawArtyOverlay() {
   const guns = selectedUnits().filter((u) => u.def.caliber);
   if (!guns.length) return;
@@ -773,22 +1012,15 @@ function drawArtyOverlay() {
     ctx.strokeStyle = 'rgba(255,110,80,0.5)';
     ctx.beginPath(); ctx.arc(x, y, cal.minR * cam.zoom, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]);
-    if (g.fire) {
-      const [tx, ty] = toS(g.fire.x, g.fire.y);
-      ctx.strokeStyle = 'rgba(255,120,90,0.8)';
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
-      crosshair(tx, ty, '#ff7a5a');
-    }
   }
   if (orderMode === 'fire' && mouse) {
     const g = guns[0];
     const cal = CALIBERS[g.def.caliber];
     const [wx, wy] = screenToWorld(mouse[0], mouse[1]);
     const d = Math.hypot(wx - g.x, wy - g.y);
-    const [sx, sy] = [mouse[0] * dpr, mouse[1] * dpr];
     const ok = d >= cal.minR && d <= cal.maxR;
     ctx.save();
-    ctx.translate(sx, sy);
+    ctx.translate(mouse[0] * dpr, mouse[1] * dpr);
     ctx.rotate(Math.atan2(wy - g.y, wx - g.x));
     ctx.beginPath();
     ctx.ellipse(0, 0, Math.max(4, cal.sigma * d * 2 * cam.zoom), Math.max(3, cal.sigma * d * 0.9 * cam.zoom), 0, 0, Math.PI * 2);
@@ -797,23 +1029,11 @@ function drawArtyOverlay() {
     ctx.strokeStyle = ok ? '#ff7a5a' : '#999';
     ctx.lineWidth = 1.5 * dpr;
     ctx.stroke();
-    // Радиус поражения осколками
     ctx.setLineDash([3 * dpr, 4 * dpr]);
     ctx.beginPath(); ctx.arc(0, 0, cal.lethal * cam.zoom, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
   }
-}
-function crosshair(x, y, c) {
-  ctx.strokeStyle = c;
-  ctx.lineWidth = 2 * dpr;
-  ctx.beginPath();
-  ctx.arc(x, y, 8 * dpr, 0, Math.PI * 2);
-  ctx.moveTo(x - 13 * dpr, y); ctx.lineTo(x - 4 * dpr, y);
-  ctx.moveTo(x + 4 * dpr, y); ctx.lineTo(x + 13 * dpr, y);
-  ctx.moveTo(x, y - 13 * dpr); ctx.lineTo(x, y - 4 * dpr);
-  ctx.moveTo(x, y + 4 * dpr); ctx.lineTo(x, y + 13 * dpr);
-  ctx.stroke();
 }
 
 function drawLabels() {
@@ -835,28 +1055,44 @@ function drawLabels() {
 }
 
 let lastNow = performance.now();
-let uiTimer = 0;
-let rosterUnits = sim.units.length;
+let uiTimer = 0, netTimer = 0, gridTimer = 0, visTimer = 0;
+let rosterUnits = 0;
 function frame(now) {
   chunks.frame++;
   const dtReal = Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
   lastNow = now;
-  if (!paused) {
-    let gdt = dtReal * timeScale;
+  if (role === 'guest') {
+    // Гость: плавное движение между снимками, свой расчёт тумана войны
+    interpolate(sim, dtReal);
+    sim.time += dtReal;
+    visTimer += dtReal;
+    if (visTimer > 1) { visTimer = 0; sim.vision.update(true); }
+  } else if (!paused) {
+    let gdt = dtReal * (cfg.multiplayer ? 1 : timeScale);
     while (gdt > 1e-6) {
       const step = Math.min(0.25, gdt);
       sim.update(step);
       gdt -= step;
     }
   }
-  sim.processQueue(8);
+  if (role !== 'guest') sim.processQueue(8);
+  const netEvents = [];
   for (const ev of sim.events) {
     if (ev.type === 'forts') chunks.invalidate(ev.bbox);
-    else if (ev.type === 'msg') log(ev.text);
+    else if (ev.type === 'msg') {
+      if (!ev.side || ev.side === controlSide) log(ev.text);
+      if (role === 'host' && (!ev.side || ev.side !== controlSide)) net.send({ t: 'msg', text: ev.text, side: ev.side });
+    } else if (ev.type === 'net' && role === 'host') netEvents.push(ev.ev);
   }
   sim.events.length = 0;
-  emitDust(sim, paused ? 0 : dtReal, timeScale);
-  // Клавиатура: панорама
+  if (role === 'host') {
+    if (netEvents.length) net.send({ t: 'ev', list: netEvents });
+    netTimer += dtReal;
+    if (netTimer > 0.125) { netTimer = 0; net.send(makeSnapshot(sim)); }
+    gridTimer += dtReal;
+    if (gridTimer > 3) { gridTimer = 0; const gp = gridPacket(sim); if (gp) net.send(gp); }
+  }
+  emitDust(sim, paused ? 0 : dtReal, cfg.multiplayer ? 1 : timeScale);
   const pan = (12 * dpr) / cam.zoom;
   if (!keys.has('ControlLeft') && !keys.has('ControlRight')) {
     if (keys.has('KeyW') || keys.has('ArrowUp')) cam.y -= pan;
@@ -895,11 +1131,17 @@ function frame(now) {
   }
   $('loading').style.opacity = need.length > rendered ? 1 : 0;
 
+  const fog = fogSide();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawInteriors(ctx, world, sim, view, interiorsForce, ui.underground);
+  drawFront(ctx, sim.game, view);
   drawFortOverlay(ctx, world, view, fortView, dig);
+  drawNight(ctx, world, sim, view, 1 - daylight(sim.time));
+  if (fog) drawFog(ctx, sim, view, fog);
+  drawZones(ctx, sim.game, view);
   drawArtyOverlay();
-  drawUnits(ctx, sim, view, ui);
+  drawUnits(ctx, sim, view, ui, fog);
+  drawCombatFx(ctx, sim, view, fog);
   drawArtillery(ctx, sim, view);
   drawLabels();
 
@@ -912,6 +1154,7 @@ function frame(now) {
     updateRoster();
     drawMinimap();
     updateScale();
+    updateScoreboard();
     if (orderMode === 'fire') updateHint();
     if (sim.units.length !== rosterUnits) { rosterUnits = sim.units.length; buildRoster(); }
   }
@@ -931,7 +1174,6 @@ function updateScale() {
   }
 }
 
-// ================= Форматирование =================
 function fmtClock(sec) {
   const h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -943,12 +1185,16 @@ function fmtEta(sec) {
   return `${Math.floor(sec / 3600)} ч ${Math.round((sec % 3600) / 60)} мин`;
 }
 
-// ================= Старт =================
-for (let cy = 0; cy * chunks.worldSize(0) < world.H; cy++)
-  for (let cx = 0; cx * chunks.worldSize(0) < world.W; cx++) chunks.render(0, cx, cy);
-buildRoster();
-updateRoster();
-log('Сводка: противник (Красные) — к востоку, серая зона между линиями окопов. F1 — справка.');
-requestAnimationFrame(frame);
+// Автостарт для отладки: ?autostart=1&side=red&mode=front
+if (params.get('autostart')) {
+  menu.side = params.get('side') || menu.side;
+  menu.mode = params.get('mode') || menu.mode;
+  if (params.get('hour')) menu.startHour = Number(params.get('hour'));
+  if (params.get('fog') === '0') menu.fog = false;
+  startGame(gameConfig());
+}
 
-window.game = { world, cam, chunks, sim, ui, CHUNK_PX, setOrderMode, orderAt, fireOpts };
+window.game = {
+  get world() { return world; }, get sim() { return sim; }, get chunks() { return chunks; }, cam, ui, CHUNK_PX, setOrderMode, orderAt, fireOpts, issue,
+  get role() { return role; },
+};

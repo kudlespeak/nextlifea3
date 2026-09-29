@@ -10,6 +10,7 @@ import { SpatialIndex, PointBins, Mask, M } from './spatial.js';
 import { buildFortifications } from './forts.js';
 import { seedBattleDamage } from './damage.js';
 import { generateInterior } from './interiors.js';
+import { buildPowerGrid } from './power.js';
 
 export const WORLD_W = 9000;
 export const WORLD_H = 6000;
@@ -210,6 +211,12 @@ export function generateWorld(seed) {
 
   // ---------- Планировки зданий, крыши, дорожки к дверям ----------
   finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0));
+
+  // ---------- Электросеть: подстанции, ЛЭП, фонари ----------
+  buildPowerGrid(world, new Rng((seed ^ 0x9091) >>> 0));
+
+  // Кроны деревьев в маску — для расчёта прямой видимости
+  refreshCanopy(world, { x0: 0, y0: 0, x1: W, y1: H });
 
   world.genTime = performance.now() - t0;
   return world;
@@ -1005,4 +1012,14 @@ function finishBuildings(world, rng) {
       if (house) break;
     }
   }
+}
+
+// Пересчитать маску крон в прямоугольнике (после того как деревья сломаны)
+export function refreshCanopy(world, b) {
+  world.mask.clearRect(b, M.CANOPY);
+  world.trees.forEach({ x0: b.x0 - 6, y0: b.y0 - 6, x1: b.x1 + 6, y1: b.y1 + 6 }, (arr, i) => {
+    const r = arr[i + 2];
+    if (r < 1.6 || arr[i + 3] >= 4) return; // кусты, обугленные и сухие стволы обзор не закрывают
+    world.mask.stampDisc(arr[i], arr[i + 1], r * 0.8, M.CANOPY);
+  });
 }

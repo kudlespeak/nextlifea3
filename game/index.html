@@ -125,6 +125,49 @@
     #help td:first-child { white-space: nowrap; width: 1%; }
     #help-close { position: absolute; top: 12px; right: 12px; }
 
+
+    /* Стартовое меню */
+    #menu-screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 30% 20%, #2a2f22 0%, #12140d 70%); overflow-y: auto; padding: 20px; }
+    #menu-screen.hide { display: none; }
+    .menu-box { width: min(1080px, 100%); display: flex; flex-direction: column; gap: 16px; }
+    .menu-title { display: flex; align-items: center; gap: 14px; }
+    .menu-title h1 { margin: 0; font: 700 38px "PT Sans Narrow", sans-serif; letter-spacing: 0.1em; }
+    .menu-title .mark { width: 26px; height: 26px; border: 3px solid var(--accent); transform: rotate(45deg); border-radius: 4px; }
+    .menu-title small { color: var(--muted); font-size: 14px; }
+    .tabs { display: flex; gap: 6px; }
+    .tabs button { font-size: 15px; padding: 9px 16px; }
+    .menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .mcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .mcard h3 { margin: 0 0 10px; font: 700 14px "PT Sans Narrow", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .factions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .faction { cursor: pointer; border: 2px solid var(--line); border-radius: 10px; padding: 12px; background: rgba(255,255,255,0.03); transition: border-color 0.15s, background 0.15s; }
+    .faction:hover { border-color: var(--line-2); }
+    .faction.sel { border-color: var(--accent); background: rgba(242, 193, 78, 0.08); }
+    .faction .flag { display: flex; height: 16px; width: 28px; border-radius: 2px; overflow: hidden; margin-bottom: 8px; }
+    .faction .flag i { flex: 1; }
+    .faction b { font: 700 18px "PT Sans Narrow", sans-serif; display: block; }
+    .faction .army { color: var(--muted); font-size: 12.5px; margin-bottom: 6px; }
+    .faction ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #d8d2bd; }
+    .faction .kit { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .opt-row { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
+    .opt-row > span { min-width: 120px; color: var(--muted); font-size: 13px; }
+    .opt-row button.sel { background: rgba(242, 193, 78, 0.18); border-color: var(--accent); color: var(--accent-2); }
+    .mode-desc { font-size: 13px; color: #d8d2bd; min-height: 36px; }
+    input.txt { font: inherit; color: var(--text); background: rgba(0,0,0,0.3); border: 1px solid var(--line-2); border-radius: 7px; padding: 6px 10px; width: 120px; }
+    .start-row { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+    .big { font: 700 18px "PT Sans Narrow", sans-serif; padding: 12px 28px; background: var(--accent); color: #1b1a12; border-color: var(--accent); letter-spacing: 0.06em; }
+    .big:hover { background: var(--accent-2); }
+    #mp-status { font-size: 13.5px; color: var(--accent-2); }
+    #scoreboard { display: flex; align-items: center; gap: 10px; font: 700 14px "PT Sans Narrow", sans-serif; background: rgba(0,0,0,0.25); border: 1px solid var(--line); border-radius: 9px; padding: 4px 10px; white-space: nowrap; }
+    #scoreboard .b { color: var(--blue); } #scoreboard .r { color: var(--red); }
+    #scoreboard .m { color: var(--muted); font-weight: 400; }
+    #end-screen { position: fixed; inset: 0; z-index: 15; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); }
+    #end-screen.show { display: flex; }
+    #end-screen .box { width: min(560px, calc(100vw - 30px)); padding: 22px 26px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 14px; text-align: center; }
+    #end-screen h2 { margin: 0 0 6px; font: 700 30px "PT Sans Narrow", sans-serif; }
+    #end-stats { text-align: left; font-size: 14px; margin: 14px 0; }
+    #end-stats td { padding: 3px 8px; border-bottom: 1px solid var(--line); }
+    @media (max-width: 860px) { .menu-grid, .factions { grid-template-columns: 1fr; } }
     @media (max-width: 1250px) {
       #card { width: calc(100vw - 20px); min-width: 0; bottom: 206px; }
       #log { display: none; }
@@ -151,6 +194,7 @@
       <button id="side-badge" class="blue" title="Tab: управлять другой стороной (для теста, пока нет ИИ)"></button>
     </div>
     <div class="grow"></div>
+    <div id="scoreboard"></div>
     <div class="timebox">
       <button data-speed="0" title="Пауза (Пробел)"><svg class="i"><path d="M8 5v14M16 5v14"/></svg></button>
       <span id="clock">—</span>
@@ -212,6 +256,54 @@
     </div>
   </div>
 
+
+  <div id="menu-screen">
+    <div class="menu-box">
+      <div class="menu-title"><div class="mark"></div><div><h1>ЛИНИЯ ФРОНТА</h1><small>Тактика, логистика и позиционная война в степи</small></div></div>
+      <div class="tabs">
+        <button id="tab-single" class="active">Одиночная игра</button>
+        <button id="tab-mp">Мультиплеер</button>
+      </div>
+      <div class="menu-grid">
+        <div class="mcard" style="grid-column: 1 / -1">
+          <h3>Сторона</h3>
+          <div class="factions" id="factions"></div>
+        </div>
+        <div class="mcard">
+          <h3>Режим</h3>
+          <div class="opt-row" id="opt-mode"></div>
+          <div class="mode-desc" id="mode-desc"></div>
+          <div class="opt-row" id="opt-attacker" style="margin-top:8px"></div>
+        </div>
+        <div class="mcard">
+          <h3>Условия</h3>
+          <div class="opt-row" id="opt-time"></div>
+          <div class="opt-row" id="opt-fog"></div>
+          <div class="opt-row" id="opt-diff"></div>
+          <div class="opt-row" id="opt-dur"></div>
+          <div class="opt-row"><span>Карта (seed)</span><input class="txt" id="opt-seed" /><button id="seed-rnd">Случайная</button></div>
+        </div>
+        <div class="mcard" id="mp-card" style="grid-column: 1 / -1; display:none">
+          <h3>Сетевая игра — друг против друга, без ускорения времени</h3>
+          <div class="opt-row"><span>Сервер</span><input class="txt" id="mp-url" style="width:280px" /></div>
+          <div class="opt-row"><span>Создать игру</span><button id="mp-host">Создать комнату</button><span id="mp-code" style="font:700 22px 'PT Sans Narrow';color:var(--accent-2)"></span></div>
+          <div class="opt-row"><span>Подключиться</span><input class="txt" id="mp-join-code" placeholder="КОД" maxlength="4" /><button id="mp-join">Войти</button></div>
+          <div id="mp-status">Запустите сервер: <code>node game/server.js</code> и откройте игру по его адресу.</div>
+        </div>
+      </div>
+      <div class="start-row">
+        <span id="start-hint" style="color:var(--muted);font-size:13px"></span>
+        <button class="big" id="btn-start">В БОЙ</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="end-screen"><div class="box">
+    <h2 id="end-title"></h2>
+    <div id="end-reason" style="color:var(--muted)"></div>
+    <table id="end-stats"></table>
+    <button class="big" id="end-menu">В главное меню</button>
+  </div></div>
   <div id="hint"></div>
   <div id="loading" class="panel">Прорисовка местности…</div>
 
@@ -241,6 +333,15 @@
       <table>
         <tr><td><kbd>F</kbd> «Огонь»</td><td>выберите миномёт или гаубицу → клик по цели. На карте показаны кольца дальности и эллипс рассеяния. Число выстрелов и взрыватель (контакт / воздушный подрыв) — в карточке</td></tr>
         <tr><td>Осколки</td><td>урон зависит от расстояния, позы и укрытия. Стены и деревья гасят осколки. Воздушный подрыв опасен для открытых траншей, перекрытие защищает. В подвале и блиндаже безопасно, пока их не пробьёт прямое попадание крупного калибра</td></tr>
+      </table>
+      <h3>Бой, медицина, дроны</h3>
+      <table>
+        <tr><td>Стрелковый бой</td><td>идёт сам: бойцы стреляют по обнаруженному противнику. Режим огня — кнопка <kbd>Q</kbd>: свободно / только в ответ / не стрелять</td></tr>
+        <tr><td>Подавление</td><td>под плотным огнём бойцы ложатся и хуже стреляют</td></tr>
+        <tr><td><kbd>R</kbd> «Эвакуация»</td><td>тяжелораненых выносят к санитарной машине, транспорту или в медпункт. Медик отделения сам перевязывает раненых; без помощи тяжелораненый погибает за ~6 минут</td></tr>
+        <tr><td>Дроны</td><td>расчёт БПЛА: <kbd>J</kbd> разведчик (видит сверху, ночью — тепловизор), <kbd>K</kbd> FPV-удар (клик по цели), <kbd>U</kbd> сброс гранат, <kbd>Y</kbd> вернуть</td></tr>
+        <tr><td>Туман войны</td><td>противник виден, только если его заметили ваши бойцы, техника или дроны; полупрозрачные метки — где его видели последний раз</td></tr>
+        <tr><td>Ночь</td><td>темно, обзор меньше (у Велнарии ночные приборы лучше). Свет — фонари и окна запитанных домов; разрушьте подстанцию или провода — район погаснет</td></tr>
       </table>
       <h3>Время</h3>
       <table>
