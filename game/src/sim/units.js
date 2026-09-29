@@ -16,6 +16,7 @@ import { GameMode } from './modes.js';
 import { AI } from './ai.js';
 import { RoadGraph } from './roads.js';
 import { Logistics } from './logistics.js';
+import { Autonomy } from './autonomy.js';
 
 // Позы бойцов: скорость движения и «заметность» (доля открытого силуэта — для будущих попаданий)
 export const POSES = {
@@ -107,6 +108,7 @@ export class Unit {
     this.cargo = 0; // раненые на борту
     this.underFire = 0;
     this.firedAt = 0;
+    this.auto = true; // автономные действия (укрытие, эвакуация, дым и т.п.)
     this.embarked = null; // машина, в которой едет отделение
     this.passengers = []; // десант (для машин)
     if (ROLES[type]) {
@@ -156,6 +158,7 @@ export class Sim {
     this.combat = new Combat(this);
     this.drones = new Drones(this);
     this.log = new Logistics(this);
+    this.auto = new Autonomy(this);
     this.medpoints = { blue: null, red: null };
     this.stats = { blue: { kia: 0, wia: 0, evac: 0, lostVeh: 0 }, red: { kia: 0, wia: 0, evac: 0, lostVeh: 0 } };
     this.puppet = false;
@@ -805,6 +808,7 @@ export class Sim {
     this.art.update();
     this.drones.update(dt);
     this.combat.update(dt);
+    this.auto.update();
     this.log.update(dt);
     this.game?.update(dt);
     for (const ai of this.ais || []) ai.update();

@@ -112,6 +112,7 @@ export class Vision {
   // Прямая видимость: считаем клетки крон и зданий вдоль линии, не учитывая
   // первые/последние 18 м (из опушки и из окна видно наружу)
   los(o, t) {
+    if (!o.air && this.sim.auto?.blocks(o.x, o.y, t.x, t.y)) return false; // дымовая завеса
     const mask = this.sim.world.mask;
     const dx = t.x - o.x, dy = t.y - o.y;
     const L = Math.hypot(dx, dy);

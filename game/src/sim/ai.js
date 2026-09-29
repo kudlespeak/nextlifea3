@@ -223,7 +223,14 @@ export class AI {
     }
     const attackers = own.filter((u) => (u.soldiers && u.type === 'inf' && !u.embarked) || (ARMOR.includes(u.type) && !u.passengers.length));
     for (const u of attackers) {
-      if (u.task || u.state !== 'idle' || u.mode !== 'field' || u.pending) continue;
+      // Залегли в траншее под огнём — через минуту поднимаются и продолжают наступать
+      if (u.mode === 'trench' && !u.task && u.state === 'idle') {
+        u.aiHold = u.aiHold ?? sim.time;
+        const obj0 = this.objective(u);
+        const supp = u.soldiers ? u.soldiers.reduce((a, s) => a + (s.dead ? 0 : s.supp), 0) / Math.max(1, u.soldiers.filter((s) => !s.dead).length) : 0;
+        if (sim.time - u.aiHold < 60 || supp > 5 || !obj0 || Math.hypot(obj0.x - u.x, obj0.y - u.y) < 220) continue;
+      } else u.aiHold = null;
+      if (u.task || u.state !== 'idle' || u.pending) continue;
       if (u.soldiers && u.strength < 0.45) continue; // потрёпанные не наступают
       if (!sim.rng.chance(this.d.aggr)) continue;
       const obj = this.objective(u);
@@ -251,7 +258,8 @@ export class AI {
       const k = Math.min(1, 700 / Math.max(1, d));
       const tx = u.x + (obj.x - u.x) * k + sim.rng.float(-60, 60);
       const ty = u.y + (obj.y - u.y) * k + sim.rng.float(-60, 60);
-      sim.orderMove([u], tx, ty, { stealth: !!u.soldiers });
+      sim.orderMove([u], tx, ty, { stealth: !!u.soldiers && d < 900 });
+      u.aiHold = null;
     }
   }
 

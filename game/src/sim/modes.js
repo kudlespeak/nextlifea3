@@ -80,13 +80,13 @@ export class GameMode {
       const line1 = this.lines?.[0];
       const front = line1 ? (e[def] > 0 ? Math.max(...line1.pts.map((p) => p[0])) : Math.min(...line1.pts.map((p) => p[0]))) : fx;
       this.limits = { [def]: front + e[def] * 120 };
-      this.limits[att] = this.limits[def] + e[def] * 1500;
+      this.limits[att] = this.limits[def] + e[def] * 1000;
     } else this.limits = { blue: fx - 400, red: fx + 400 };
     this.reserve = {};
     for (const side of ['blue', 'red']) {
       const dir = e[side];
       // Пункт сбора — у дороги, ~0.9 км за рубежом подготовки
-      const want = [Math.max(200, Math.min(world.W - 200, this.limits[side] - dir * 900)), city.y + (side === 'blue' ? 250 : -250)];
+      const want = [Math.max(200, Math.min(world.W - 200, this.limits[side] - dir * 600)), city.y + (side === 'blue' ? 250 : -250)];
       const node = sim.roads.near(want[0], want[1], 900).sort((a, c) => sim.roads.dist(a, want[0], want[1]) - sim.roads.dist(c, want[0], want[1]))[0];
       let p = node !== undefined ? [sim.roads.x[node], sim.roads.y[node]] : want;
       p = sim.nav.nearestPassable(p[0], p[1], 'wheeled') || p;

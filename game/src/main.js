@@ -245,13 +245,14 @@ const dis = (u) => { if (u?.embarked) sim.disembark(u); return u; };
 const COMMANDS_IMPL = {
   move: (ids, x, y, stealth, direct) => {
     const us = unitsById(ids);
-    for (const u of us) if (u.cargoRes) u.autoSupply = false; // ручной приказ грузовику
+    for (const u of us) if (u.cargoRes) { u.autoSupply = false; u.auto = false; } // ручной приказ грузовику — сам больше не ездит
     sim.orderMove(us, x, y, { stealth, direct });
   },
   board: (id, vid) => { const u = unitsById([id])[0], v = unitsById([vid])[0]; if (u && v) sim.orderBoard(u, v); },
   unload: (ids) => { for (const u of unitsById(ids)) { if (u.passengers?.length) sim.orderUnload(u); else if (u.embarked) sim.disembark(u); } },
   supply: (ids, on) => { for (const u of unitsById(ids)) if (u.cargoRes) { u.autoSupply = on; if (!on) u.supplyTask = null; } },
   ready: (side) => sim.game?.setReady(side),
+  auto: (ids, on) => { for (const u of unitsById(ids)) { u.auto = on; if (u.cargoRes) u.autoSupply = on; } },
   spawn: (side, type) => {
     const r = sim.game?.reserve?.[side];
     if (!r) return;
@@ -547,6 +548,7 @@ const ICON = {
   recall: '<path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   unload: '<path d="M3 16h13l3-5h2v5"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M9 11V4M6 7l3-3 3 3"/>',
   supply: '<rect x="3" y="8" width="10" height="9" rx="1"/><path d="M13 11h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/><path d="M6 5h4"/>',
+  auto: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
   stance: '<circle cx="12" cy="5" r="2"/><path d="M12 7v6l-3 7M12 13l3 7M8 10h8"/>',
 };
 const ROE_NAMES = { free: 'Огонь свободно', return: 'Только в ответ', hold: 'Не стрелять' };
@@ -557,7 +559,6 @@ const idsOf = (us) => us.map((u) => u.id);
 const inf = (u) => has(u, (q) => q.soldiers);
 const COMMANDS = [
   { id: 'unload', label: 'Высадить', key: 'KeyU', icon: 'unload', primary: true, when: (u) => has(u, (q) => q.passengers?.length || q.embarked), run: () => issue('unload', idsOf(selectedUnits())), active: () => false, tip: 'Высадить десант у машины' },
-  { id: 'supply', label: 'Автоснабж.', key: 'KeyN', icon: 'supply', primary: true, when: (u) => has(u, (q) => q.cargoRes), run: () => { const on = !selectedUnits().find((q) => q.cargoRes)?.autoSupply; issue('supply', idsOf(selectedUnits()), on); for (const q of selectedUnits()) if (q.cargoRes) q.autoSupply = on; buildCommands(); }, active: () => !!selectedUnits().find((q) => q.cargoRes)?.autoSupply, tip: 'Грузовик сам возит боеприпасы и топливо со склада тем, кому нужнее' },
   { id: 'fire', label: 'Огонь', key: 'KeyF', icon: 'fire', primary: true, when: (u) => has(u, (q) => q.def.caliber), run: () => setOrderMode(orderMode === 'fire' ? null : 'fire'), active: () => orderMode === 'fire', tip: 'Артиллерийский огонь по точке' },
   { id: 'recon', label: 'Разведка', key: 'KeyJ', icon: 'recon', primary: true, when: (u) => has(u, (q) => q.type === 'uav'), run: () => setOrderMode(orderMode === 'recon' ? null : 'recon'), active: () => orderMode === 'recon', tip: 'Дрон-разведчик: зависнет над точкой, видит сверху (ночью — тепловизор)' },
   { id: 'fpv', label: 'FPV-удар', key: 'KeyK', icon: 'fpv', primary: true, when: (u) => has(u, (q) => q.type === 'uav'), run: () => setOrderMode(orderMode === 'fpv' ? null : 'fpv'), active: () => orderMode === 'fpv', tip: 'FPV-камикадзе: клик по видимой цели (или просто ПКМ по противнику)' },
@@ -565,6 +566,12 @@ const COMMANDS = [
   { id: 'evac', label: 'Эвакуация', key: 'KeyR', icon: 'evac', primary: true, when: (u) => has(u, (q) => q.soldiers?.some((s) => !s.dead && s.wounded === 2)), run: () => issue('evac', idsOf(selectedUnits())), active: () => false, tip: 'Вынести тяжелораненых к санитарке, транспорту или в медпункт' },
   { id: 'dig', label: 'Копать', key: 'KeyT', icon: 'dig', primary: true, when: (u) => has(u, (q) => q.type === 'eng' || q.type === 'btm'), run: () => setOrderMode(orderMode === 'dig' ? null : 'dig'), active: () => orderMode === 'dig', tip: 'Рыть траншею: клики — точки, ПКМ/Enter — копать' },
   { id: 'stealth', label: 'Скрытно', key: 'KeyG', icon: 'stealth', primary: true, when: (u) => u.length > 0, run: () => { stealthOrders = !stealthOrders; updateCommands(); }, active: () => stealthOrders, tip: 'Следующие приказы «идти»: вдоль посадок и балок, избегая открытых мест' },
+  { id: 'auto', label: 'Автономно', key: 'KeyH', icon: 'auto', primary: true, when: (u) => u.length > 0, run: () => {
+    const on = !(selectedUnits()[0]?.auto !== false);
+    issue('auto', idsOf(selectedUnits()), on);
+    for (const q of selectedUnits()) { q.auto = on; if (q.cargoRes) q.autoSupply = on; }
+    buildCommands();
+  }, active: () => selectedUnits()[0]?.auto !== false, tip: 'Сами: укрытие под огнём, смещение по траншее к угрозе, эвакуация раненых, дым и отход подбитой техники, санитарки и снабжение ездят сами' },
   { id: 'stop', label: 'Стоп', key: 'KeyX', icon: 'stop', primary: true, when: (u) => u.length > 0, run: () => issue('stop', idsOf(selectedUnits())), active: () => false, tip: 'Остановиться, отменить задачу и огонь' },
   // --- редкие ---
   { id: 'recall', label: 'Вернуть дроны', key: 'KeyY', icon: 'recall', when: (u) => has(u, (q) => q.type === 'uav'), run: () => issue('recall', idsOf(selectedUnits())), active: () => false, tip: 'Вернуть дроны к оператору' },

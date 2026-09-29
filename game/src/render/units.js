@@ -719,6 +719,18 @@ export function drawCombatFx(ctx, sim, view, fogSide) {
     ctx.stroke();
   }
   if (tr.length > 600) tr.splice(0, tr.length - 600);
+  // Дымовые завесы: несколько клубов, растут и медленно сносятся ветром
+  for (const s of sim.smokes || []) {
+    const age = sim.time - s.t0, life = s.until - s.t0;
+    const k = Math.min(1, age / 4), fade = Math.min(1, (s.until - sim.time) / 15);
+    for (let i = 0; i < 9; i++) {
+      const a = i * 2.39996, rr = s.r * 0.55 * Math.sqrt(i / 9) * k;
+      const [x, y] = toS(s.x + Math.cos(a) * rr + age * 0.25, s.y + Math.sin(a) * rr - age * 0.1);
+      const R = Math.max(3 * dpr, s.r * (0.45 + 0.15 * (i % 3)) * k * z);
+      ctx.fillStyle = `rgba(${200 - i * 4},${200 - i * 4},${195 - i * 4},${0.55 * fade})`;
+      ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   // Медпункты
   for (const side of ['blue', 'red']) {
     const m = sim.medpoints?.[side];
