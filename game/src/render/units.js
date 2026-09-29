@@ -7,6 +7,9 @@ import { DRONE_KINDS } from '../sim/drones.js';
 import { drawDrone } from './drones.js';
 import { T } from '../sim/nav.js';
 import { vehicleSprite, turretSprite, soldierSprite, soldierKind, SOLDIER_FRAMES } from './sprites.js';
+import { spriteFor, drawSprite, K3 } from './mesh3d.js';
+import { buildSoldier, SOLDIER_ANGLES } from './soldiers3d.js';
+import { MODELS, modelKey, TURRET_PIVOT, HULL_TOP } from './models.js';
 
 const SPRITE_ZOOM = 1.6; // device px/м, с которого рисуем технику
 
@@ -307,6 +310,24 @@ export function drawUnits(ctx, sim, view, ui, fogSide = null) {
       // Лёгкое покачивание корпуса на ходу
       if (A.moving && u.def.move !== 'foot') ctx.translate(Math.sin(A.odo * 1.7) * 0.04, 0);
       // Кэшированный спрайт корпуса (кадр гусениц/колёс по пробегу) и башни
+      const hk = modelKey(u.type, u.side, 'hull');
+      const r3 = hk && spriteFor(hk, MODELS[hk], u.heading, z, undefined, now);
+      if (r3) {
+        ctx.restore();
+        // 3D: корпус (покачивание на ходу — лёгкий сдвиг), башня на погоне
+        const bob = A.moving ? Math.sin(A.odo * 1.7) * 0.04 * z : 0;
+        drawSprite(ctx, r3, sx + Math.cos(u.heading) * bob, sy + Math.sin(u.heading) * bob, z, r3.residual);
+        const tk = modelKey(u.type, u.side, 'turret');
+        if (tk) {
+          const ta = u.heading + A.tur;
+          const pv = TURRET_PIVOT[u.type] || 0, rc = A.recoil * 0.35;
+          const rt = spriteFor(tk, MODELS[tk], ta, z, { shadowZ: HULL_TOP[u.type] }, now);
+          if (rt) drawSprite(ctx, rt, sx + (Math.cos(u.heading) * pv - Math.cos(ta) * rc) * z, sy + (Math.sin(u.heading) * pv - Math.sin(ta) * rc) * z, z, rt.residual);
+        }
+        drawVehState(ctx, u, sx, sy, z, now);
+        drawPassengers(ctx, u, sx, sy, z, dpr);
+        continue;
+      }
       const frame = Math.floor(A.odo / 0.09) & 3;
       const hs = vehicleSprite(u.type, u.side, frame);
       ctx.drawImage(hs.canvas, -hs.w / 2, -hs.h / 2, hs.w, hs.h);
@@ -320,14 +341,8 @@ export function drawUnits(ctx, sim, view, ui, fogSide = null) {
         ctx.restore();
       }
       ctx.restore();
-      if (u.passengers?.length) {
-        const n = u.passengers.reduce((a, p) => a + p.soldiers.filter((q) => !q.dead).length, 0);
-        ctx.font = `700 ${10 * dpr}px "PT Sans", sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
-        ctx.beginPath(); ctx.arc(sx + 5 * z, sy + 5 * z, 8 * dpr, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.fillText(`+${n}`, sx + 5 * z, sy + 5 * z);
-      }
+      drawVehState(ctx, u, sx, sy, z, now);
+      drawPassengers(ctx, u, sx, sy, z, dpr);
     }
   }
 
@@ -417,6 +432,35 @@ export function drawUnits(ctx, sim, view, ui, fogSide = null) {
   }
 }
 
+function drawPassengers(ctx, u, sx, sy, z, dpr) {
+  if (!u.passengers?.length) return;
+  const n = u.passengers.reduce((a, p) => a + p.soldiers.filter((q) => !q.dead).length, 0);
+  ctx.font = `700 ${10 * dpr}px "PT Sans", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath(); ctx.arc(sx + 5 * z, sy + 5 * z, 8 * dpr, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillText(`+${n}`, sx + 5 * z, sy + 5 * z);
+}
+
+// Горит / подбита: дым и языки пламени над корпусом
+function drawVehState(ctx, u, sx, sy, z, now) {
+  if (!u.burning && !u.immobile) return;
+  const t = now / 1000;
+  const top = sy - 1.6 * 0.42 * z;
+  if (u.burning) {
+    for (let i = 0; i < 3; i++) {
+      const f = (t * 2.2 + i * 0.33) % 1;
+      ctx.fillStyle = `rgba(255,${150 + i * 30},60,${0.75 * (1 - f)})`;
+      ctx.beginPath(); ctx.arc(sx + Math.sin(t * 7 + i) * 0.4 * z, top - f * 1.4 * z, (0.5 - f * 0.25) * z, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const f = (t * 0.35 + i / 5) % 1;
+    ctx.fillStyle = `rgba(${u.burning ? 35 : 90},${u.burning ? 33 : 88},${u.burning ? 30 : 84},${0.45 * (1 - f)})`;
+    ctx.beginPath(); ctx.arc(sx + f * 3 * z, top - f * 5 * z, (0.6 + f * 1.8) * z, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 // Попадание по отряду в экранных координатах (device px)
 export function pickUnit(sim, view, sx, sy, side) {
   const { cam, canvas, dpr } = view;
@@ -492,6 +536,8 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
     if (s.shotAt !== an.shot) { an.shot = s.shotAt; an.flash = now; }
     const kind = soldierKind(s);
     if (s.dead) {
+      const rd = soldier3d(u.side, kind, 'dead', 0, s.heading + 0.6, m, now);
+      if (rd) { drawSprite(ctx, rd, x, y, m, rd.residual); continue; }
       const sp = soldierSprite(u.side, kind, 'dead', 0);
       ctx.save(); ctx.translate(x, y); ctx.rotate(s.heading + 0.6);
       ctx.drawImage(sp.canvas, -sp.size / 2 * m, -sp.size / 2 * m, sp.size * m, sp.size * m);
@@ -513,16 +559,32 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
     const sprPose = pose === 'prone' ? 'prone' : pose === 'trench' || pose === 'window' || pose === 'inside' ? 'cover' : pose === 'crouch' ? 'crouch' : 'stand';
     // Кадр шага: по пройденному пути (шаг ≈ 0.8 м), стоя — нейтральный
     const frame = an.mv > 0.3 ? Math.floor(((s.walk || 0) / (sprPose === 'prone' ? 0.5 : 1.6)) * SOLDIER_FRAMES) % SOLDIER_FRAMES : 0;
-    const sp = soldierSprite(u.side, kind, sprPose, frame);
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(hd);
-    ctx.drawImage(sp.canvas, -sp.size / 2 * m, -sp.size / 2 * m, sp.size * m, sp.size * m);
-    if (flash && pose !== 'inside') {
-      const L = kind === 'mg' ? 1.1 : kind === 'sniper' ? 1.25 : 0.9;
-      muzzle(ctx, (sprPose === 'prone' ? 0.1 : 0.1) * m + L * m, 0.07 * m, m);
+    const f3 = an.mv > 0.3 ? 1 + (Math.floor(((s.walk || 0) / (sprPose === 'prone' ? 0.5 : 1.6)) * 8) % 8) : 0;
+    const r3 = soldier3d(u.side, kind, sprPose, f3, hd, m, now);
+    if (r3) {
+      drawSprite(ctx, r3, x, y, m, r3.residual);
+      if (flash && pose !== 'inside') {
+        // вспышка у дульного среза: вперёд по направлению и на высоте оружия
+        const L = (kind === 'mg' ? 1.05 : kind === 'sniper' ? 1.2 : 0.85) + 0.05;
+        const hgt = { stand: 1.35, crouch: 1.0, prone: 0.18, cover: 0.8 }[sprPose];
+        ctx.save();
+        ctx.translate(x, y - hgt * K3 * m);
+        ctx.rotate(hd);
+        muzzle(ctx, L * m, 0.03 * m, m);
+        ctx.restore();
+      }
+    } else {
+      const sp = soldierSprite(u.side, kind, sprPose, frame);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(hd);
+      ctx.drawImage(sp.canvas, -sp.size / 2 * m, -sp.size / 2 * m, sp.size * m, sp.size * m);
+      if (flash && pose !== 'inside') {
+        const L = kind === 'mg' ? 1.1 : kind === 'sniper' ? 1.25 : 0.9;
+        muzzle(ctx, 0.1 * m + L * m, 0.07 * m, m);
+      }
+      ctx.restore();
     }
-    ctx.restore();
     // Командир отделения — маленький значок над каской (вблизи всё видно по спрайту)
     if (s.role === 'Командир') {
       ctx.fillStyle = '#fff';
@@ -559,6 +621,14 @@ function drawSoldiers(ctx, u, toS, z, dpr, ui, sim, now) {
   }
   ctx.globalAlpha = 1;
 }
+
+// 3D-спрайт бойца (16 ракурсов); null — если ещё не готов и бюджет кадра исчерпан
+function soldier3d(side, kind, pose, frame, angle, m, now) {
+  const key = `sold:${side}:${kind}:${pose}:${frame}`;
+  return spriteFor(key, () => buildSoldier(side, kind, pose, frame), angle, m, pose === 'cover' ? SOLDIER_OPTS_COVER : SOLDIER_OPTS, now);
+}
+const SOLDIER_OPTS = { angles: SOLDIER_ANGLES, shadowAlpha: 0.35 };
+const SOLDIER_OPTS_COVER = { angles: SOLDIER_ANGLES, shadowAlpha: 0.3, clipZ: 0 };
 
 function muzzle(ctx, x, y, m) {
   ctx.fillStyle = 'rgba(255,220,120,0.95)';
