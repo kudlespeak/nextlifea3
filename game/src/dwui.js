@@ -105,11 +105,11 @@ export class DWUI {
       h += `<div id="dw-res"></div>`;
     }
     $('dw-body').innerHTML = h;
-    this.hint();
+    this.modeHint();
     this.update(true);
   }
   // Подсказка по текущему режиму — над картой, чтобы было понятно, что делает клик
-  hint() {
+  modeHint() {
     const m = this.state.mode, el = $('dw-hint');
     let t = '';
     if (m?.startsWith('ad:')) t = `Кликните по карте на своей территории — поставить <b>${esc(DW_AD[m.slice(3)].name[this.side])}</b> · ПКМ — отмена`;

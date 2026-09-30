@@ -78,7 +78,15 @@ function buildDistribution(world, rng, mains, cities, sameSide = null) {
     mains.forEach((m, i) => { if (sameSide && m.side !== sameSide(tp)) return; const d = Math.hypot(m.x - tp.x, m.y - tp.y); if (d < md) { md = d; mi = i; } });
     const main = mains[mi];
     tp.main = mi;
-    tp.poles = resample([[main.x, main.y], [(main.x + tp.x) / 2 + rng.float(-80, 80), (main.y + tp.y) / 2 + rng.float(-80, 80)], [tp.x, tp.y]], 45);
+    // фидер выходит из ячейки 10 кВ на краю подстанции, а не из её середины
+    let sx = main.x, sy = main.y;
+    if (main.w) {
+      const c = Math.cos(main.angle || 0), sn = Math.sin(main.angle || 0);
+      const lx = (tp.x - main.x) * c + (tp.y - main.y) * sn, ly = -(tp.x - main.x) * sn + (tp.y - main.y) * c;
+      const k = Math.min((main.w / 2 - 3) / (Math.abs(lx) || 1e-6), (main.h / 2 - 3) / (Math.abs(ly) || 1e-6));
+      sx = main.x + lx * k * c - ly * k * sn; sy = main.y + lx * k * sn + ly * k * c;
+    }
+    tp.poles = resample([[sx, sy], [(sx + tp.x) / 2 + rng.float(-80, 80), (sy + tp.y) / 2 + rng.float(-80, 80)], [tp.x, tp.y]], 45);
     tp.alive = true;
     tp.cut = null;
   }
