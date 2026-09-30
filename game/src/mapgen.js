@@ -815,6 +815,7 @@ function generateDroneWarWorld(seed) {
 
   snapRoadEnds(world);
   connectRoadNet(world, rng);
+  fixCrossings(world);
   // ---------- Мосты: где дороги и ж/д пересекают реки ----------
   const bridges = [];
   const scan = (ln, type) => {
@@ -908,6 +909,7 @@ export const ROAD_STYLE = {
   street: { width: 10, stamp: 14 },
   avenue: { width: 16, stamp: 20 },
   dirt: { width: 4.5, stamp: 8 },
+  ramp: { width: 7, stamp: 11 }, // съезд развязки
 };
 
 // Подъезд обрывается на первой встреченной дороге (примыкание), а не пересекает её к дальней
@@ -1085,6 +1087,123 @@ function snapRoadEnds(world) {
   world.roads = new SpatialIndex(world.W, world.H, old.cell);
   for (const r of old.items) if (!drop.has(r)) { r.bbox = bboxOf(r.line, r.width + 6); world.roads.insert(r); }
   world.roadsSnapped = n;
+}
+
+// ---------- Перекрёстки и развязки ----------
+// Загородные дороги, пересекающиеся «иксом»: второстепенная на подходе доворачивает так, чтобы
+// пересечь главную под прямым углом (S-образный поворот, как при реконструкции перекрёстков).
+// Трасса с другой дорогой — развязка «ромб»: второстепенная идёт путепроводом над трассой, четыре
+// съезда соединяют её с проезжими частями. Итог — в world.crossings (для отрисовки разметки).
+const XRANK = { dirt: 0, village: 1, ramp: 2, local: 3, highway: 5 };
+function fixCrossings(world) {
+  const { mask } = world;
+  world.crossings = [];
+  const along = (line, P) => { let best = 0, bd = Infinity, acc = 0, at = 0; for (let i = 1; i < line.length; i++) { const f = footOn(P, line[i - 1], line[i]), d = Math.hypot(f[0] - P[0], f[1] - P[1]); if (d < bd) { bd = d; at = acc + Math.hypot(f[0] - line[i - 1][0], f[1] - line[i - 1][1]); best = i; } acc += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]); } return { i: best, s: at }; };
+  const pointAt = (line, s) => { let acc = 0; for (let i = 1; i < line.length; i++) { const L = Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]); if (acc + L >= s) { const t = (s - acc) / (L || 1); return { p: [line[i - 1][0] + (line[i][0] - line[i - 1][0]) * t, line[i - 1][1] + (line[i][1] - line[i - 1][1]) * t], i }; } acc += L; } return { p: line[line.length - 1].slice(), i: line.length - 1 }; };
+  const tangentAt = (line, i) => { const a = line[Math.max(0, i - 1)], b = line[Math.min(line.length - 1, i)]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+  const free = (pts, allow) => pts.every(([x, y]) => !mask.has(x, y, M.BUILD | M.WATER | M.RAIL) || allow(x, y));
+  const find = () => {
+    const rural = world.roadList.filter((r) => r.type in XRANK && r.type !== 'ramp');
+    const out = [];
+    for (let i = 0; i < rural.length; i++) for (let j = i + 1; j < rural.length; j++) {
+      const A = rural[i], B = rural[j];
+      const ba = A.bbox, bb = B.bbox;
+      if (ba.x0 > bb.x1 || ba.x1 < bb.x0 || ba.y0 > bb.y1 || ba.y1 < bb.y0) continue;
+      for (let a = 1; a < A.line.length; a++) for (let b = 1; b < B.line.length; b++) {
+        const t = segCross(A.line[a - 1], A.line[a], B.line[b - 1], B.line[b]);
+        if (t < 0) continue;
+        const P = [A.line[a - 1][0] + (A.line[a][0] - A.line[a - 1][0]) * t, A.line[a - 1][1] + (A.line[a][1] - A.line[a - 1][1]) * t];
+        const ed = (L) => Math.min(Math.hypot(P[0] - L[0][0], P[1] - L[0][1]), Math.hypot(P[0] - L[L.length - 1][0], P[1] - L[L.length - 1][1]));
+        if (ed(A.line) < 30 || ed(B.line) < 30) continue;
+        const main = XRANK[A.type] > XRANK[B.type] || (XRANK[A.type] === XRANK[B.type] && lineLen(A.line) >= lineLen(B.line)) ? A : B;
+        out.push({ P, main, minor: main === A ? B : A });
+      }
+    }
+    return out;
+  };
+  const done = new Set();
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+    for (const { P, main, minor } of find()) {
+      const key = Math.round(P[0] / 20) + ':' + Math.round(P[1] / 20);
+      if (done.has(key)) continue;
+      const m = along(main.line, P), n0 = along(minor.line, P);
+      const t = tangentAt(main.line, m.i);
+      let nx = -t[1], ny = t[0];
+      const md = tangentAt(minor.line, n0.i);
+      if (nx * md[0] + ny * md[1] < 0) { nx = -nx; ny = -ny; }
+      const cos = Math.abs(t[0] * md[0] + t[1] * md[1]);
+      const hw = main.type === 'highway';
+      // почти параллельные (< 25°): дороги идут одна вдоль другой — общий участок оставляем одной
+      // дороге (улице села, если она есть), вторая примыкает к ней с обеих сторон
+      if (cos > 0.9 && !hw) {
+        const host = minor.type === 'village' ? minor : main, cut = host === minor ? main : minor;
+        if (mergeAlong(world, cut, host, P)) { changed = true; done.add(key); continue; }
+      }
+      const straight = hw ? 70 : 30;
+      const Ls = lineLen(minor.line);
+      // второстепенная дорога — под прямым углом на ±straight м от оси главной (подход разной длины,
+      // пока новая трасса не обходит застройку и воду)
+      let ok = cos <= 0.26 && !hw;
+      if (!ok) for (const reach of hw ? [190, 150, 250, 120] : [110, 80, 150]) {
+        if (n0.s < reach + 10 || Ls - n0.s < reach + 10) continue;
+        const A = pointAt(minor.line, n0.s - reach), B = pointAt(minor.line, n0.s + reach);
+        const ctrl = [A.p, [P[0] - nx * Math.min(straight, reach / 2.5), P[1] - ny * Math.min(straight, reach / 2.5)], P, [P[0] + nx * Math.min(straight, reach / 2.5), P[1] + ny * Math.min(straight, reach / 2.5)], B.p];
+        const seg = resample(catmullRom(ctrl, 10), 10);
+        if (!free(seg, () => false)) continue;
+        minor.line = [...minor.line.slice(0, A.i), ...seg, ...minor.line.slice(B.i)];
+        minor.bbox = bboxOf(minor.line, minor.width + 6);
+        mask.stampLine(seg, ROAD_STYLE[minor.type].stamp, M.ROAD);
+        changed = true; ok = true;
+        break;
+      }
+      done.add(key);
+      if (hw && !ok && cos > 0.5) { world.crossings.push({ x: P[0], y: P[1], main, minor, kind: 'x' }); continue; }
+      if (!hw) { world.crossings.push({ x: P[0], y: P[1], main, minor, kind: 'x' }); continue; }
+      // развязка «ромб»: путепровод и четыре съезда (с второстепенной — на проезжую часть своей стороны)
+      const X = { x: P[0], y: P[1], main, minor, kind: 'interchange', tx: t[0], ty: t[1], nx, ny, ramps: [] };
+      const half = main.width / 2 - 3;
+      // съезд — плавная кривая: уходит со второстепенной в 150 м от трассы и вливается в неё через ~400 м
+      // съезд не пересекает чужие дороги (свои — трасса и второстепенная — не в счёт)
+      const onRoad = (ln) => ln.some(([x, y]) => mask.has(x, y, M.ROAD) && distToLine(x, y, minor.line) > 22 && distToLine(x, y, main.line) > 30);
+      for (const s of [-1, 1]) for (const d of [-1, 1]) {
+        const S = pointAt(minor.line, n0.s + s * 150).p;
+        const M1 = [P[0] + t[0] * d * 110 + nx * s * 95, P[1] + t[1] * d * 110 + ny * s * 95];
+        const M2 = [P[0] + t[0] * d * 260 + nx * s * (half + 16), P[1] + t[1] * d * 260 + ny * s * (half + 16)];
+        const E = [P[0] + t[0] * d * 400 + nx * s * half, P[1] + t[1] * d * 400 + ny * s * half];
+        const ln = resample(catmullRom([S, M1, M2, E], 10), 10);
+        if (!free(ln, () => false) || onRoad(ln)) continue;
+        X.ramps.push(addRoad(world, ln, 'ramp'));
+      }
+      X.over = [[P[0] - nx * 32, P[1] - ny * 32], [P[0] + nx * 32, P[1] + ny * 32]];
+      world.crossings.push(X);
+    }
+    if (!changed) break;
+  }
+  const old = world.roads;
+  world.roads = new SpatialIndex(world.W, world.H, old.cell);
+  for (const r of world.roadList) { r.bbox = bboxOf(r.line, r.width + 6); world.roads.insert(r); }
+}
+
+// Дорога cut идёт вдоль дороги host (ближе 30 м): этот участок вырезаем, оставшиеся куски
+// примыкают к host поперечными отрезками
+function mergeAlong(world, cut, host, P) {
+  const near = (p) => { let d = Infinity; for (let j = 1; j < host.line.length; j++) { const f = footOn(p, host.line[j - 1], host.line[j]); d = Math.min(d, Math.hypot(f[0] - p[0], f[1] - p[1])); } return d; };
+  const foot = (p) => { let best = null, bd = Infinity; for (let j = 1; j < host.line.length; j++) { const f = footOn(p, host.line[j - 1], host.line[j]), d = Math.hypot(f[0] - p[0], f[1] - p[1]); if (d < bd) { bd = d; best = f; } } return best; };
+  const L = cut.line;
+  let k = 0, bd = Infinity;
+  for (let i = 0; i < L.length; i++) { const d = Math.hypot(L[i][0] - P[0], L[i][1] - P[1]); if (d < bd) { bd = d; k = i; } }
+  let i0 = k, i1 = k;
+  while (i0 > 0 && near(L[i0 - 1]) < 30) i0--;
+  while (i1 < L.length - 1 && near(L[i1 + 1]) < 30) i1++;
+  const a = L.slice(0, i0), b = L.slice(i1 + 1);
+  if (a.length < 2 && b.length < 2) return false;
+  if (a.length >= 2) a.push(foot(a[a.length - 1]));
+  if (b.length >= 2) b.unshift(foot(b[0]));
+  if (a.length >= 2) { cut.line = a; if (b.length >= 2) addRoad(world, b, cut.type); }
+  else cut.line = b;
+  cut.bbox = bboxOf(cut.line, cut.width + 6);
+  return true;
 }
 
 function nearestPoint(line, p) {

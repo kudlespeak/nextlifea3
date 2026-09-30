@@ -25,7 +25,7 @@ const AREA_COLORS = {
 };
 const GARDEN_TONES = [['#6b5b43', '#5f6b3a'], ['#72603f', '#6a7440'], ['#5d5140', '#56663a']];
 const TREE_COLORS = ['#2d3922', '#34422a', '#3c4a2c', '#434b2c', '#2a2622', '#5c564b']; // 4 — обугленные, 5 — сухие
-const ROAD_RANK = { dirt: 0, village: 1, street: 2, local: 3, avenue: 4, highway: 5 };
+const ROAD_RANK = { dirt: 0, village: 1, street: 2, local: 3, ramp: 3.5, avenue: 4, highway: 5 };
 
 // Холст и в основном потоке, и в фоновом (Web Worker рисует чанки без DOM)
 export function mkCanvas(w, h) {
@@ -950,8 +950,12 @@ function drawRoads(ctx, world, b, q, ppm) {
   // Мосты: парапеты
   for (const { r } of parts)
     for (const run of bridgeRuns(world, r)) drawParapets(ctx, run, r.width / 2 + 0.8);
+  // Узлы: переходно-скоростные полосы у трассы, скруглённые углы примыканий и перекрёстков
+  const nodes = junctionNodes(world).filter((n) => inQ(q, n.x, n.y, 120));
+  for (const n of nodes) if (n.main.type === 'highway' && n.sub.type !== 'dirt') speedLanes(ctx, n, ppm);
+  for (const n of nodes) fillets(ctx, n);
 
-  // 3) разметка: у примыканий разметка второстепенной дороги обрывается стоп-линией, а краевая
+  // 3) разметка (путепроводы — после неё, поверх трассы): у примыканий разметка второстепенной дороги обрывается стоп-линией, а краевая
   // линия главной — разрывается (второстепенная дорога не «прорезает» трассу и разделительный газон)
   if (ppm >= 0.9) {
     const white = 'rgba(225,222,210,0.85)';
@@ -974,14 +978,25 @@ function drawRoads(ctx, world, b, q, ppm) {
       for (const p0 of ps) {
         const fine = resample(p0, 4);
         if (r.type === 'highway') {
-          for (const p of cut(fine, asMain, (j) => j.sub.width / 2 + 2)) for (const s of [-1, 1]) strokeLine(ctx, offsetLine(p, s * 11.6), 0.18, white);
+          const xm = nodes.filter((n) => n.cross && n.main === r).map((n) => ({ x: n.x, y: n.y, r: 0, sub: n.sub }));
+          for (const p of cut(fine, [...asMain, ...xm], (j) => j.sub.width / 2 + 2)) for (const s of [-1, 1]) strokeLine(ctx, offsetLine(p, s * 11.6), 0.18, white);
           for (const s of [-1, 1]) {
             strokeLine(ctx, offsetLine(p0, s * 6.8), 0.15, white, [3, 9]);
             strokeLine(ctx, offsetLine(p0, s * 2), 0.18, white);
           }
         } else if (r.type === 'local' || r.type === 'avenue') {
-          for (const p of cut(fine, asSub, () => 3)) strokeLine(ctx, p, 0.15, white, [3, 6]);
+          // осевая второстепенной обрывается на перекрёстке «иксом»
+          const xs = nodes.filter((n) => n.cross && n.sub === r).map((n) => ({ x: n.x, y: n.y, r: (n.main.type === 'highway' ? 13 : n.main.width / 2) + 2 }));
+          for (const p of cut(fine, [...asSub, ...xs], () => 3)) strokeLine(ctx, p, 0.15, white, [3, 6]);
         }
+        // стоп-линии перед перекрёстком «иксом» — с обеих сторон главной
+        if (r.type !== 'dirt')
+          for (const n of nodes) {
+            if (!n.cross || n.sub !== r) continue;
+            const hwM = n.main.type === 'highway' ? 13 : n.main.width / 2, cx = n.x + n.u[0] * (hwM + 2), cy = n.y + n.u[1] * (hwM + 2), hw = r.width / 2 - 0.3;
+            ctx.beginPath(); ctx.moveTo(cx - n.u[1] * hw, cy + n.u[0] * hw); ctx.lineTo(cx + n.u[1] * hw, cy - n.u[0] * hw);
+            ctx.lineWidth = 0.4; ctx.strokeStyle = white; ctx.stroke();
+          }
         // стоп-линия на второстепенной дороге перед главной
         if (r.type !== 'dirt' && r.type !== 'street')
           for (const j of asSub) {
@@ -993,6 +1008,73 @@ function drawRoads(ctx, world, b, q, ppm) {
           }
       }
     }
+  }
+  drawOverpasses(ctx, world, q, ppm);
+}
+
+// Узлы сети для отрисовки: примыкания (конец второстепенной у главной) и перекрёстки «иксом»
+// (второстепенная проходит насквозь — два направления). У каждого: точка на оси главной, её
+// касательная t и направление второстепенной u (от главной)
+const SURF = { village: '#5f5e59', local: '#555653', ramp: '#555653', dirt: '#a0907a', street: '#535350', avenue: '#535350', highway: '#4c4d4b' };
+function junctionNodes(world) {
+  if (world._jnodes) return world._jnodes;
+  const out = [];
+  const tanAt = (line, p) => { let bi = 1, bd = Infinity; for (let i = 1; i < line.length; i++) { const d = distToLine(p[0], p[1], [line[i - 1], line[i]]); if (d < bd) { bd = d; bi = i; } } const a = line[bi - 1], b = line[bi], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; const tx = (b[0] - a[0]) / L, ty = (b[1] - a[1]) / L; const tt = Math.max(0, Math.min(L, (p[0] - a[0]) * tx + (p[1] - a[1]) * ty)); return { t: [tx, ty], f: [a[0] + tx * tt, a[1] + ty * tt] }; };
+  for (const j of junctions(world)) {
+    if (j.main.type === 'street' || j.main.type === 'avenue') continue; // городская сетка — свои прямые углы
+    const L = Math.hypot(j.dx, j.dy) || 1, { t, f } = tanAt(j.main.line, [j.x, j.y]);
+    out.push({ x: f[0], y: f[1], main: j.main, sub: j.sub, u: [j.dx / L, j.dy / L], t });
+  }
+  for (const c of world.crossings || []) {
+    if (c.kind !== 'x') continue;
+    const { t, f } = tanAt(c.main.line, [c.x, c.y]), m = tanAt(c.minor.line, [c.x, c.y]).t;
+    for (const sg of [1, -1]) out.push({ x: f[0], y: f[1], main: c.main, sub: c.minor, u: [m[0] * sg, m[1] * sg], t, cross: true });
+  }
+  world._jnodes = out;
+  return out;
+}
+// Скруглённые углы: между кромкой второстепенной и кромкой главной — асфальтовый «клин» с дугой
+function fillets(ctx, n) {
+  const { main, sub, u, t } = n;
+  if (sub.type === 'dirt' && main.type !== 'dirt') return;
+  const hwM = main.type === 'highway' ? 13 : main.width / 2, hwS = sub.width / 2;
+  const R = sub.type === 'village' || sub.type === 'dirt' ? 6 : main.type === 'highway' ? 16 : 10;
+  const nrm = Math.abs(u[0] * -t[1] + u[1] * t[0]) || 1; // косой подход — кромка главной дальше по u
+  for (const sg of [-1, 1]) {
+    const p = [-u[1] * sg, u[0] * sg];
+    const pt = Math.sign(p[0] * t[0] + p[1] * t[1]) || 1; // вдоль кромки главной — в сторону p
+    const C = [n.x + u[0] * hwM / nrm + p[0] * hwS, n.y + u[1] * hwM / nrm + p[1] * hwS];
+    const A = [C[0] + u[0] * R, C[1] + u[1] * R], B = [C[0] + t[0] * pt * R, C[1] + t[1] * pt * R];
+    ctx.beginPath(); ctx.moveTo(C[0], C[1]); ctx.lineTo(A[0], A[1]); ctx.quadraticCurveTo(C[0], C[1], B[0], B[1]); ctx.closePath();
+    ctx.fillStyle = SURF[sub.type] || '#555653';
+    ctx.fill();
+  }
+}
+// Полосы разгона и торможения вдоль трассы у примыкания (клин 70 м + полоса 60 м с каждой стороны)
+function speedLanes(ctx, n, ppm) {
+  const { t, u } = n;
+  const side = Math.sign(u[0] * -t[1] + u[1] * t[0]) || 1, nx = -t[1] * side, ny = t[0] * side;
+  const off = (d, w) => [n.x + t[0] * d + nx * (13 + w), n.y + t[1] * d + ny * (13 + w)];
+  const inner = [], outer = [];
+  for (let d = -130; d <= 130; d += 10) { const w = Math.min(3.5, Math.max(0, (130 - Math.abs(d)) / 70 * 3.5)); inner.push(off(d, 0)); outer.push(off(d, w)); }
+  ctx.beginPath(); pathPoly(ctx, [...inner, ...outer.reverse()]);
+  ctx.fillStyle = '#4f504d'; ctx.fill();
+  if (ppm >= 0.9) strokeLine(ctx, inner.slice(3, -3), 0.2, 'rgba(225,222,210,0.8)', [2, 2]);
+}
+// Путепровод развязки: второстепенная дорога над трассой — тень, опоры, покрытие, ограждения
+function drawOverpasses(ctx, world, q, ppm) {
+  for (const c of world.crossings || []) {
+    if (c.kind !== 'interchange' || !inQ(q, c.x, c.y, 120)) continue;
+    const r = c.minor, [a, b] = c.over;
+    const run = [[a[0] - c.nx * 8, a[1] - c.ny * 8], a, b, [b[0] + c.nx * 8, b[1] + c.ny * 8]];
+    ctx.save(); ctx.translate(4, 4.5); strokeLine(ctx, run, r.width + 3, 'rgba(0,0,0,0.38)'); ctx.restore();
+    for (const s of [-1, 1]) { const px = c.x + c.tx * 0 + c.nx * s * 14, py = c.y + c.ny * s * 14; ctx.fillStyle = '#8a877e'; ctx.fillRect(px - 1.2, py - 1.2, 2.4, 2.4); } // опоры на обочинах
+    ctx.lineCap = 'butt';
+    strokeLine(ctx, run, r.width + 2, '#9c9580');
+    strokeLine(ctx, run, r.width, SURF[r.type] || '#555653');
+    drawParapets(ctx, run, r.width / 2 + 0.9);
+    if (ppm >= 0.9) strokeLine(ctx, run, 0.15, 'rgba(225,222,210,0.85)', [3, 6]);
+    ctx.lineCap = 'round';
   }
 }
 
