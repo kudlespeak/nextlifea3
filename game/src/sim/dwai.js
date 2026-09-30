@@ -15,9 +15,9 @@ const DOCTRINES = {
   balanced: { name: 'взвешенный', roi: 0.7, off: 0.55, cover: 1, projects: ['highway', 'airshield', 'agroholding', 'technopark', 'powerbridge'], tech: ['economy', 'military', 'energy'] },
 };
 
-const VALUE = { decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
+const VALUE = { refinery: 7, railterm: 4, port: 4, coalmine: 4, cement: 3, decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
 const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
-const TARGET_COMPS = { decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const TARGET_COMPS = { refinery: ['tank', 'shop', 'dryer'], railterm: ['rack', 'hall'], port: ['rack', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 const D_RANGE = (D) => D.range || 99999;
 
@@ -246,6 +246,21 @@ export class DroneWarAI {
       if (s > bs) { bs = s; best = o; }
     }
     if (!best) return;
+    // Двухходовка: цель плотно прикрыта — сначала выбиваем ПВО барражирующими, удар — через 2–3 минуты
+    const guards = knownAD.filter((a) => a.type !== 'acoustic' && Math.hypot(a.x - best.x, a.y - best.y) < (a.type === 'sam' ? 9000 : 3500));
+    const t = this.sim.time;
+    if (guards.length >= 2 && T.loiter && !(this.sead && this.sead.oid === best.id)) {
+      const launchX = g.frontX + (this.side === 'blue' ? -1300 : 1300);
+      let sent = 0;
+      for (const a of guards.slice(0, 3)) {
+        if (Math.abs(a.x - launchX) > T.loiter.range || g.drones.some((d) => !d.dead && d.adTarget === a.id)) continue;
+        const n = a.type === 'sam' || a.type === 'radar' ? 2 : 1;
+        if (!this.can('off', T.loiter.cost * n)) break;
+        if (!g.launch(this.side, T.loiter.k, n, a.x, a.y, { adTarget: a.id })) { this.pay('off', g.droneCost(this.side, T.loiter.k) * n); sent++; }
+      }
+      if (sent) { this.sead = { oid: best.id, until: t + 150 }; this.intent = `готовит удар по «${best.name}»: сначала подавляет ПВО`; this.next.strike = t + 150; return; }
+    }
+    if (this.sead && t < this.sead.until && this.sead.oid === best.id) return;
     const aims = best.comps.filter((c) => TARGET_COMPS[best.kind].includes(c.k) && c.state === 'ok');
     // Состав волны
     const heavy = best.kind === 'bridge' || best.kind === 'factory';
@@ -377,6 +392,22 @@ export class DroneWarAI {
     { const br = g.objs(side, 'bridge').find((b) => b.btype !== 'rail' && g.bridgeCap(b) === 0 && !g.objects.some((o) => o.kind === 'pontoon' && o.bridge === b.id)); if (br) { const s0 = E.siteFor(side, 'pontoon', br.x, br.y); if (!s0.err) out.push({ act: 'build', kind: 'pontoon', x: br.x, y: br.y, cost: BUILD.pontoon.cost, gain: 5, name: `понтонная переправа у моста «${br.name.replace(/^Мост через /, '')}»` }); } }
     if ((sum.farmGrain > 12000 || this.S.stats.lostAD > 6) && have('autopark') < 3) { const c = cities[0]; if (c) add('autopark', c.x, c.y, 1500, 4000, 2, 'автобаза'); }
     if (S.spare === 0 && have('reserve') < 2) { const c = cities[rng.int(0, cities.length - 1)]; if (c) add('reserve', c.x, c.y, 2000, 5000, 3, 'склад госрезерва'); }
+    // ----- ресурсы, вода, экспорт по железной дороге и реке -----
+    const IF = g.infra;
+    if (!have('refinery')) add('refinery', cities[0]?.x ?? 0, cities[0]?.y ?? 0, 3000, 7000, 5 + 0.2 * (I.fuel || 0), 'НПЗ');
+    if (!have('coalmine')) add('coalmine', cities[0]?.x ?? 0, cities[0]?.y ?? 0, 4000, 9000, 0.1 * (ind + tax) + 2, 'угольная шахта');
+    if (!have('cement')) add('cement', cities[0]?.x ?? 0, cities[0]?.y ?? 0, 2500, 6000, 5, 'цементный завод');
+    for (const c of cities) if (c.water === false && !g.objs(side, 'watertower').some((o) => Math.hypot(o.x - c.x, o.y - c.y) < 4000)) add('watertower', c.x, c.y, 800, 3000, 4, `водонапорная станция в городе ${c.name}`);
+    if (!have('railterm') && sum.elevGrain > 8000) {
+      const el = g.objs(side, 'elevator').sort((a, b) => (b.grain || 0) - (a.grain || 0))[0];
+      if (el) { const pts = g.world.rails.items.filter((r) => !r.siding).flatMap((r) => r.line); const rp = pts.reduce((a, q) => (Math.hypot(q[0] - el.x, q[1] - el.y) < Math.hypot(a[0] - el.x, a[1] - el.y) ? q : a), pts[0]); if (rp && Math.hypot(rp[0] - el.x, rp[1] - el.y) < 4500) add('railterm', rp[0], rp[1], 60, 400, 0.4 * (I.agro || 0) + 4, 'ж/д терминал для экспорта зерна'); }
+    }
+    if (!have('port') && sum.elevGrain > 12000) {
+      const rv = g.world.water.items.find((r) => r.kind === 'river' && E.territoryOk(side, r.line[0][0]));
+      const el = g.objs(side, 'elevator')[0];
+      if (rv && el) { const rp = rv.line.reduce((a, q) => (Math.hypot(q[0] - el.x, q[1] - el.y) < Math.hypot(a[0] - el.x, a[1] - el.y) ? q : a)); if (Math.hypot(rp[0] - el.x, rp[1] - el.y) < 5500) add('port', rp[0], rp[1], 80, 320, 0.3 * (I.agro || 0) + 3, 'речной порт для экспорта зерна'); }
+    }
+    void IF;
     // Макеты подстанций — когда противник бьёт по нашим ПС 110
     if (have('decoy') < 3 && g.objs(side, 'ps110').some((q) => q.comps.some((c) => c.state !== 'ok'))) { const ps = g.objs(side, 'ps110')[rng.int(0, g.objs(side, 'ps110').length - 1)]; add('decoy', ps.x, ps.y, 1500, 4000, 2.2, 'макет подстанции'); }
     // Стартовая позиция, если пусковые не успевают
@@ -429,6 +460,29 @@ export class DroneWarAI {
       if (c.kind === 'arms' && S.points > c.price * 2.5 && g.ad.filter((a) => !a.dead && a.side === side && a.type === 'sam').length < 3) St.acceptContract(side, c.id);
     }
     if (mor < 40 && S.points < 100 && !T.debts.some((d) => d.kind === 'credit')) St.takeCredit(side, 'credit');
+    // Области: губернаторы со специализацией (раз в начале, дальше — по обстановке)
+    const IF = g.infra, EI = IF.side[side];
+    IF.cities(side).forEach((c, i) => {
+      if (EI.spec[i] || S.points < 300) return;
+      const want = i === 0 ? (D === DOCTRINES.economist ? 'trade' : 'industry') : D === DOCTRINES.turtle ? 'energy' : 'agro';
+      IF.setRegion(side, i, want);
+    });
+    // Резервная ЛЭП к подстанции, у которой одна линия питания
+    if (S.points > 1200 + this.reserve && !IF.newLines.some((q) => q.side === side)) {
+      const ends = IF.lineEnds(side);
+      for (const ps of g.objs(side, 'ps110')) {
+        const deg = g.lines.filter((l) => l.side === side && (l.a === ps.id || l.b === ps.id)).length;
+        if (deg > 1) continue;
+        const other = ends.filter((o) => o !== ps && (o.kind === 'ps110' || o.kind === 'ps330') && !IF.lineCheck(side, ps.id, o.id).err).sort((a, b) => Math.hypot(a.x - ps.x, a.y - ps.y) - Math.hypot(b.x - ps.x, b.y - ps.y))[0];
+        if (other) { IF.buildLine(side, ps.id, other.id); break; }
+      }
+    }
+    // Завод разбит и стоит близко к фронту — эвакуация вглубь тыла
+    const fac = g.objs(side, 'factory')[0];
+    if (fac && !fac.build && fac.comps.filter((c) => c.k === 'shop' && c.state === 'destroyed').length >= 2 && S.points > 700) {
+      const rx = side === 'blue' ? 3000 : g.world.W - 3000;
+      for (let k = 0; k < 30; k++) { const x = rx + (side === 'blue' ? 1 : -1) * k * 150, y = 4000 + ((k * 2300) % (g.world.H - 8000)); if (!IF.evacCheck(side, fac.id, x, y).err) { IF.evacuate(side, fac.id, x, y); break; } }
+    }
     if (mor > 80 && this.goal && S.points < this.goal.cost * 0.5 && this.goal.roi > 1.2 && !T.debts.some((d) => d.kind === 'bonds')) St.takeCredit(side, 'bonds');
   }
   settlementsFear() { const ss = this.g.world.settlements.filter((q) => q.side === this.side && q.type === 'city'); return ss.reduce((a, q) => a + q.fear, 0) / Math.max(1, ss.length); }

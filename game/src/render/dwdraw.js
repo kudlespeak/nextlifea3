@@ -12,12 +12,44 @@ import { CivTraffic } from './dwtraffic.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
 export const dispH = (alt) => (alt <= 0 ? 0 : 12 + Math.min(alt, 3000) / 3000 * 110);
+
+// Экспортные поезда (локомотив и вагоны-зерновозы вдоль пути) и баржи с буксиром; стройки дорог и ЛЭП
+function drawInfra(ctx, g, side, toS, inView, z, now, dpr, t) {
+  const I = g.infra;
+  for (const sh of I.ships) {
+    const head = I.posOf(sh);
+    if (!inView(head.x, head.y, 600)) continue;
+    const train = sh.kind === 'train';
+    const n = train ? 14 : 2, len = train ? 15 : 60, gap = train ? 1.5 : 6;
+    for (let k = 0; k < n; k++) {
+      const p = I.posOf(sh, Math.max(0, sh.s - k * (len + gap)));
+      const [sx, sy] = toS(p.x, p.y);
+      const w = Math.max(train ? 1.2 * dpr : 2 * dpr, (train ? 3.2 : 11) * z), L = Math.max(2 * dpr, len * z);
+      ctx.save(); ctx.translate(sx, sy); ctx.rotate(p.h);
+      ctx.fillStyle = k === 0 ? (train ? '#3a4a5a' : '#6a5a3a') : train ? '#a8905a' : '#7d6b4a';
+      ctx.fillRect(-L, -w / 2, L, w);
+      if (!train && k > 0 && z > 0.3) { ctx.fillStyle = '#d6b95e'; ctx.fillRect(-L * 0.92, -w * 0.35, L * 0.84, w * 0.7); } // зерно в трюме
+      ctx.restore();
+    }
+    if (sh.wait) { const [sx, sy] = toS(head.x, head.y); ctx.fillStyle = '#ff5a4a'; ctx.font = `${Math.round(11 * dpr)}px sans-serif`; ctx.fillText('⛔', sx + 6 * dpr, sy - 6 * dpr); }
+  }
+  for (const p of I.paving) {
+    if (p.side !== side || !inView(p.x, p.y, 50)) continue;
+    const [sx, sy] = toS(p.x, p.y);
+    ring(ctx, sx, sy - 12 * dpr, 8 * dpr, 1 - (p.until - t) / p.total, '#ffd36b', dpr);
+    ctx.fillStyle = '#e0b030'; ctx.fillRect(sx - 3 * dpr, sy - 3 * dpr, 6 * dpr, 6 * dpr); // каток
+  }
+  ctx.save(); ctx.setLineDash([8 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(255,211,107,0.8)'; ctx.lineWidth = 1.5 * dpr;
+  for (const d of I.newLines) { if (d.side !== side || !d.pylons) continue; ctx.beginPath(); d.pylons.forEach((p, i) => { const [sx, sy] = toS(p.x, p.y); if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); }); ctx.stroke(); }
+  ctx.restore();
+  void now;
+}
 
 // Потоки экономики своей стороны: зерно (ток → элеватор → граница), солярка (нефтебаза → мехдворы),
 // товары (склады → магазины). Толщина — объём.
@@ -191,6 +223,9 @@ export function drawDW(ctx, sim, view, side, ui) {
       fire(ctx, toS, c.x, c.y, size, z, now, c.k === 'tank' || c.k === 'coal', hash(c.x + c.y));
     }
   }
+
+  // ---------- Поезда и баржи с зерном, дорожники, строящиеся ЛЭП ----------
+  if (g.infra) drawInfra(ctx, g, side, toS, inView, z, now, dpr, t);
 
   // ---------- Слой экономических потоков ----------
   if (ui?.showFlows && g.econ) drawFlows(ctx, g, side, toS, z, dpr);
@@ -749,6 +784,22 @@ export function drawDWPreview(ctx, sim, view, side, ui, mw) {
     for (const [u, v] of [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]) { const [px, py] = toS(cx + u * c - v * s, cy + u * s + v * c); ctx.lineTo(px, py); }
     ctx.closePath(); ctx.fill(); ctx.stroke();
     if (ok) { const [a1, b1] = toS(st.drive[0][0], st.drive[0][1]), [a2, b2] = toS(st.drive[1][0], st.drive[1][1]); ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.beginPath(); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke(); ctx.setLineDash([]); }
+  }
+  if (ui.mode === 'pave') {
+    // подсветить дорогу, которую заасфальтируют
+    const q = g.infra.roadAt(side, mw[0], mw[1]);
+    if (!q.err) { ctx.strokeStyle = 'rgba(140,255,140,0.85)'; ctx.lineWidth = Math.max(3 * dpr, 10 * z); ctx.beginPath(); q.r.line.forEach(([x, y], i) => { const [px, py] = toS(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }); ctx.stroke(); }
+  }
+  if (ui.mode?.startsWith('line:')) {
+    const a = g.obj(Number(ui.mode.slice(5)));
+    if (a) { const [ax, ay] = toS(a.x, a.y); ctx.strokeStyle = 'rgba(255,211,107,0.9)'; ctx.lineWidth = 2 * dpr; ctx.setLineDash([8 * dpr, 6 * dpr]); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(mx, my); ctx.stroke(); ctx.setLineDash([]); }
+  }
+  if (ui.mode?.startsWith('evac:')) {
+    const q = g.infra.evacCheck(side, Number(ui.mode.slice(5)), mw[0], mw[1]);
+    ctx.strokeStyle = q.err ? 'rgba(255,90,70,0.9)' : 'rgba(140,255,140,0.9)'; ctx.lineWidth = 2 * dpr;
+    ctx.strokeRect(mx - 125 * z, my - 85 * z, 250 * z, 170 * z);
+    const [fx0] = toS(g.frontX + (side === 'blue' ? -14000 : 14000), 0);
+    ctx.setLineDash([10 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(140,255,140,0.5)'; ctx.beginPath(); ctx.moveTo(fx0, 0); ctx.lineTo(fx0, canvas.height); ctx.stroke(); ctx.setLineDash([]);
   }
   if (ui.mode?.startsWith('strike:')) {
     ctx.strokeStyle = 'rgba(255,200,120,0.8)';

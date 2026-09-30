@@ -93,6 +93,7 @@ export class DWState {
     for (const b in TECH) for (let i = 0; i < T.tech[b]; i++) mul(TECH[b].levels[i].eff);
     for (const e of T.temp) mul(e.eff);
     if (key === 'tax') k *= TAXES[T.tax].k;
+    k *= this.g.infra?.k(side, key) ?? 1; // сезон, НПЗ, области
     // инфляция: всё, что покупает государство, дорожает
     if (key === 'drone' || key === 'arms' || key === 'build') k *= 1 + T.infl;
     // курс валюты: выручка от экспорта и пошлин
@@ -275,7 +276,7 @@ export class DWState {
     if (t < T.eventT || g.prep) return;
     T.eventT = t + 900 + rng.float(0, 600);
     const sum = g.econ.summary(side);
-    const ok = EVENTS.filter((e) => !e.when || e.when({ happy: sum.happy, rep: T.rep }));
+    const ok = EVENTS.filter((e) => (!e.when || e.when({ happy: sum.happy, rep: T.rep })) && !(e.id === 'fuelcut' && g.infra?.has(side, 'refinery')));
     const e = rng.weighted(ok.map((q) => [q, q.w]));
     if (!e) return;
     if (e.eff) T.temp.push({ id: e.id, eff: e.eff, until: t + e.dur, text: e.text });

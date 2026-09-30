@@ -5,6 +5,7 @@ import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef, GTU, PA
 import { VEH } from './sim/dwlogi.js';
 import { BUILD, BUILD_GROUPS, STAGE_NAME, upgradeCost, UPKEEP, LAUNCH_PER } from './sim/dwecon.js';
 import { LAWS, TAXES, MOBIL, PROJECTS, TECH } from './sim/dwstate.js';
+import { REGION_SPEC } from './sim/dwinfra.js';
 const CREW_ST = { travel: 'едет к объекту', waitfire: 'ждёт, пока потушат', work: 'ремонтирует' };
 
 const $ = (id) => document.getElementById(id);
@@ -65,6 +66,9 @@ export class DWUI {
         h += `<div class="dw-sub">${esc(grp)}</div>`;
         for (const k of kinds) { const B = BUILD[k]; h += `<div class="dw-row${this.state.mode === 'build:' + k ? ' sel' : ''}" data-build="${k}" title="${esc(B.desc)}"><div><b>${esc(B.name)}</b><small>${esc(B.desc)} · ${Math.round(B.time / 60)} мин</small></div><span class="cost">${B.cost}</span></div>`; }
       }
+      h += `<div class="dw-sub">Инструменты</div>`;
+      h += `<div class="dw-row${this.state.mode === 'pave' ? ' sel' : ''}" data-act="pave"><div><b>Асфальтировать дорогу</b><small>клик по грунтовке или сельской дороге: машины по ней быстрее (по грунтовкам — на 30% медленнее)</small></div><span class="cost">60/км</span></div>`;
+      h += `<div class="dw-row${this.state.mode?.startsWith('line') ? ' sel' : ''}" data-act="line"><div><b>Построить ЛЭП 110 кВ</b><small>клик по одной подстанции или станции, затем по другой: обходной путь для питания, если основную линию перебьют</small></div><span class="cost">25/км</span></div>`;
       h += `<div id="dw-econ"></div>`;
     } else if (this.state.tab === 'state') {
       h += `<div id="dw-state"></div>`;
@@ -83,7 +87,7 @@ export class DWUI {
     const mmss = (s) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`;
     const PH = ['Фаза 1 · пробные удары', 'Фаза 2 · массированные удары', 'Фаза 3 · удар возмездия'];
     let h = bar('Устойчивость тыла', S.morale ?? 100) + bar('У противника', E.morale ?? 100);
-    h += `<div class="dw-phase"><span>${g.prep ? 'Подготовка' : PH[g.phaseNo || 0]}</span><span>${g.endless ? `идёт ${g.prep ? '0:00' : hhmm(t - (g.startAt || t))}` : `до конца ${mmss(g.endAt - t)}`}</span></div>`;
+    h += `<div class="dw-phase"><span>${g.prep ? 'Подготовка' : PH[g.phaseNo || 0]}${g.infra ? ` · ${g.infra.season().name}` : ''}</span><span>${g.endless ? `идёт ${g.prep ? '0:00' : hhmm(t - (g.startAt || t))}` : `до конца ${mmss(g.endAt - t)}`}</span></div>`;
     const D = g.directive?.[side], T = g.directive?.[this.enemy];
     if (D) {
       const o = g.obj(D.oid);
@@ -115,7 +119,7 @@ export class DWUI {
       h += `<div class="dw-income">Доход <b>${S.income >= 0 ? '+' : ''}${S.income.toFixed(1)}</b> оч/мин: промышленность ${(I.industry || 0).toFixed(0)} · налоги ${(I.tax || 0).toFixed(0)} · магазины ${(I.trade || 0).toFixed(0)} · АЗС ${(I.fuel || 0).toFixed(0)} · фуры ${(I.transit || 0).toFixed(0)} · зерно ${(I.agro || 0).toFixed(0)} · <span class="bad">бригады ${(I.wages || 0).toFixed(0)} · содержание армии ${(I.upkeep || 0).toFixed(0)}</span><br>Мосты ${(S.logi ?? 1) < 1 ? '<span class="bad">логистика нарушена</span>' : 'в порядке'} · нефтебаза ${((S.oil ?? 1) * 100).toFixed(0)}% · арсенал ${((S.ammo ?? 1) * 100).toFixed(0)}%</div>`;
       const P = S.moraleParts;
       if (P) {
-        const parts = [['свет', P.power], ['мосты', P.bridges], ['пустые магазины и АЗС', P.shops], ['пожары', P.fires], ['погранпереход', P.border]].filter(([, v]) => v > 0.05);
+        const parts = [['свет', P.power], ['мосты', P.bridges], ['пустые магазины и АЗС', P.shops], ['пожары', P.fires], ['погранпереход', P.border], ['нет воды в городах', P.water || 0]].filter(([, v]) => v > 0.05);
         h += `<div class="dw-income">Устойчивость тыла в минуту: ${parts.length ? parts.map(([n, v]) => `<span class="bad">${n} −${v.toFixed(1)}</span>`).join(' · ') : 'потерь нет'}${P.regen ? ` · <span style="color:var(--ok)">восстановление +${P.regen.toFixed(1)}</span>` : ''}. Разрушения узлов и удары по директиве снимают устойчивость сразу.</div>`;
       }
       // Генерация по источникам
@@ -211,6 +215,15 @@ export class DWUI {
       h += `<div class="dw-row small"><div><b>${esc(B.name)}</b> <small>${B.levels.map((q, i) => `<span class="${i < lv ? 'ok' : 'muted'}" title="${esc(q.desc)}">${i < lv ? '✔' : '○'} ${esc(q.name)}</span>`).join(' · ')}</small>${nx ? `<small>дальше: ${esc(nx.desc)}</small>` : ''}</div>${nx && !T.research ? `<button data-tech="${b}">${nx.cost}</button>` : ''}</div>`;
     }
     if (T.temp.length || T.log.length) h += `<div class="dw-sub">События</div>` + T.temp.map((e) => `<div class="dw-note">⏳ ${esc(e.text)} — ещё ${Math.ceil((e.until - t) / 60)} мин</div>`).join('') + T.log.slice(-4).reverse().map(([, txt]) => `<div class="dw-note muted">${esc(txt)}</div>`).join('');
+    // Области: у каждого города своя область и губернатор со специализацией
+    h += `<div class="dw-sub">Области</div>`;
+    const cities = g.infra.cities(side), EI = g.infra.side[side];
+    cities.forEach((c, i) => {
+      const ss = g.world.settlements.filter((q) => q.side === side && q.region === i);
+      const pop = ss.reduce((a, q) => a + q.pop, 0), hp = ss.reduce((a, q) => a + q.pop * q.happy, 0) / Math.max(1, pop);
+      const cur = EI.spec[i] || 'none', wait = t < (EI.specT[i] || 0);
+      h += `<div class="dw-row small"><div><b>Область «${esc(c.name)}»</b><small>${Math.round(pop / 1000)} тыс. жителей, ${ss.length} поселений · довольство ${Math.round(hp * 100)}% · ${c.water === false ? '<span class="bad">нет воды</span>' : 'вода есть'} · ${esc(REGION_SPEC[cur].name)}${REGION_SPEC[cur].desc ? ` — ${esc(REGION_SPEC[cur].desc)}` : ''}</small><div class="dw-btns">${Object.entries(REGION_SPEC).filter(([k]) => k !== 'none').map(([k, R]) => `<button data-region="${i}:${k}" class="${cur === k ? 'sel' : ''}" ${wait || cur === k ? 'disabled' : ''} title="${esc(R.desc)} (80 оч., менять раз в 10 мин)">${esc(R.name)}</button>`).join('')}</div></div></div>`;
+    });
     const E = g.state.side[this.enemy];
     h += `<div class="dw-sub">Рейтинг страны</div><div class="dw-income">Вы <b>${g.state.rating(side)}</b> · противник ≈ <b>${g.state.rating(this.enemy)}</b> (экономика, люди, стройка, НИОКР, репутация)${T.ecoWin > 0 ? `<br><span style="color:var(--ok)">Экономическая победа близко: ${Math.round((100 * T.ecoWin) / 900)}%</span>` : ''}${E.ecoWin > 0 ? `<br><span class="bad">Противник близок к экономической победе: ${Math.round((100 * E.ecoWin) / 900)}%</span>` : ''}<br><small>Экономическая победа: экономика вдвое сильнее противника 15 минут подряд (после 1,5 ч боёв), а его тыл ниже 60.</small></div>`;
     $('dw-state').innerHTML = h;
@@ -228,6 +241,10 @@ export class DWUI {
     h += `<div class="dw-income">Содержание: ${upk.map(([t, n, v]) => `${esc(DW_AD[t].name[side])} ×${n} (${(n * v).toFixed(1)})`).join(' · ') || 'нет позиций'} · стартовые позиции ${g.objs(side, 'launch').filter((o) => !o.build).length} × 0,8</div>`;
     h += `<div class="dw-sub">Пуски и комплектующие</div><div class="dw-income">Стартовые позиции: свободно <b>${E.launchFree}</b> из ${E.launchCap} пусков за 5 мин (${LAUNCH_PER} на исправную пусковую, реконструкция +50%) · комплектующие для дронов <b class="${E.parts < 10 ? 'bad' : ''}">${Math.round(E.parts)}</b>/150 (везут фуры с импортом; нет запаса — дроны дороже в 1,5 раза)</div>`;
     h += `<div class="dw-sub">Сельское хозяйство</div><div class="dw-income">Агрофирм ${E.farms}, полей ${E.fields} · в работе ${E.working}${E.noFuel ? ` · <span class="bad">без солярки ${E.noFuel}</span>` : ''}<br>Зерно на токах ${k(E.farmGrain)} т · на элеваторах ${k(E.elevGrain)} из ${k(E.elevCap)} т · собрано ${k(E.harvested)} т · продано ${k(E.exported)} т${E.lostGrain ? ` · <span class="bad">потеряно ${k(E.lostGrain)} т</span>` : ''}</div>`;
+    const I2 = g.infra, EI = I2.side[side];
+    const ships = I2.ships.filter((q) => q.side === side);
+    const dryCities = g.world.settlements.filter((q) => q.side === side && q.type === 'city' && q.water === false).map((q) => q.name);
+    h += `<div class="dw-sub">Ресурсы и транспорт</div><div class="dw-income">Сезон: <b>${I2.season().name}</b> · стройматериалы <b>${Math.round(EI.mat)}</b> (скидка 20% на стройку и ремонт, пока хватает; дают цементные заводы и импорт) · уголь: ${I2.has(side, 'coalmine') ? 'своя шахта' : 'только склад ТЭС'} · топливо: ${I2.has(side, 'refinery') ? 'свой НПЗ' : 'нефтебаза'}<br>Вода: ${dryCities.length ? `<span class="bad">нет воды в городах: ${dryCities.map(esc).join(', ')}</span>` : 'в городах есть'}${ships.length ? `<br>Экспорт в пути: ${ships.map((q) => `${q.kind === 'train' ? 'поезд' : 'баржа'} ${Math.round(q.load / 1000)} тыс. т${q.wait ? ' <span class="bad">стоит у разрушенного моста</span>' : ''}`).join(', ')}` : ''}${I2.paving.filter((q) => q.side === side).length ? `<br>Дорожники в работе: ${I2.paving.filter((q) => q.side === side).length}` : ''}${I2.newLines.filter((q) => q.side === side).length ? ` · строится ЛЭП: ${I2.newLines.filter((q) => q.side === side).map((q) => esc(q.name)).join(', ')}` : ''}</div>`;
     const farms = g.econ.farms.filter((f) => f.side === side);
     h += farms.map((f) => `<div class="dw-row small"><div><b>${esc(f.name)}</b><small>${STAGE_NAME[f.stage] || ''}${f.work ? ` · ${f.work.kind === 'combine' ? 'комбайны' : 'тракторы'} в поле` : ''}${f.noFuel ? ' · <span class="bad">нет солярки</span>' : ''} · ГСМ ${f.tank} · на току ${Math.round(f.grain)} т</small></div></div>`).join('');
     const bld = g.objects.filter((o) => o.side === side && o.build);
@@ -274,12 +291,13 @@ export class DWUI {
       const own = o.side === side;
       const stockInfo = o.stock !== undefined && own ? ` · товара ${o.stock}${o.cut ? ' · <span class="bad">отрезан: нет проезда</span>' : ''}` : o.engines !== undefined && own ? ` · свободных машин ${o.engines}` : '';
       h += `<div class="dw-title">${esc(o.name)}</div><div class="dw-subt">${this.kindName(o)}${stockInfo} · ${own ? 'ваш объект' : CIVIL.has(o.kind) ? 'гражданский объект противника — удары запрещены' : 'объект противника'}${o.kind === 'ps110' && own ? ` · питание района ${((o.supply ?? 1) * 100).toFixed(0)}%` : ''}${o.kind === 'bridge' ? ` · пропускная способность ${(g.bridgeCap(o) * 100).toFixed(0)}%` : ''}</div>`;
-      if (own && (o.build || BUILD[o.kind] || o.grain !== undefined)) {
+      if (own && (o.build || BUILD[o.kind] || o.grain !== undefined || o.kind === 'factory')) {
         const lv = o.level || 1;
         let e = `<div class="dw-income">Уровень <b>${lv}</b>${o.grain !== undefined ? ` · зерна ${Math.round(o.grain)} т из ${Math.round(g.econ.elevCap(o))}` : ''}${o.kind === 'hub' ? ` · на складе ${o.stock}` : ''}`;
         if (o.kind === 'bess') e += ` · заряд ${Math.round((o.charge ?? 1) * 100)}%`;
         if (o.kind === 'solar') e += ` · выработка ${Math.round(o.gen || 0)} МВт`;
         if (o.idle) e += ` · <span class="warn">простой: ${esc(o.idle)}</span>`;
+        if (o.kind === 'factory' && !o.build) e += ` <button data-act="evac" data-id="${o.id}" title="вывезти оборудование вглубь тыла (не ближе 14 км к фронту): 300 оч., 10 мин без производства">Эвакуировать в тыл</button>`;
         if (o.kind === 'pontoon') e += ` · ${g.obj(o.bridge) && g.bridgeCap(g.obj(o.bridge)) === 0.4 ? 'машины идут по понтонам' : 'в резерве: мост цел'}`;
         if (o.build) e += ` · <span class="warn">${o.build.up ? 'реконструкция' : 'строится'}: ${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%</span>`;
         else if (BUILD[o.kind] && lv < 3) e += ` <button data-upg="${o.id}" title="реконструкция: больше выручки и вместимости">Реконструкция до ${lv + 1} ур. — ${upgradeCost(o)}</button>`;
@@ -313,7 +331,7 @@ export class DWUI {
   }
 
   onPanel(e) {
-    const t = e.target.closest('[data-ad],[data-drone],[data-wave],[data-count],[data-obj],[data-selad],[data-repair],[data-shelter],[data-roe],[data-act],[data-target],[data-shed],[data-gtu],[data-build],[data-upg],[data-law],[data-tax],[data-mobil],[data-project],[data-tech],[data-credit],[data-contract]');
+    const t = e.target.closest('[data-ad],[data-drone],[data-wave],[data-count],[data-obj],[data-selad],[data-repair],[data-shelter],[data-roe],[data-act],[data-target],[data-shed],[data-gtu],[data-build],[data-upg],[data-law],[data-tax],[data-mobil],[data-project],[data-tech],[data-credit],[data-contract],[data-region]');
     if (!t) return;
     const g = this.g, side = this.side;
     const d = t.dataset;
@@ -333,6 +351,10 @@ export class DWUI {
     } else if (d.act === 'close') this.select(null, null);
     else if (d.act === 'ranges') this.state.showRanges = t.checked;
     else if (d.act === 'flows') this.state.showFlows = t.checked;
+    else if (d.act === 'pave') { this.state.mode = this.state.mode === 'pave' ? null : 'pave'; this.build(); }
+    else if (d.act === 'line') { this.state.mode = this.state.mode?.startsWith('line') ? null : 'line'; this.build(); }
+    else if (d.act === 'evac') { this.state.mode = 'evac:' + d.id; this.build(); }
+    else if (d.region) { const [i, spec] = d.region.split(':'); this.issue('dw', 'setRegion', side, Number(i), spec); }
     else if (d.act === 'auto') this.issue('dw', 'setAuto', side, t.checked);
     else if (d.act === 'crew') this.issue('dw', 'buyCrew', side);
     else if (d.act === 'spare') this.issue('dw', 'buySpare', side);
@@ -421,6 +443,30 @@ export class DWUI {
       if (!shift) { this.state.mode = null; this.build(); }
       return true;
     }
+    if (mode === 'pave') {
+      const q = g.infra.roadAt(side, x, y);
+      if (q.err) { this.log(q.err); return true; }
+      this.issue('dw', 'pave', side, x, y);
+      if (!shift) { this.state.mode = null; this.build(); }
+      return true;
+    }
+    if (mode?.startsWith('line')) {
+      const o = this.objAt(x, y);
+      if (!o || o.side !== side || !g.infra.lineEnds(side).includes(o)) { this.log('ЛЭП: выберите свою подстанцию или электростанцию'); return true; }
+      if (mode === 'line') { this.state.mode = 'line:' + o.id; this.build(); return true; }
+      const a = Number(mode.slice(5)), q = g.infra.lineCheck(side, a, o.id);
+      if (q.err) { this.log(`ЛЭП: ${q.err}`); return true; }
+      this.issue('dw', 'buildLine', side, a, o.id);
+      this.state.mode = null; this.build();
+      return true;
+    }
+    if (mode?.startsWith('evac:')) {
+      const id = Number(mode.slice(5)), q = g.infra.evacCheck(side, id, x, y);
+      if (q.err) { this.log(`Эвакуация: ${q.err}`); return true; }
+      this.issue('dw', 'evacuate', side, id, x, y);
+      this.state.mode = null; this.build();
+      return true;
+    }
     if (mode === 'net') {
       this.issue('dw', 'buildNet', side, x, y);
       if (!shift) { this.state.mode = null; this.build(); }
@@ -495,6 +541,15 @@ export class DWUI {
       const kind = mode.slice(6), s = g.econ.siteFor(side, kind, x, y);
       return s.err ? `<span style="color:var(--bad)">${esc(s.err)}</span>` : `ЛКМ — построить <b>${esc(BUILD[kind].name)}</b> (${BUILD[kind].cost} оч., ${Math.round(BUILD[kind].time / 60)} мин). Shift — несколько. ПКМ — отмена`;
     }
+    if (mode === 'pave') { const q = g.infra.roadAt(side, x, y); return q.err ? `<span style="color:var(--bad)">${esc(q.err)}</span>` : `ЛКМ — асфальтировать ${(q.len / 1000).toFixed(1)} км (${q.cost} оч., 3 мин). ПКМ — отмена`; }
+    if (mode?.startsWith('line')) {
+      const o = this.objAt(x, y);
+      if (mode === 'line') return o && o.side === side && g.infra.lineEnds(side).includes(o) ? `ЛКМ — начать ЛЭП от «${esc(o.name)}»` : 'Выберите первую подстанцию или станцию';
+      if (!o) return 'Выберите вторую подстанцию или станцию';
+      const q = g.infra.lineCheck(side, Number(mode.slice(5)), o.id);
+      return q.err ? `<span style="color:var(--bad)">${esc(q.err)}</span>` : `ЛКМ — ЛЭП 110 кВ до «${esc(o.name)}»: ${(q.L / 1000).toFixed(1)} км, ${q.cost} оч., 5 мин`;
+    }
+    if (mode?.startsWith('evac:')) { const q = g.infra.evacCheck(side, Number(mode.slice(5)), x, y); return q.err ? `<span style="color:var(--bad)">${esc(q.err)}</span>` : 'ЛКМ — перевезти завод сюда (300 оч., 10 мин без производства)'; }
     if (mode === 'net') return 'ЛКМ по дороге — натянуть сетку на ~600 м (40 оч., ставит ремонтная бригада). Shift — несколько. ПКМ — отмена';
     if (mode?.startsWith('strike:') || mode === 'wave') {
       const type = mode === 'wave' ? (side === 'red' ? 'shahed' : 'lyutyi') : mode.slice(7);

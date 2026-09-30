@@ -172,9 +172,10 @@ export class DWRoads {
       return [this.x[i] - dy * off, this.y[i] + dx * off];
     });
     const path = [[ax, ay], ...lane, [bx, by]];
+    const ws = [this.w[ids[0]], ...ids.map((i) => this.w[i]), this.w[ids[ids.length - 1]]]; // ширина дороги у точек пути
     let len = 0;
     for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
-    return { path, len, bridges: [...new Set(ids.map((i) => this.br[i]).filter(Boolean))] };
+    return { path, len, ws, bridges: [...new Set(ids.map((i) => this.br[i]).filter(Boolean))] };
   }
 }
 
@@ -225,7 +226,7 @@ export class DWLogistics {
   }
   gate(o) { return o.gate || [o.x, o.y]; }
   // Торговля с учётом уровня объекта (реконструкция: больше выручки и места на складе)
-  sale(m) { const S = SALE[m.kind], L = m.level || 1; return { value: S.value * (1 + 0.4 * (L - 1)), cap: Math.round(S.cap * (1 + 0.5 * (L - 1))), load: S.load, every: S.every }; }
+  sale(m) { const S = SALE[m.kind], L = m.level || 1, reg = this.g.infra?.specAt(m.side, m.x, m.y) === 'trade' ? 1.12 : 1; return { value: S.value * (1 + 0.4 * (L - 1)) * reg, cap: Math.round(S.cap * (1 + 0.5 * (L - 1))), load: S.load, every: S.every }; }
   // Конкуренция: соседние магазины того же типа делят покупателей (продажи реже)
   crowd(m) {
     const n0 = this.g.objects.length;
@@ -299,14 +300,14 @@ export class DWLogistics {
   spawn(side, kind, from, to, task) {
     const r = this.route(from, to, VEH[kind].cls !== 'civil');
     if (!r) return null;
-    const v = { id: nextVeh++, side, kind, x: from[0], y: from[1], heading: 0, path: r.path, pi: 1, state: 'go', task, hp: 1, dead: false, spotted: {}, t0: this.sim.time, offroad: !!r.offroad };
+    const v = { id: nextVeh++, side, kind, x: from[0], y: from[1], heading: 0, path: r.path, ws: r.ws, pi: 1, state: 'go', task, hp: 1, dead: false, spotted: {}, t0: this.sim.time, offroad: !!r.offroad };
     this.vehicles.push(v);
     return v;
   }
   send(v, to, state = 'go') {
     const r = this.route([v.x, v.y], to, VEH[v.kind].cls !== 'civil');
     if (!r) return false;
-    v.path = r.path; v.pi = 1; v.state = state; v.offroad = !!r.offroad;
+    v.path = r.path; v.ws = r.ws; v.pi = 1; v.state = state; v.offroad = !!r.offroad;
     return true;
   }
   // Сторона: снабжение магазина «отрезано», если к нему нет дороги от распредцентра
@@ -347,8 +348,11 @@ export class DWLogistics {
       L.fuelT -= dt;
       if (L.fuelT <= 0) {
         L.fuelT = 6 + sim.rng.float(0, 4);
-        const depot = L.oilDepot;
-        const oilLeft = depot ? depot.comps.filter((c) => c.k === 'tank' && c.state !== 'destroyed').length / Math.max(1, depot.comps.filter((c) => c.k === 'tank').length) : 0;
+        let depot = L.oilDepot;
+        const tankLeft = (o) => (o ? o.comps.filter((c) => c.k === 'tank' && c.state !== 'destroyed').length / Math.max(1, o.comps.filter((c) => c.k === 'tank').length) : 0);
+        // нефтебаза разбита — бензовозы грузятся на своём НПЗ
+        if (tankLeft(depot) === 0) { const nf = g.objs(side, 'refinery').find((o) => !(o.build && !o.build.up) && tankLeft(o) > 0); if (nf) depot = nf; }
+        const oilLeft = tankLeft(depot);
         const pumpOk = depot?.comps.some((c) => (c.k === 'pump' || c.k === 'rack') && c.state !== 'destroyed');
         if (depot && oilLeft > 0 && pumpOk && sim.rng.chance(0.35 + 0.65 * oilLeft)) {
           const cand = L.fuels.filter((m) => !(m.build && !m.build.up) && m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= this.sale(m).cap - SALE.fuel.load);
@@ -406,7 +410,9 @@ export class DWLogistics {
       if (v.dead) continue;
       if (v.state === 'work') { this.work(v, dt); continue; }
       if (v.state === 'idle') continue;
-      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * dt;
+      // по грунтовкам и узким сельским дорогам — медленнее (асфальт дорожников это исправляет)
+      const narrow = !v.offroad && v.ws && (v.ws[v.pi] ?? 8) < 7 ? 0.7 : 1;
+      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * narrow * dt;
       while (step > 0 && v.pi < v.path.length) {
         const [tx, ty] = v.path[v.pi];
         const dx = tx - v.x, dy = ty - v.y, d = Math.hypot(dx, dy);

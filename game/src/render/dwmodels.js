@@ -178,6 +178,20 @@ function ewDome(M) {
   for (let k = 0; k < 4; k++) { const a = (k * Math.PI) / 2, x = Math.cos(a) * 1.4, y = Math.sin(a) * 1.4; M.box(x - 0.6, x + 0.6, y - 0.6, y + 0.6, 12, 16, mat('#8d9aa3')); }
   M.box(2.5, 5.5, -1.5, 1.5, 0.6, 3, mat('#5d6650'));
 }
+// Водонапорная башня: ствол и бак наверху
+function waterTower(M, w, st) {
+  if (st === 'destroyed') { M.cylZ(0, 0, w / 3, w / 3.2, 0, 4, SOOT, 12); M.seg([0, 0, 4], [w / 2, w / 3, 0.5], 0.8, 0.6, RUST); return; }
+  M.cylZ(0, 0, w / 5, w / 5.5, 0, 22, mat('#b7aa94'), 12);
+  M.cylZ(0, 0, w / 2, w / 2, 22, 28, st === 'damaged' ? SOOT : mat('#8c9aa4'), 16, mat('#7d8a93'));
+}
+// Копёр угольной шахты: решётчатая башня со шкивами
+function headframe(M, w, st) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -w / 2, w / 2, 0, 3, SOOT); M.seg([-w / 2, 0, 3], [w, w / 2, 0.5], 0.6, 0.5, RUST); return; }
+  for (const [x, y] of [[-w / 3, -w / 3], [w / 3, -w / 3], [-w / 3, w / 3], [w / 3, w / 3]]) M.seg([x, y, 0], [x * 0.4, y * 0.4, 30], 0.5, 0.35, STEEL);
+  M.box(-w / 4, w / 4, -w / 4, w / 4, 28, 31, mat('#5a5e58'));
+  M.cylY(0, 32, 2.5, -w / 4, w / 4, mat('#3a3c38'), 12); // шкив
+  M.box(-w / 2, w / 2, -w / 2, w / 2, 0, 5, st === 'damaged' ? SOOT : mat('#8a6e58'));
+}
 // Коровник: длинное здание с двускатной крышей
 function barn(M, w, h, st) {
   if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 2, SOOT); return; }
@@ -604,6 +618,8 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'barn': barn(M, w, h, st); break;
     case 'bess': bessBlock(M, w, h, st); break;
     case 'pont': pontoon(M, w, h, st); break;
+    case 'wtower': waterTower(M, w, st); break;
+    case 'headframe': headframe(M, w, st); break;
     case 'dryer': dryerTower(M, w, st); break;
     case 'canopy': canopy(M, w, h, st); break;
     case 'fcanopy': fuelCanopy(M, w, h, st, side); break;

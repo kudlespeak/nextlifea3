@@ -20,6 +20,7 @@ import { M } from '../spatial.js';
 import { DWLogistics, VEH } from './dwlogi.js';
 import { DWEconomy } from './dwecon.js';
 import { DWState } from './dwstate.js';
+import { DWInfra } from './dwinfra.js';
 
 // ---------------------------------------------------------------- Дроны
 export const DW_DRONES = {
@@ -92,6 +93,8 @@ export const COMP = {
   barn: { name: 'коровник', cost: 30, time: 150, fire: 0.6, hard: 0.9, big: true },
   bess: { name: 'контейнеры АКБ', cost: 90, time: 240, fire: 0.9, hard: 0.7 },
   pont: { name: 'понтоны', cost: 40, time: 150, fire: 0, hard: 0.8 },
+  wtower: { name: 'водонапорная башня', cost: 40, time: 180, fire: 0, hard: 1.2 },
+  headframe: { name: 'копёр', cost: 90, time: 360, fire: 0.2, hard: 1.8 },
 };
 // Потеря узла бьёт по устойчивости тыла (разрушен — полностью, выведен из строя — наполовину)
 const SHOCK = { silo: 0.8, dryer: 0.3, hgen: 2, wt: 0.3, pv: 0.3, inv: 0.4, unit: 2, at: 2, gsu: 1.5, span: 1.5, tr: 1, oru: 1, shop: 1, tank: 0.6, bunker: 0.6, hall: 0.6, chimney: 0.6, tower: 0.6, coal: 0.5, launcher: 0.3, ctrl: 0.3, pump: 0.3, rack: 0.2, store: 0.3 };
@@ -105,12 +108,12 @@ const REPAIR_K = 0.55;
 // Время ремонта сжато под темп партии (25 мин): замена трансформатора — минуты, а не часы
 const REPAIR_T = 0.5;
 // По гражданским объектам удары не наносятся (магазины, ТЦ, погранпереход)
-export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel', 'agro', 'housing', 'hospital', 'school', 'mill', 'dairy', 'autopark']);
+export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel', 'agro', 'housing', 'hospital', 'school', 'mill', 'dairy', 'autopark', 'watertower']);
 export const SHELTER = [null, { name: 'Габионы и мешки (защита от осколков)', cost: 35, time: 90 }, { name: 'Бетонное укрытие (защита от прямого попадания)', cost: 110, time: 300 }];
 // Сетка над пролётом моста: лёгкие дроны (до 25 кг БЧ: «Бобёр», «Ланцет», Warmate) рвутся на ней
 export const NET = [null, { name: 'Антидроновая сетка над пролётом', cost: 30, time: 150 }];
 export const shelterDef = (c, level) => (COMP[c.k]?.net ? NET[level] : SHELTER[level]);
-export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', decoy: 'Макет подстанции', agro: 'Мехдвор', housing: 'Жилой квартал', hospital: 'Больница', school: 'Школа', mill: 'Мелькомбинат', dairy: 'Молочная ферма', solar: 'Солнечная станция', bess: 'Накопитель энергии', pontoon: 'Понтонная переправа', autopark: 'Автобаза', reserve: 'Госрезерв', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
+export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', oldfactory: 'Цеха (оборудование вывезено)', decoy: 'Макет подстанции', refinery: 'НПЗ', watertower: 'Водонапорная станция', railterm: 'Ж/д терминал', port: 'Речной порт', coalmine: 'Угольная шахта', cement: 'Цементный завод', agro: 'Мехдвор', housing: 'Жилой квартал', hospital: 'Больница', school: 'Школа', mill: 'Мелькомбинат', dairy: 'Молочная ферма', solar: 'Солнечная станция', bess: 'Накопитель энергии', pontoon: 'Понтонная переправа', autopark: 'Автобаза', reserve: 'Госрезерв', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
 
 // Западные образцы ПВО точнее, у Кардагора — массовость и ложные цели
 const AD_EFF = { blue: 1.1, red: 1.0 };
@@ -175,6 +178,7 @@ export class DroneWar {
     this.logi = new DWLogistics(this);
     this.econ = new DWEconomy(this);
     this.state = new DWState(this);
+    this.infra = new DWInfra(this);
     this.deployStart();
     this.flow(true);
   }
@@ -337,7 +341,7 @@ export class DroneWar {
     return null;
   }
   droneCost(side, type) {
-    const fac = this.objs(side, 'factory')[0];
+    const fac = this.objs(side, 'factory').find((q) => !(q.build && !q.build.up));
     const ok = fac ? fac.comps.filter((c) => c.k === 'shop' && this.compOk(c)).length / fac.comps.filter((c) => c.k === 'shop').length : 0;
     return DW_DRONES[type].cost * (1 - 0.3 * ok) * (this.econ ? this.econ.partsK(side) : 1) * (this.state ? this.state.k(side, 'drone') : 1); // свой завод удешевляет дроны до 30%, без комплектующих — дороже
   }
@@ -420,6 +424,11 @@ export class DroneWar {
   buildCivil(side, kind, x, y) { return this.econ.build(side, kind, x, y); }
   // Государство (dwstate.js)
   setLaw(side, id, on) { return this.state.setLaw(side, id, on); }
+  // Инфраструктура (dwinfra.js)
+  pave(side, x, y) { return this.infra.pave(side, x, y); }
+  buildLine(side, a, b) { return this.infra.buildLine(side, a, b); }
+  evacuate(side, id, x, y) { return this.infra.evacuate(side, id, x, y); }
+  setRegion(side, i, spec) { return this.infra.setRegion(side, i, spec); }
   setTax(side, level) { return this.state.setTax(side, level); }
   setMobil(side, level) { return this.state.setMobil(side, level); }
   startProject(side, id) { return this.state.startProject(side, id); }
@@ -467,6 +476,7 @@ export class DroneWar {
     this.logi.update(dt);
     this.econ.update(dt);
     this.state.update(dt);
+    this.infra.update(dt);
     this.updateRepairs(dt);
     this.flowTimer -= dt;
     if (this.flowTimer <= 0) { this.flowTimer = 2; this.flow(); }
@@ -493,7 +503,8 @@ export class DroneWar {
         let g = 0;
         units.forEach((u, i) => { if (this.compOk(u) && gsus[i] && this.compOk(gsus[i])) g += GEN.tpp; });
         const coal = all('coal')[0];
-        const fuel = coal ? (this.compOk(coal) ? 1 : coal.state === 'destroyed' ? 0.55 : 0.8) : 1;
+        let fuel = coal ? (this.compOk(coal) ? 1 : coal.state === 'destroyed' ? 0.55 : 0.8) : 1;
+        if (this.infra?.coalBonus(o.side)) fuel = Math.max(fuel, 0.95) * 1.1; // уголь своей шахты идёт прямо на блоки
         return g * fuel * (0.5 + 0.5 * frac('chimney')) * (0.67 + 0.33 * frac('tower')) * ctrl;
       }
       case 'hpp': {
@@ -505,7 +516,7 @@ export class DroneWar {
         return all('unit').reduce((a, u, i) => a + (this.compOk(u) && gsus[i] && this.compOk(gsus[i]) ? GEN.chp : 0), 0) * (0.5 + 0.5 * frac('chimney')) * ctrl;
       }
       case 'wpp': return ok('gsu').length ? ok('wt').length * GEN.wt * this.wind : 0;
-      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(t) * (0.3 + 0.7 * frac('inv'));
+      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(t) * (0.3 + 0.7 * frac('inv')) * (this.infra?.season().eff.solar ?? 1);
     }
     return 0;
   }
@@ -683,6 +694,7 @@ export class DroneWar {
       const facOk = fac ? fac.comps.filter((c) => c.k === 'shop' && this.compOk(c)).length / 3 : 0;
       const oil = this.objs(side, 'oil')[0];
       S.oil = oil ? oil.comps.filter((c) => c.k === 'tank' && c.state !== 'destroyed').length / oil.comps.filter((c) => c.k === 'tank').length : 1;
+      if (this.infra?.has(side, 'refinery')) S.oil = Math.max(S.oil, 0.8); // своё топливо с НПЗ
       const ammo = this.objs(side, 'ammo')[0];
       S.ammo = ammo ? ammo.comps.filter((c) => c.k === 'bunker' && c.state !== 'destroyed').length / ammo.comps.filter((c) => c.k === 'bunker').length : 1;
       // Промышленность при отключениях проседает сильнее, чем свет: цеха стоят целиком
@@ -788,7 +800,7 @@ export class DroneWar {
     const shops = [...L.markets, ...L.fuels];
     const empty = shops.length ? shops.filter((m) => m.stock < 1 || !m.comps.some((c) => c.state !== 'destroyed')).length / shops.length : 0;
     const borderDown = !L.border.comps.some((c) => c.state !== 'destroyed');
-    const parts = { power: Math.max(0, (S.powerLoss ?? 1 - S.supply) - (this.endless ? 0.1 : 0)) * 6, bridges: brDown * 2, shops: Math.max(0, empty - 0.5) * 4, fires: Math.min(2, burning * 0.25), border: borderDown ? 1 : 0 };
+    const parts = { power: Math.max(0, (S.powerLoss ?? 1 - S.supply) - (this.endless ? 0.1 : 0)) * 6, bridges: brDown * 2, shops: Math.max(0, empty - 0.5) * 4, fires: Math.min(2, burning * 0.25), border: borderDown ? 1 : 0, water: (this.infra?.side[side].noWater || 0) * 1.5 };
     let drain = 0;
     for (const key in parts) { parts[key] *= k; drain += parts[key]; }
     // восстановление: когда свет есть и пожаров мало — тем быстрее, чем сильнее тыл просел
@@ -831,7 +843,8 @@ export class DroneWar {
     if (C.spare && c.state === 'destroyed' && this.sides[side].spare <= 0) t *= 1.6;
     const S = this.sides[side];
     t *= 1 + (1 - (S.oil ?? 1)) * 0.3; // без топлива техника бригад простаивает
-    return t * (this.state ? this.state.k(side, 'repairTime') : 1);
+    const reg = this.infra && !c.pylons && ['tpp', 'ps330', 'ps110', 'hpp', 'chp', 'wpp', 'spp', 'solar'].includes(c.obj?.kind) && this.infra.specAt(side, c.x, c.y) === 'energy' ? 0.8 : 1;
+    return t * reg * (this.state ? this.state.k(side, 'repairTime') : 1);
   }
   farBank(c) {
     const side = c.obj?.side ?? c.side;
@@ -897,7 +910,7 @@ export class DroneWar {
       if (cost > S.points) { c.waitFunds = cost; continue; }
       c.waitFunds = 0;
       S.queue.splice(qi, 1);
-      if (cost) { S.points -= cost; S.stats.spent += cost; }
+      if (cost) { const pay = this.infra ? this.infra.matPrice(side, cost, true) : cost; S.points -= pay; S.stats.spent += pay; } // стройматериалы — скидка
       const total = shelter ? shelterDef(c, level).time : kind === 'net' ? NET_ROAD.time : kind === 'tp' ? 90 : this.repairTime(side, c);
       const pos = c.pylons ? [c.cut.x, c.cut.y] : [c.x, c.y];
       return { id: kind === 'tp' ? id : c.id, qid: id, kind, shelter, level, cost, total, left: total, paid: 0, pos, state: 'travel' };
@@ -1308,7 +1321,7 @@ export class DroneWar {
     const cal = wh >= 90 ? 'dw105' : wh >= 45 ? 'dw50' : wh >= 15 ? 'dw20' : 'dw3';
     sim.art.explode(x, y, cal, 'ground', d.side, true);
     this.fx.push({ t: 'impact', x, y, wh, t0: sim.time });
-    if (wh > 0) { this.econ?.onImpact(x, y, wh); this.state?.onImpact(d.side, x, y); }
+    if (wh > 0) { this.econ?.onImpact(x, y, wh); this.state?.onImpact(d.side, x, y); this.infra?.onImpact(x, y, wh); }
     // Радиусы: сплошного поражения и осколочный
     const rl = 3 + wh * 0.13, rf = 8 + wh * 0.45;
     const enemy = d.side === 'blue' ? 'red' : 'blue';
@@ -1499,6 +1512,7 @@ DroneWar.prototype.snapshot = function () {
     st: this.objects.map((o) => (o.stock === undefined ? -1 : o.stock)),
     eco: this.econ.snap(),
     gv: this.state.snap(),
+    inf: this.infra.snap(),
     ls: ['blue', 'red'].map((sd) => { const L = this.logi.side[sd]; return [L.stats.imports, L.stats.deliveries, L.stats.sold, L.stats.lostTrucks, L.stats.trade]; }),
   };
 };
@@ -1506,6 +1520,7 @@ DroneWar.prototype.applySnapshot = function (s) {
   const t = this.sim.time;
   if (s.eco) this.econ.applySnap(s.eco); // сначала — построенные объекты (индексы остальных массивов)
   if (s.gv) this.state.applySnap(s.gv);
+  if (s.inf) this.infra.applySnap(s.inf);
   const old = new Map(this.drones.map((d) => [d.id, d]));
   this.drones = s.d.map((q) => {
     const o = old.get(q[0]);

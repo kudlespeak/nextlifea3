@@ -346,6 +346,12 @@ export function infraLayout(kind, L = 0) {
       c('dryer', 74, -16, 16, 16, { n: 'Зерносушилка' }), c('hall', -30, 30, 90, 24, { n: 'Склад напольного хранения' }), c('ctrl', 60, 32, 18, 12, { n: 'Весовая' })] };
     case 'agro': return { w: 120, h: 80, comps: [c('garage', -22, -14, 64, 24, { n: 'Гараж сельхозтехники' }), c('canopy', 26, 16, 44, 20, { n: 'Навес для комбайнов' }), c('tank', 44, -20, 9, 9, { n: 'Ёмкость ГСМ' })] };
     case 'decoy': return infraLayout('ps110');
+    case 'refinery': return { w: 200, h: 130, comps: [c('tank', -70, -35, 20, 20, { n: 'Резервуар сырой нефти' }), c('tank', -40, -35, 20, 20, { n: 'Резервуар бензина' }), c('tank', -10, -35, 20, 20, { n: 'Резервуар дизтоплива' }), c('shop', 40, -20, 60, 30, { n: 'Установка перегонки' }), c('dryer', 70, 25, 16, 16, { n: 'Ректификационная колонна' }), c('chimney', 20, 30, 12, 12, { n: 'Факел и труба' }), c('rack', -40, 30, 70, 8, { n: 'Эстакада налива' })] };
+    case 'watertower': return { w: 70, h: 56, comps: [c('wtower', -12, 0, 14, 14, { n: 'Водонапорная башня' }), c('ctrl', 18, 6, 22, 14, { n: 'Насосная с резервным генератором' })] };
+    case 'railterm': return { w: 190, h: 80, comps: [c('rack', 0, -22, 150, 10, { n: 'Погрузочная эстакада' }), c('hall', -45, 18, 70, 24, { n: 'Склад зерна' }), c('ctrl', 55, 20, 20, 12, { n: 'Диспетчерская станции' })] };
+    case 'port': return { w: 150, h: 80, comps: [c('rack', 0, -25, 120, 8, { n: 'Причал с кранами' }), c('hall', -30, 15, 60, 26, { n: 'Портовый склад' }), c('tank', 45, 18, 16, 16, { n: 'Бункер зерна' })] };
+    case 'coalmine': return { w: 160, h: 110, comps: [c('headframe', -45, -20, 16, 16, { n: 'Копёр шахты' }), c('shop', 20, -25, 60, 26, { n: 'Обогатительная фабрика' }), c('coal', 20, 28, 80, 30, { n: 'Угольный склад' })] };
+    case 'cement': return { w: 170, h: 100, comps: [c('silo', 45, -20, 50, 24, { n: 'Силосы цемента' }), c('shop', -30, -15, 70, 30, { n: 'Печной цех' }), c('chimney', -60, 30, 12, 12, { n: 'Труба печи' }), c('hall', 20, 28, 70, 22, { n: 'Склад стройматериалов' })] };
     case 'housing': return { w: 160, h: 90, comps: [c('house', -40, -22, 64, 13, { n: 'Жилой дом №1' }), c('house', 40, -22, 64, 13, { n: 'Жилой дом №2' }), c('house', 0, 24, 96, 13, { n: 'Жилой дом №3' })] };
     case 'hospital': return { w: 130, h: 90, comps: [c('house', -10, -14, 84, 16, { n: 'Главный корпус' }), c('house', 40, 24, 36, 14, { n: 'Приёмное отделение' }), c('ctrl', -45, 26, 18, 12, { n: 'Котельная' })] };
     case 'school': return { w: 120, h: 90, comps: [c('house', -5, -18, 80, 14, { n: 'Учебный корпус' }), c('hall', 30, 22, 40, 20, { n: 'Спортзал' })] };
@@ -1014,6 +1020,19 @@ export function addSite(world, s) {
 // Возвращает список рамок, которые надо перерисовать.
 export function applyEconEvent(world, ev) {
   if (ev.k === 'site') return [addSite(world, ev.s)];
+  if (ev.k === 'pave') {
+    const r = world.roadList[ev.i];
+    if (!r) return null;
+    r.type = 'local'; r.width = 8;
+    world.mask.stampLine(r.line, ROAD_STYLE.local.stamp, M.ROAD);
+    return [r.bbox];
+  }
+  if (ev.k === 'line') {
+    if (!world.power.lines.some((l) => l.id === ev.ln.id)) world.power.lines.push(ev.ln);
+    world.power.version = (world.power.version || 0) + 1;
+    const xs = ev.ln.pylons.map((p) => p.x), ys = ev.ln.pylons.map((p) => p.y);
+    return [{ x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 }];
+  }
   if (ev.k === 'crop') {
     const out = [];
     for (const [i, crop] of ev.f) { const f = world.fields.items[i]; if (f) { f.crop = crop; out.push(f.bbox); } }

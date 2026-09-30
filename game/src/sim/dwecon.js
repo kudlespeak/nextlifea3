@@ -19,7 +19,8 @@ import { rectCorners, pointInPoly } from '../geom.js';
 
 // ---------------------------------------------------------------- Параметры
 export const CYCLE = 2160; // с: сельхозцикл целиком (36 мин)
-const STAGES = [['sow', 0.16], ['grow', 0.56], ['harvest', 0.2], ['rest', 0.08]];
+// этапы совпадают с сезонами: посевная — весна, рост — лето, уборка — осень, зябь — зима
+const STAGES = [['sow', 0.14], ['grow', 0.46], ['harvest', 0.22], ['rest', 0.18]];
 export const STAGE_NAME = { sow: 'посевная', grow: 'рост', harvest: 'уборка', rest: 'зябь (осенняя вспашка)' };
 const YIELD = { wheat: 3.6, sunflower: 2.4 }; // т/га
 const PRICE = 0.02; // оч. за тонну зерна на экспорте (× фаза)
@@ -27,7 +28,7 @@ const LOT = 2000; // т в зерновозе (партия)
 const XLOT = 5000; // т в экспортном автопоезде (колонна зерновозов)
 const RATE = { tractor: 2.2, combine: 1.9 }; // га/с на машину (игровой темп)
 const FUEL_HA = 90; // га обработки на единицу топлива (своя ёмкость ГСМ агрофирмы)
-const FARM_CAP = 6000; // т на току агрофирмы
+const FARM_CAP = 15000; // т на току агрофирмы (уборка у всех в одно время — нужен запас)
 const ELEV_CAP = 40000; // т на элеваторе (1-й уровень)
 const TAX = 0.075; // оч/мин с 1000 жителей при полном довольстве
 export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04 };
@@ -43,6 +44,7 @@ export const BUILD = {
   elevator: { name: 'Элеватор', cost: 260, time: 300, desc: 'хранилище зерна (40 тыс. т): агрофирмы возят урожай ближе, экспорт не простаивает' },
   agro: { name: 'Мехдвор', cost: 100, time: 150, desc: '+1 трактор и +1 комбайн ближайшей агрофирме (за уровень)' },
   launch: { name: 'Стартовая позиция', cost: 240, time: 300, mil: true, desc: `+${LAUNCH_PER * 4} пусков за 5 мин; содержание ${LAUNCH_UPKEEP} оч/мин` },
+  factory: { name: 'Завод БПЛА', cost: 300, time: 600, hidden: true, desc: 'место для эвакуированного завода' },
   decoy: { name: 'Макет подстанции', cost: 70, time: 120, mil: true, desc: 'ложная цель: противник видит обычную ПС 110 кВ и тратит на неё дроны; удар по макету не бьёт по тылу' },
   // ----- развитие страны -----
   housing: { name: 'Жилой квартал', cost: 150, time: 360, near: 'city', desc: '+30 тыс. жителей ближайшему городу (налоги, рабочие руки); у города, не дальше 4 км' },
@@ -54,10 +56,16 @@ export const BUILD = {
   bess: { name: 'Накопитель энергии', cost: 250, time: 240, near: 'ps110', desc: 'у ПС 110 кВ: при дефиците 10 мин отдаёт 30 МВт в район (за уровень), потом заряжается' },
   pontoon: { name: 'Понтонная переправа', cost: 120, time: 150, near: 'bridge', desc: 'рядом с мостом: если мост разрушен, машины идут по понтонам (медленнее)' },
   autopark: { name: 'Автобаза', cost: 160, time: 200, desc: '+3 грузовика снабжения ПВО, +6 зерновозов, +1 бензовоз за раз' },
+  refinery: { name: 'НПЗ (нефтепереработка)', cost: 420, time: 420, desc: 'своё топливо: второй источник для бензовозов, выручка АЗС +15%, перебои с нефтью не страшны' },
+  watertower: { name: 'Водонапорная станция', cost: 90, time: 150, near: 'city', desc: 'вода в городе есть даже без света: насосы на резервном генераторе; у города, не дальше 4 км' },
+  railterm: { name: 'Ж/д терминал', cost: 260, time: 300, near: 'rail', desc: 'экспорт зерна поездами: элеваторы в 5 км грузят составы по 15 тыс. т; у железной дороги' },
+  port: { name: 'Речной порт', cost: 240, time: 300, near: 'river', desc: 'экспорт зерна баржами (элеваторы в 6 км); обрушенный мост ниже по течению перекрывает фарватер; на берегу реки' },
+  coalmine: { name: 'Угольная шахта', cost: 300, time: 360, desc: 'свой уголь: ТЭС +10%, уголь идёт даже при разбитом угольном складе' },
+  cement: { name: 'Цементный завод', cost: 220, time: 300, desc: 'стройматериалы +3 в минуту (нужен свет): стройка и ремонт на 20% дешевле, пока есть запас' },
   reserve: { name: 'Госрезерв', cost: 200, time: 240, desc: '+2 резервных автотрансформатора; запас топлива, если нефтебаза разрушена' },
 };
-export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy']], ['Люди', ['housing', 'hospital', 'school']], ['Энергетика и резервы', ['solar', 'bess', 'reserve', 'pontoon']], ['Военное', ['launch', 'decoy']]];
-const UPG = new Set(['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark']);
+export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy', 'cement']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'refinery', 'coalmine', 'reserve', 'pontoon']], ['Военное', ['launch', 'decoy']]];
+const UPG = new Set(['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery']);
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
 
@@ -148,6 +156,7 @@ export class DWEconomy {
         if (o.kind === 'hospital' && d < 8000) { bonus += 0.06; s.fear *= Math.exp(-dt / 300); }
         if (o.kind === 'school' && d < 6000) bonus += 0.03;
       }
+      if (s.water === false) bonus -= 0.18; // нет воды
       s.happy = Math.max(0, Math.min(1, (0.2 + 0.5 * power + 0.3 * goods) * (1 - 0.45 * s.fear) * (0.6 + 0.4 * morale) + Math.min(0.12, bonus) + (this.g.state?.happyAdd(side) ?? 0)));
       sum += (s.pop / 1000) * TAX * s.happy;
     }
@@ -164,7 +173,7 @@ export class DWEconomy {
     for (const v of vill) {
       const id = this.farms.length;
       const n = R.nearest(v.x, v.y, 1500);
-      const f = { id, side: v.side, name: `Агрофирма «${v.name}»`, x: v.x, y: v.y, gate: n >= 0 ? [R.x[n], R.y[n]] : [v.x, v.y], fields: [], tractors: 1, combines: 1, grain: 0, off: (hashStr(v.name) % 1000) / 1000 * CYCLE, stage: null, work: null, fuel: 0, tank: 14, tanker: null, noFuel: false, truck: null, harvested: 0 };
+      const f = { id, side: v.side, name: `Агрофирма «${v.name}»`, x: v.x, y: v.y, gate: n >= 0 ? [R.x[n], R.y[n]] : [v.x, v.y], fields: [], tractors: 1, combines: 1, grain: 0, off: ((hashStr(v.name) % 1000) / 1000 - 0.5) * 0.1 * CYCLE /* небольшой разброс: где-то сеют раньше */, stage: null, work: null, fuel: 0, tank: 14, tanker: null, noFuel: false, truck: null, harvested: 0 };
       this.farms.push(f); farms.set(v, f);
     }
     W.fields.items.forEach((fl, i) => {
@@ -253,7 +262,8 @@ export class DWEconomy {
       if (f.work.prog >= 1) {
         if (harvest) {
           fd.done = true;
-          const tons = fd.ha * YIELD[fd.type] * (this.g.state?.k(f.side, 'yield') ?? 1);
+          const agroReg = this.g.infra?.specAt(f.side, f.x, f.y) === 'agro' ? 1.15 : 1;
+          const tons = fd.ha * YIELD[fd.type] * agroReg * (this.g.state?.k(f.side, 'yield') ?? 1);
           f.grain += tons; f.harvested += tons; this.side[f.side].harvested += tons;
           if (f.grain > FARM_CAP) { this.side[f.side].lostGrain += f.grain - FARM_CAP; f.grain = FARM_CAP; }
           this.look(f, fd, 'stubble');
@@ -294,6 +304,7 @@ export class DWEconomy {
       // Бензовозы с нефтебазы на мехдворы агрофирм (солярка для тракторов и комбайнов)
       let depot = L.oilDepot;
       let depotOk = depot && depot.comps.some((c) => c.k === 'tank' && c.state !== 'destroyed') && depot.comps.some((c) => (c.k === 'pump' || c.k === 'rack') && c.state !== 'destroyed');
+      if (!depotOk) { const nf = this.g.objs(side, 'refinery').find((o) => this.ready(o) && o.comps.some((c) => c.k === 'tank' && c.state !== 'destroyed')); if (nf) { depot = nf; depotOk = true; } } // свой НПЗ
       if (!depotOk) { const r = this.g.objs(side, 'reserve').find((o) => this.ready(o) && o.comps.some((c) => c.k === 'tank' && c.state !== 'destroyed')); if (r) { depot = r; depotOk = true; } } // госрезерв
       if (depotOk) {
         const needF = this.farms.filter((f) => f.side === side && !f.tanker && f.tank < 10).sort((a, b) => a.tank - b.tank);
@@ -353,7 +364,7 @@ export class DWEconomy {
   }
 
   // ---------------------------------------------------------------- Комплектующие для дронов
-  onImport(side) { const E = this.side[side]; E.parts = Math.min(150, E.parts + 3); }
+  onImport(side) { const E = this.side[side]; E.parts = Math.min(150, E.parts + 3); this.g.infra?.onImport(side); }
   partsK(side) { return this.side[side].parts >= 10 ? 1 : 1.5; }
   useParts(side, cost) {
     const E = this.side[side];
@@ -386,6 +397,8 @@ export class DWEconomy {
     const B = BUILD[kind];
     if (B.near === 'city' && !this.world.settlements.some((q) => q.side === side && q.type === 'city' && Math.hypot(q.x - x, q.y - y) < 4000)) return { err: 'Только у города (не дальше 4 км от центра)' };
     if (B.near === 'village' && !this.world.settlements.some((q) => q.side === side && q.type === 'village' && Math.hypot(q.x - x, q.y - y) < 2500)) return { err: 'Только у села (не дальше 2,5 км)' };
+    if (B.near === 'rail' && !this.world.rails.items.some((r) => !r.siding && r.line.some(([px, py]) => Math.abs(px - x) < 400 && Math.abs(py - y) < 400 && Math.hypot(px - x, py - y) < 400))) return { err: 'Только у железной дороги (до 400 м)' };
+    if (B.near === 'river' && !this.world.water.items.some((r) => r.kind === 'river' && r.line.some(([px, py]) => Math.abs(py - y) < 350 && Math.hypot(px - x, py - y) < 350))) return { err: 'Только на берегу реки (до 350 м)' };
     if (B.near === 'ps110' && !this.g.objs(side, 'ps110').some((q) => Math.hypot(q.x - x, q.y - y) < 1500)) return { err: 'Только рядом с ПС 110 кВ (до 1,5 км)' };
     if (kind === 'pontoon') {
       // у моста: понтоны наводят рядом, ниже по течению
@@ -396,8 +409,9 @@ export class DWEconomy {
       const nx = -Math.sin(br.angle), ny = Math.cos(br.angle), off = 45;
       return { x: br.x + nx * off, y: br.y + ny * off, angle: br.angle, gate: [br.x, br.y], gateQ: 0, drive: null, lay: infraLayout('pontoon', (br.L || 80) + 30), L: (br.L || 80) + 30, bridge: br.id };
     }
-    const n = R.nearest(x, y, 400);
-    if (n < 0) return { err: 'Нужна дорога рядом (до 400 м)' };
+    const reach = kind === 'port' ? 800 : 400; // к причалу ведут подъездные пути подлиннее
+    const n = R.nearest(x, y, reach);
+    if (n < 0) return { err: `Нужна дорога рядом (до ${reach} м)` };
     const nb = R.adj[n][0]?.[0] ?? n;
     const rx = R.x[n], ry = R.y[n];
     let ang = Math.atan2(R.y[nb] - ry, R.x[nb] - rx);
@@ -445,8 +459,9 @@ export class DWEconomy {
     if (g.winner) return 'Партия окончена';
     const site = this.siteFor(side, kind, x, y);
     if (site.err) return site.err;
-    const cost = this.cost(side, kind);
+    const cost0 = this.cost(side, kind), cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
+    this.g.infra?.matPrice(side, cost0, true); // стройматериалы — скидка 20%
     S.points -= cost; S.stats.spent += cost;
     const nm = this.nearName(site.x, site.y, side);
     const name = kind === 'decoy' ? `ПС 110 кВ «${nm}-${2 + (this.nextBuilt % 3)}»` : kind === 'store' ? `Магазин, ${nm}` : kind === 'fuel' ? `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${nm}` : kind === 'pontoon' ? `Понтонная переправа у моста «${this.g.obj(site.bridge)?.name.replace(/^Мост через /, '')}»` : `${B.name} «${nm}»`;
@@ -488,8 +503,9 @@ export class DWEconomy {
     if (o.build) return 'Идут работы';
     if ((o.level || 1) >= 3) return 'Уже максимальный уровень';
     if (o.comps.some((c) => c.state === 'destroyed')) return 'Сначала восстановите объект';
-    const cost = Math.round(upgradeCost(o) * (this.g.state?.k(side, 'build') ?? 1));
+    const cost0 = Math.round(upgradeCost(o) * (this.g.state?.k(side, 'build') ?? 1)), cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
+    this.g.infra?.matPrice(side, cost0, true);
     S.points -= cost; S.stats.spent += cost;
     o.build = { until: this.sim.time + 150, total: 150, up: true };
     this.sim.msg(`${o.name}: реконструкция до ${(o.level || 1) + 1}-го уровня (−${cost} оч.)`, side);
