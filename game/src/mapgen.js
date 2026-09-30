@@ -268,7 +268,7 @@ export const DW_NAMES = {
 };
 
 // Узлы объектов (локальные координаты: u — вдоль оси объекта, v — поперёк; размеры в метрах)
-function infraLayout(kind, L = 0) {
+export function infraLayout(kind, L = 0) {
   const c = (k, u, v, w, h, extra = {}) => ({ k, u, v, w, h, ...extra });
   switch (kind) {
     case 'tpp': return { w: 440, h: 320, comps: [
@@ -341,6 +341,10 @@ function infraLayout(kind, L = 0) {
     }
     case 'fuel': return { w: 76, h: 48, comps: [c('fcanopy', -8, -4, 34, 18, { n: 'Навес с колонками' }), c('kiosk', 24, 12, 16, 10, { n: 'Магазин АЗС' })] };
     case 'firest': return { w: 90, h: 60, comps: [c('garage', 0, -5, 60, 26, { n: 'Пожарное депо' }), c('ctrl', 32, 18, 16, 10, { n: 'Пункт связи' })] };
+    case 'elevator': return { w: 190, h: 110, comps: [
+      c('silo', -48, -18, 62, 30, { n: 'Силосный корпус №1' }), c('silo', 22, -18, 62, 30, { n: 'Силосный корпус №2' }),
+      c('dryer', 74, -16, 16, 16, { n: 'Зерносушилка' }), c('hall', -30, 30, 90, 24, { n: 'Склад напольного хранения' }), c('ctrl', 60, 32, 18, 12, { n: 'Весовая' })] };
+    case 'agro': return { w: 120, h: 80, comps: [c('garage', -22, -14, 64, 24, { n: 'Гараж сельхозтехники' }), c('canopy', 26, 16, 44, 20, { n: 'Навес для комбайнов' }), c('tank', 44, -20, 9, 9, { n: 'Ёмкость ГСМ' })] };
     case 'rembase': return { w: 170, h: 110, comps: [c('garage', -35, -15, 80, 34, { n: 'Гараж техники' }), c('hall', 50, 10, 50, 40, { n: 'Склад оборудования' }), c('ctrl', -60, 35, 26, 14, { n: 'Диспетчерская' })] };
     case 'bridge': {
       const n = Math.max(2, Math.round(L / 40));
@@ -510,7 +514,8 @@ function generateDroneWarWorld(seed) {
   // не на дороге и не впритык к другим объектам
   const place = (side, kind, name, x, y, opts = {}) => {
     const lay = infraLayout(kind, opts.L);
-    const angle = opts.angle ?? rng.float(-0.4, 0.4);
+    const R = opts.rng || rng;
+    const angle = opts.angle ?? R.float(-0.4, 0.4);
     const forbid = opts.forbid ?? FORBID;
     const pad = opts.pad ?? (lay.w >= 140 ? 45 : lay.w >= 60 ? 22 : 12);
     let at = null;
@@ -548,7 +553,7 @@ function generateDroneWarWorld(seed) {
       const g = gates.slice().sort((a, b) => Math.hypot(c.p[0] - a.p[0], c.p[1] - a.p[1]) - Math.hypot(c.p[0] - b.p[0], c.p[1] - b.p[1]))[0];
       const L = Math.hypot(c.p[0] - g.p[0], c.p[1] - g.p[1]);
       if (L < 12) { o.gate = g.p; o.gateQ = g.q; done = true; break; }
-      const line = L < 200 ? resample([g.p, c.p], 8) : wobblyRoad(rng, g.p, c.p, 3);
+      const line = L < 200 ? resample([g.p, c.p], 8) : wobblyRoad(R, g.p, c.p, 3);
       if (!clear(line)) continue;
       addRoad(world, line, opts.paved ? 'local' : 'dirt');
       o.gate = g.p; o.gateQ = g.q; done = true;
@@ -652,6 +657,8 @@ function generateDroneWarWorld(seed) {
     const chp = place(side, 'chp', `ТЭЦ «${nm[0]}»`, cap[0] + rng.float(-500, 500), cap[1] + 1700, { paved: true, forbid: cityForbid, step: 40 });
     const wpp = place(side, 'wpp', `Ветровая электростанция «${side === 'blue' ? 'Вельский кряж' : 'Кардагорская степь'}»`, (cap[0] + W / 2) / 2 + rng.float(-800, 800), H * 0.36 + rng.float(-800, 800), { angle: rng.float(-0.3, 0.3), pad: 30 });
     const spp = place(side, 'spp', `Солнечная электростанция «${side === 'blue' ? 'Светлый Луг' : 'Суховей'}»`, (cap[0] + cS[0]) / 2 + rng.float(-600, 600), H * 0.66 + rng.float(-600, 600), { angle: rng.float(-0.2, 0.2) });
+    // Элеватор у города с железной дорогой: сюда свозят зерно с полей, отсюда — экспорт
+    { const er = new Rng((seed ^ 0xe1e7 ^ (side === 'blue' ? 1 : 2)) >>> 0); const ct = S.cities[2] || S.cities[1]; place(side, 'elevator', `Элеватор «${ct.name}»`, ct.c[0] + S.dir * 1300 * ct.sc, ct.c[1] + er.float(-500, 500), { paved: true, rng: er, angle: er.float(-0.3, 0.3) }); }
     chp.city = 0;
     // ЛЭП
     line(tpp, psA, 330); line(tpp, psB, 330); line(psA, psB, 330); line(hpp, psA, 330);
@@ -964,6 +971,36 @@ function buildFields(world, rng, keep = null) {
   // Сначала дороги (чтобы в полосах остались проезды), потом деревья
   for (const line of dirtLines) addRoad(world, line, 'dirt');
   for (const [a, b, bw] of beltSegs) segsBelt(world, rng, a, b, avoid, bw);
+}
+
+// ---------- Площадка объекта, построенного по ходу игры ----------
+// То же, что делает place() при генерации: площадка с отсыпкой (для фоновой отрисовки карты),
+// занятость маски и подъезд к дороге. Вызывается в основном потоке и в воркере по событию.
+export function addSite(world, s) {
+  const lay = infraLayout(s.kind);
+  const pad = lay.w >= 140 ? 45 : lay.w >= 60 ? 22 : 12;
+  const poly = rectCorners(s.x, s.y, lay.w + 16, lay.h + 16, s.angle);
+  const apron = rectCorners(s.x, s.y, lay.w + pad * 2, lay.h + pad * 2, s.angle);
+  world.mask.stampPoly(apron, M.BUILD);
+  addItem(world.areas, { kind: 'dwsite', poly, apron, site: s.kind, x: s.x, y: s.y, angle: s.angle, w: lay.w + 16, h: lay.h + 16, pad, gateQ: s.gateQ, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
+  if (s.drive && s.drive.length > 1) {
+    const line = resample(s.drive, 8);
+    addItem(world.roads, { kind: 'road', type: 'dirt', line, width: ROAD_STYLE.dirt.width, built: true }, ROAD_STYLE.dirt.width + 6);
+    world.mask.stampLine(line, ROAD_STYLE.dirt.stamp, M.ROAD);
+  }
+  return bboxOf(apron, 60);
+}
+
+// События экономики для фоновой отрисовки и гостя: стройка (площадка) и смена культур на полях.
+// Возвращает список рамок, которые надо перерисовать.
+export function applyEconEvent(world, ev) {
+  if (ev.k === 'site') return [addSite(world, ev.s)];
+  if (ev.k === 'crop') {
+    const out = [];
+    for (const [i, crop] of ev.f) { const f = world.fields.items[i]; if (f) { f.crop = crop; out.push(f.bbox); } }
+    return out;
+  }
+  return null;
 }
 
 // ---------- Связность дорожной сети ----------

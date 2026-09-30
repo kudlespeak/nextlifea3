@@ -171,6 +171,28 @@ function oilTank(M, w, st) {
   // Обвалование (земляной вал) — общее для площадки, у каждого — кольцо
   M.cylZ(0, 0, r + 4, r + 3.4, 0, 1.2, EARTH, 20, EARTH);
 }
+// Силосный корпус элеватора: два ряда бетонных банок и галерея транспортёра поверху
+function siloBlock(M, w, h, st) {
+  const n = Math.max(3, Math.round(w / 10)), r = Math.min(w / (n * 2), h / 4), H = st === 'destroyed' ? 9 : 30;
+  const SILO = mat('#c9c6bd', { fn(o, x, y, z) { mix(o, [120, 116, 104], vnoise(x * 0.5, y * 0.5, z * 0.3) * 0.25); if (z > 3 && fr(z * 0.22) < 0.04) mix(o, [90, 88, 80], 0.3); } });
+  for (let row = 0; row < 2; row++)
+    for (let k = 0; k < n; k++) {
+      const x = -w / 2 + r + k * r * 2, y = (row - 0.5) * r * 2;
+      if (st === 'destroyed' && (k + row) % 2) { M.cylZ(x, y, r, r * 0.9, 0, 4 + (k % 3) * 2, SOOT, 12); continue; }
+      M.cylZ(x, y, r, r, 0, H - (st === 'damaged' && k % 3 === 1 ? 10 : 0), st === 'damaged' && k % 2 ? SOOT : SILO, 14, mat('#b8b5ab'));
+    }
+  if (st !== 'destroyed') {
+    M.box(-w / 2, w / 2, -2, 2, H, H + 4, mat('#a9a69b')); // галерея
+    M.box(w / 2 - 6, w / 2 + 2, -4, 4, 0, H + 12, CONCRETE); // рабочая башня
+  }
+}
+// Зерносушилка: высокая металлическая колонна с вентиляторами
+function dryerTower(M, w, st) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -w / 2, w / 2, 0, 3, SOOT); M.seg([-w / 2, 0, 3], [w / 2, w / 3, 0.5], 0.5, 0.4, RUST); return; }
+  M.box(-w / 3, w / 3, -w / 3, w / 3, 0, 22, st === 'damaged' ? SOOT : mat('#b7b9b4', { fn(o, x, y, z) { if (fr(z * 0.5) < 0.08) mix(o, [70, 72, 70], 0.35); } }));
+  M.box(-w / 2, w / 2, -w / 2, w / 2, 0, 4, STEEL);
+  M.cylZ(w / 2 + 1.2, 0, 1.3, 1.3, 1, 3.6, STEEL, 8);
+}
 function bunker(M, w, h, st) {
   if (st === 'destroyed') {
     M.dome(0, 0, 0, w * 0.55, h * 0.6, 1.2, SOOT, 3, 14);
@@ -327,6 +349,33 @@ export function buildVehicle(kind, side, variant = 0) {
     M.box(1.8, 6.5, -0.5, 0.5, 0.6, 1.1, mat('#2b2b2b'));
     cab(M, 4.4, 6.7, 1.25, ['#e8e8e4', '#1f4f8f', '#a83a2a', '#3a3a3a'][variant % 4], 3.6);
     M.box(-8.2, 5.0, -1.28, 1.28, 1.2, 4.0, mat(TRAILER[variant % TRAILER.length], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && fr(x * 0.6) < 0.04) mix(o, [0, 0, 0], 0.15); } }));
+  } else if (kind === 'grain') {
+    // Зерновоз-самосвал: трёхосное шасси, высокий кузов под тентом
+    wheelsRow(M, [2.9, -1.5, -2.9], 1.2, 0.52);
+    cab(M, 1.9, 3.9, 1.2, ['#e8e8e4', '#2f5d9e', '#c8a23a'][variant % 3], 3.0);
+    M.box(-4.1, 1.7, -1.25, 1.25, 1.2, 3.4, mat('#8d6b3a', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && fr(x * 0.8) < 0.06) mix(o, [40, 30, 20], 0.25); } }), mat('#d8b85a'));
+  } else if (kind === 'grainx') {
+    // Тягач с зерновым полуприцепом-хоппером (воронки снизу)
+    wheelsRow(M, [5.0, 3.3, -4.2, -5.5, -6.8], 1.25, 0.52);
+    M.box(1.8, 6.5, -0.5, 0.5, 0.6, 1.1, mat('#2b2b2b'));
+    cab(M, 4.4, 6.7, 1.25, ['#e8e8e4', '#1f4f8f', '#3a3a3a'][variant % 3], 3.6);
+    M.loft([[1.0, rect(-7.4, 4.2, -0.5, 0.5)], [1.9, rect(-8.2, 5.0, -1.28, 1.28)], [3.9, rect(-8.2, 5.0, -1.28, 1.28)]], mat('#c7c9c4'), mat('#d9c37a'));
+  } else if (kind === 'tractor') {
+    // Трактор (К-700-подобный, шарнирная рама) с сеялкой/плугом сзади
+    for (const x of [1.6, -1.2]) for (const sg of [1, -1]) M.cylY(x, 0.95, 0.95, sg > 0 ? 0.9 : -1.6, sg > 0 ? 1.6 : -0.9, mat('#1a1a1a'), 12);
+    M.box(0.2, 2.6, -0.8, 0.8, 0.8, 1.9, mat(side === 'red' ? '#c84a2a' : '#2f7a3a'));
+    cab(M, -1.4, 0.2, 0.85, side === 'red' ? '#c84a2a' : '#2f7a3a', 3.2);
+    M.box(-2.3, -1.4, -0.9, 0.9, 0.8, 1.9, mat('#3a3a38'));
+    M.box(-6.8, -3.2, -3.0, 3.0, 0.3, 1.0, mat('#6b6a60')); // сеялка / борона
+    M.seg([-2.3, 0, 0.8], [-3.2, 0, 0.7], 0.15, 0.15, STEEL);
+  } else if (kind === 'combine') {
+    // Зерноуборочный комбайн: жатка спереди, бункер, выгрузной шнек
+    wheelsRow(M, [2.0], 1.5, 0.95); wheelsRow(M, [-2.6], 1.3, 0.6);
+    M.box(-3.6, 2.8, -1.4, 1.4, 0.8, 3.4, mat('#3f8a3a', { fn(o, x, y, z, n) { if (z < 1.2) mix(o, [40, 40, 36], 0.5); } }));
+    cab(M, 1.6, 3.0, 0.95, '#3f8a3a', 4.2);
+    M.box(-2.8, 0.6, -1.3, 1.3, 3.4, 4.3, mat('#d8b85a')); // бункер с зерном
+    M.box(3.0, 5.2, -3.6, 3.6, 0.3, 1.4, mat('#c9c24a', { fn(o, x, y, z, n) { if (fr(y * 1.5) < 0.12) mix(o, [60, 60, 30], 0.4); } })); // жатка
+    M.seg([-1.2, 1.2, 4.0], [-2.4, 4.6, 4.2], 0.25, 0.25, mat('#3f8a3a')); // шнек
   } else if (kind === 'van') {
     wheelsRow(M, [2.2, -1.8], 1.1, 0.45);
     cab(M, 1.6, 3.4, 1.1, ['#e8e8e4', '#2f5d9e', '#d9d5c7'][variant % 3], 2.8);
@@ -519,6 +568,8 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'store': hangar(M, w, h, st); break;
     case 'shop': workshop(M, w, h, st); break;
     case 'hall': warehouse(M, w, h, st); break;
+    case 'silo': siloBlock(M, w, h, st); break;
+    case 'dryer': dryerTower(M, w, st); break;
     case 'canopy': canopy(M, w, h, st); break;
     case 'fcanopy': fuelCanopy(M, w, h, st, side); break;
     case 'hgen': hydroUnit(M, w, h, st); break;

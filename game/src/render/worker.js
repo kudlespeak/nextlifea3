@@ -3,7 +3,7 @@
 // что и основной поток. Готовые чанки уходят в основной поток как ImageBitmap —
 // игра не останавливается на отрисовку.
 
-import { generateWorld } from '../mapgen.js';
+import { generateWorld, applyEconEvent } from '../mapgen.js';
 import { drawChunk, mkCanvas } from './draw.js';
 import { Artillery } from '../sim/artillery.js';
 import { digTrench } from '../forts.js';
@@ -21,7 +21,7 @@ function apply(ev) {
     const w = { kind: 'wreck', x: ev.x, y: ev.y, angle: ev.a, type: ev.t, seed: ev.id * 7919 };
     w.bbox = { x0: ev.x - 10, y0: ev.y - 10, x1: ev.x + 10, y1: ev.y + 10 };
     world.scars.insert(w);
-  }
+  } else applyEconEvent(world, ev);
   art.effects.length = 0;
   art.sim.events.length = 0;
 }

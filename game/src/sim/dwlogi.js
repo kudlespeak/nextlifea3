@@ -23,6 +23,8 @@ export const VEH = {
   crew: { name: 'Ремонтная бригада', speed: 16, cls: 'crew' },
   fire: { name: 'Пожарная машина', speed: 19, cls: 'fire' },
   tanker: { name: 'Бензовоз', speed: 18, cls: 'civil' },
+  grain: { name: 'Зерновоз', speed: 17, cls: 'civil' },
+  grainx: { name: 'Зерновоз на экспорт', speed: 19, cls: 'civil' },
 };
 // Доход с фуры: пошлина при ввозе и выручка за экспорт на обратном рейсе
 export const TRANSIT = { import: 2, export: 2 };
@@ -215,13 +217,16 @@ export class DWLogistics {
         bases: game.objects.filter((o) => o.side === side && o.kind === 'rembase'),
         stations: game.objects.filter((o) => o.side === side && o.kind === 'firest'),
         oilDepot: game.objects.find((o) => o.side === side && o.kind === 'oil'),
-        markets, fuels, importT: 5, deliverT: 3, fuelT: 4, stats: { imports: 0, deliveries: 0, sold: 0, lostTrucks: 0, trade: 0, transit: 0, fuel: 0, exports: 0 },
+        markets, fuels, importT: 5, deliverT: 3, fuelT: 4, stats: { imports: 0, deliveries: 0, sold: 0, lostTrucks: 0, trade: 0, transit: 0, fuel: 0, exports: 0, agro: 0 },
       };
       for (const st of this.side[side].stations) st.engines = FLEET.fire;
       this.side[side].trucksFree = FLEET.supply;
     }
   }
   gate(o) { return o.gate || [o.x, o.y]; }
+  // Торговля с учётом уровня объекта (реконструкция: больше выручки и места на складе)
+  sale(m) { const S = SALE[m.kind], L = m.level || 1; return { value: S.value * (1 + 0.4 * (L - 1)), cap: Math.round(S.cap * (1 + 0.5 * (L - 1))), load: S.load, every: S.every }; }
+  hubCap(h) { return Math.round(45 * (1 + 0.5 * ((h.level || 1) - 1)) * (h === this.side[h.side]?.hub ? 1 : 0.7)); }
   // Ближайшая действующая ремонтная база (РЭС) к точке
   baseNear(side, x, y) {
     let best = null, bd = Infinity;
@@ -302,27 +307,30 @@ export class DWLogistics {
     for (const side of ['blue', 'red']) {
       const L = this.side[side];
       const S = g.sides[side];
-      const hubOk = L.hub.comps.filter((c) => c.state === 'ok').length / L.hub.comps.length;
       const borderOk = L.border.comps.some((c) => c.state !== 'destroyed');
-      // Импорт: фура с погранперехода в распредцентр
+      // Склады: главный распредцентр и построенные логистические хабы (уровень — вместимость)
+      const hubs = g.objs(side, 'hub').filter((h) => !(h.build && !h.build.up) && h.comps.filter((c) => c.state === 'ok').length / h.comps.length > 0.2);
+      const hubLv = hubs.reduce((a, h) => a + (h.level || 1), 0);
+      // Импорт: фура с погранперехода на склад, где товара меньше всего
       L.importT -= dt;
       if (L.importT <= 0) {
-        L.importT = 11 + sim.rng.float(0, 6);
-        if (borderOk) this.spawn(side, 'fura', this.gate(L.border), this.gate(L.hub), { type: 'import' });
+        L.importT = (11 + sim.rng.float(0, 6)) / (1 + 0.25 * Math.min(2, Math.max(0, hubLv - 1))); // пропускная способность погранперехода — не больше ×1,5
+        const to = hubs.slice().sort((a, b) => a.stock / this.hubCap(a) - b.stock / this.hubCap(b))[0] || L.hub;
+        if (borderOk) this.spawn(side, 'fura', this.gate(L.border), this.gate(to), { type: 'import', hub: to.id });
       }
-      // Развоз по магазинам: кому нужнее (и до кого есть дорога)
+      // Развоз по магазинам: кому нужнее — с ближайшего склада, где есть товар
       L.deliverT -= dt;
       if (L.deliverT <= 0) {
-        L.deliverT = 5 + sim.rng.float(0, 4);
-        if (L.hub.stock >= 2 && hubOk > 0.2) {
-          const cand = L.markets.filter((m) => m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= SALE[m.kind].cap - SALE[m.kind].load);
-          cand.sort((a, b) => (a.stock + (a.coming || 0)) / SALE[a.kind].value - (b.stock + (b.coming || 0)) / SALE[b.kind].value);
-          for (const m of cand.slice(0, 3)) {
-            const load = Math.min(SALE[m.kind].load, L.hub.stock);
-            const v = this.spawn(side, 'van', this.gate(L.hub), this.gate(m), { type: 'deliver', to: m.id, load });
-            if (v) { L.hub.stock -= load; m.coming = (m.coming || 0) + load; m.cut = false; break; }
-            m.cut = true;
-          }
+        L.deliverT = (5 + sim.rng.float(0, 4)) / Math.max(1, hubs.length * 0.8);
+        const cand = L.markets.filter((m) => !(m.build && !m.build.up) && m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= this.sale(m).cap - this.sale(m).load);
+        cand.sort((a, b) => (a.stock + (a.coming || 0)) / this.sale(a).value - (b.stock + (b.coming || 0)) / this.sale(b).value);
+        for (const m of cand.slice(0, 3)) {
+          const from = hubs.filter((h) => h.stock >= 2).sort((a, b) => Math.hypot(a.x - m.x, a.y - m.y) - Math.hypot(b.x - m.x, b.y - m.y))[0];
+          if (!from) break;
+          const load = Math.min(this.sale(m).load, from.stock);
+          const v = this.spawn(side, 'van', this.gate(from), this.gate(m), { type: 'deliver', to: m.id, load, home: from.id });
+          if (v) { from.stock -= load; m.coming = (m.coming || 0) + load; m.cut = false; break; }
+          m.cut = true;
         }
       }
       // Бензовозы: нефтебаза → АЗС (нужны целые резервуары)
@@ -333,7 +341,7 @@ export class DWLogistics {
         const oilLeft = depot ? depot.comps.filter((c) => c.k === 'tank' && c.state !== 'destroyed').length / Math.max(1, depot.comps.filter((c) => c.k === 'tank').length) : 0;
         const pumpOk = depot?.comps.some((c) => (c.k === 'pump' || c.k === 'rack') && c.state !== 'destroyed');
         if (depot && oilLeft > 0 && pumpOk && sim.rng.chance(0.35 + 0.65 * oilLeft)) {
-          const cand = L.fuels.filter((m) => m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= SALE.fuel.cap - SALE.fuel.load);
+          const cand = L.fuels.filter((m) => !(m.build && !m.build.up) && m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= this.sale(m).cap - SALE.fuel.load);
           cand.sort((a, b) => a.stock + (a.coming || 0) - (b.stock + (b.coming || 0)));
           for (const m of cand.slice(0, 3)) {
             const v = this.spawn(side, 'tanker', this.gate(depot), this.gate(m), { type: 'deliver', to: m.id, load: SALE.fuel.load, home: depot.id });
@@ -344,13 +352,14 @@ export class DWLogistics {
       }
       // Продажи в магазинах и на АЗС: нужен товар и свет
       for (const m of [...L.markets, ...L.fuels]) {
+        if (m.build && !m.build.up) continue;
         const ok = m.comps.some((c) => c.state === 'ok');
         const sup = this.supplyAt(side, m);
         m.saleT -= dt * (0.25 + 0.75 * sup) * (ok ? 1 : 0);
         if (m.saleT <= 0) {
           m.saleT += SALE[m.kind].every;
           if (m.stock >= 1) {
-            const val = SALE[m.kind].value * this.g.incomeK(side);
+            const val = this.sale(m).value * this.g.incomeK(side);
             m.stock--; S.points += val; L.stats.sold++;
             if (m.kind === 'fuel') L.stats.fuel += val; else L.stats.trade += val;
           }
@@ -423,13 +432,16 @@ export class DWLogistics {
   arrive(v) {
     const g = this.g, sim = this.sim, L = this.side[v.side];
     const T = v.task;
+    if (g.econ?.arrive(v)) return;
     if (v.state === 'back') {
       if (v.kind === 'fura' && T.type === 'export' && T.loaded && L.border.comps.some((c) => c.state !== 'destroyed')) { this.earn(v.side, TRANSIT.export, v.x, v.y, 'transit'); L.stats.exports++; }
       this.home(v);
       return;
     }
     if (T.type === 'import') {
-      L.hub.stock = Math.min(45, L.hub.stock + 4); // излишек уходит транзитом дальше
+      const hub = g.obj(T.hub) || L.hub;
+      hub.stock = Math.min(this.hubCap(hub), hub.stock + 4); // излишек уходит транзитом дальше
+      g.econ?.onImport(v.side);
       L.stats.imports++;
       this.earn(v.side, TRANSIT.import, v.x, v.y, 'transit');
       // обратно — с экспортным грузом со складов распредцентра (если склад работает)
@@ -514,6 +526,7 @@ export class DWLogistics {
     if (v.kind === 'fire') { const st = this.g.obj(v.task.home); if (st) st.engines++; const c = this.g.comps.get(v.task.comp); if (c) c.fireEngine = null; }
     if ((v.kind === 'van' || v.kind === 'tanker') && v.task.type === 'deliver') { const m = this.g.obj(v.task.to); if (m) m.coming = Math.max(0, (m.coming || 0) - (v.task.load || 1)); }
     if (v.kind === 'crew') this.g.crewLost(v);
+    this.g.econ?.onLost(v);
     this.sim.msg(`Потеря на дороге: ${VEH[v.kind].name.toLowerCase()} (${why})`, v.side);
   }
 }

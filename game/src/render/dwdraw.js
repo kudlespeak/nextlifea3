@@ -12,12 +12,102 @@ import { CivTraffic } from './dwtraffic.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
-const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', elevator: 'ЭЛ', agro: 'МД', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
+const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
 export const dispH = (alt) => (alt <= 0 ? 0 : 12 + Math.min(alt, 3000) / 3000 * 110);
+
+// Стройка: бетонные основания узлов, башенный кран, кольцо готовности
+function construction(ctx, o, toS, z, dpr, k) {
+  for (const c of o.comps) {
+    const cs = Math.cos(c.angle), sn = Math.sin(c.angle);
+    ctx.fillStyle = k < 0.35 ? 'rgba(110,98,78,0.85)' : 'rgba(150,148,140,0.9)';
+    ctx.beginPath();
+    for (const [u, v] of [[-c.w / 2, -c.h / 2], [c.w / 2, -c.h / 2], [c.w / 2, c.h / 2], [-c.w / 2, c.h / 2]]) { const [px, py] = toS(c.x + u * cs - v * sn, c.y + u * sn + v * cs); ctx.lineTo(px, py); }
+    ctx.closePath(); ctx.fill();
+    if (k > 0.35 && z > 0.5) { ctx.strokeStyle = 'rgba(90,88,82,0.9)'; ctx.lineWidth = Math.max(1, 0.4 * z); ctx.stroke(); }
+  }
+  const [sx, sy] = toS(o.x, o.y);
+  if (z > 0.4) {
+    // кран: мачта и стрела
+    const hgt = 30 * z * 0.5;
+    ctx.strokeStyle = '#e0b030'; ctx.lineWidth = Math.max(1.5, 0.8 * z);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, sy - hgt); ctx.lineTo(sx + 22 * z * 0.5, sy - hgt); ctx.moveTo(sx, sy - hgt); ctx.lineTo(sx - 8 * z * 0.5, sy - hgt); ctx.stroke();
+  }
+  ring(ctx, sx, sy - 14 * dpr, 9 * dpr, Math.max(0, Math.min(1, k)), '#ffd36b', dpr);
+}
+
+// Тракторы (посевная) и комбайны (уборка) ходят челноком по текущему полю агрофирмы
+function drawFarmWork(ctx, g, world, toS, inView, z, now, dpr) {
+  const E = g.econ;
+  for (const f of E.farms) {
+    if (!f.work || f.noFuel) continue;
+    const fd = f.fields[f.work.fi];
+    if (!fd || !inView(fd.x, fd.y, 900)) continue;
+    const fl = world.fields.items[fd.i];
+    if (!fl?.poly || fl.poly.length < 3) continue;
+    // рамка поля по направлению борозд (поля вдоль дорог — многоугольники со многими вершинами)
+    if (!fd._fr) {
+      const a = fl.angle || 0, cu = Math.cos(a), su = Math.sin(a);
+      let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+      for (const [x, y] of fl.poly) { const u = x * cu + y * su, v = -x * su + y * cu; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+      const m = 6; // не заезжаем на межу
+      u0 += m; u1 -= m; v0 += m; v1 -= m;
+      fd._fr = { p0: [u0 * cu - v0 * su, u0 * su + v0 * cu], ux: (u1 - u0) * cu, uy: (u1 - u0) * su, vx: -(v1 - v0) * su, vy: (v1 - v0) * cu };
+    }
+    const { p0, ux, uy, vx, vy } = fd._fr;
+    const Lu = Math.hypot(ux, uy), Lv = Math.hypot(vx, vy);
+    if (Lu < 20 || Lv < 20) continue;
+    const combine = f.work.kind === 'combine';
+    const mc = E.machines ? E.machines(f) : { tractors: 1, combines: 1 };
+    const n = Math.min(3, combine ? mc.combines : mc.tractors);
+    const P = Math.max(4, Math.round(Lv / (combine ? 9 : 12))); // проходы: ширина жатки / сеялки
+    // уже пройденная часть поля: убранная (стерня) или засеянная (боронованная) полоса
+    if (z > 0.08) {
+      const done = Math.min(1, Math.max(0, f.work.prog));
+      ctx.save();
+      ctx.beginPath(); fl.poly.forEach(([x, y], i) => { const [px, py] = toS(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }); ctx.closePath(); ctx.clip();
+      ctx.fillStyle = combine ? 'rgba(196,178,120,0.92)' : 'rgba(133,112,90,0.9)';
+      ctx.beginPath();
+      for (const [a, b] of [[0, 0], [1, 0], [1, done], [0, done]]) { const [px, py] = toS(p0[0] + ux * a + vx * b, p0[1] + uy * a + vy * b); ctx.lineTo(px, py); }
+      ctx.closePath(); ctx.fill();
+      if (z > 0.25) {
+        // рядки валков/сеялки вдоль прохода
+        ctx.strokeStyle = combine ? 'rgba(140,120,70,0.3)' : 'rgba(60,45,30,0.3)';
+        ctx.lineWidth = Math.max(0.5, 0.6 * z);
+        ctx.beginPath();
+        const rows = Math.min(400, Math.floor(done * P));
+        for (let k = 0; k <= rows; k++) { const b = k / P; const [ax, ay] = toS(p0[0] + vx * b, p0[1] + vy * b), [bx, by] = toS(p0[0] + ux + vx * b, p0[1] + uy + vy * b); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    for (let m = 0; m < n; m++) {
+      // машины идут друг за другом со сдвигом по проходам
+      const prog = Math.min(0.999, Math.max(0, f.work.prog + (m - (n - 1) / 2) * 0.05 + ((now / 1000) % 60) * 0.0004));
+      const sPath = prog * P * Lu, pass = Math.floor(sPath / Lu), a = sPath - pass * Lu;
+      const fwd = pass % 2 === 0;
+      const tu = (fwd ? a : Lu - a) / Lu, tv = (pass + 0.5) / P;
+      const x = p0[0] + ux * tu + vx * tv, y = p0[1] + uy * tu + vy * tv;
+      const [sx, sy] = toS(x, y);
+      const heading = Math.atan2(uy, ux) + (fwd ? 0 : Math.PI);
+      if (combine && z > 0.25) {
+        ctx.fillStyle = 'rgba(190,170,120,0.28)';
+        ctx.beginPath(); ctx.ellipse(sx - Math.cos(heading) * 9 * z, sy - Math.sin(heading) * 9 * z, Math.max(3, 9 * z), Math.max(2, 5 * z), heading, 0, Math.PI * 2); ctx.fill();
+      }
+      if (z >= 0.45) {
+        const r = spriteFor(`dwv:${combine ? 'combine' : 'tractor'}:${f.side}`, () => buildVehicle(combine ? 'combine' : 'tractor', f.side, 0), heading, z, undefined, now);
+        if (r) drawSprite(ctx, r, sx, sy, z, r.residual);
+      } else {
+        ctx.fillStyle = combine ? '#9ccf4a' : '#e0c050';
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = dpr;
+        ctx.beginPath(); ctx.arc(sx, sy, 3.2 * dpr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    }
+  }
+}
 
 function hash(i) { const s = Math.sin(i * 127.1) * 43758.5453; return s - Math.floor(s); }
 
@@ -38,6 +128,7 @@ export function drawDW(ctx, sim, view, side, ui) {
   // ---------- Объекты ----------
   for (const o of g.objects) {
     if (o.kind === 'import' || !inView(o.x, o.y, Math.max(o.w, o.h))) continue;
+    if (o.build && !o.build.up) { construction(ctx, o, toS, z, dpr, 1 - (o.build.until - t) / o.build.total); continue; }
     // крупные объекты (ТЭС, ГЭС, подстанции) видны в объёме и издали — пока на экране больше ~60 px
     if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
       // Сначала дальние узлы (по y экрана), чтобы высокие не перекрывались неверно
@@ -74,6 +165,9 @@ export function drawDW(ctx, sim, view, side, ui) {
       fire(ctx, toS, c.x, c.y, size, z, now, c.k === 'tank' || c.k === 'coal', hash(c.x + c.y));
     }
   }
+
+  // ---------- Сельхозтехника на полях ----------
+  if (g.econ && z >= 0.12) drawFarmWork(ctx, g, sim.world, toS, inView, z, now, dpr);
 
   // ---------- Разбитые ТП (подложка карты статична — повреждение рисуем поверх) ----------
   if (z > 0.3) for (const tp of sim.world.power?.tps || []) {
@@ -612,6 +706,20 @@ export function drawDWPreview(ctx, sim, view, side, ui, mw) {
     ctx.lineWidth = 1.5 * dpr;
     ctx.beginPath(); ctx.arc(mx, my, DW_AD[type].range * z, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.beginPath(); ctx.arc(mx, my, 5 * dpr, 0, Math.PI * 2); ctx.stroke();
+  }
+  if (ui.mode?.startsWith('build:')) {
+    // контур будущей площадки (место сдвигается от дороги и разворачивается вдоль неё)
+    const kind = ui.mode.slice(6), st = g.econ.siteFor(side, kind, mw[0], mw[1]);
+    const lay = st.lay, ok = !st.err;
+    const cx = ok ? st.x : mw[0], cy = ok ? st.y : mw[1], ang = ok ? st.angle : 0;
+    const w = (lay?.w || 60) + 16, h = (lay?.h || 40) + 16, c = Math.cos(ang), s = Math.sin(ang);
+    ctx.strokeStyle = ok ? 'rgba(140,255,140,0.9)' : 'rgba(255,90,70,0.9)';
+    ctx.fillStyle = ok ? 'rgba(140,255,140,0.15)' : 'rgba(255,90,70,0.12)';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    for (const [u, v] of [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]) { const [px, py] = toS(cx + u * c - v * s, cy + u * s + v * c); ctx.lineTo(px, py); }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (ok) { const [a1, b1] = toS(st.drive[0][0], st.drive[0][1]), [a2, b2] = toS(st.drive[1][0], st.drive[1][1]); ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.beginPath(); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke(); ctx.setLineDash([]); }
   }
   if (ui.mode?.startsWith('strike:')) {
     ctx.strokeStyle = 'rgba(255,200,120,0.8)';

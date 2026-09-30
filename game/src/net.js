@@ -2,6 +2,7 @@
 // гость отображает их и отправляет свои приказы.
 
 import { Rng } from './rng.js';
+import { applyEconEvent } from './mapgen.js';
 import { digTrench } from './forts.js';
 import { SIDES, Unit } from './sim/units.js';
 
@@ -195,5 +196,5 @@ export function applyWorldEvent(sim, ev, invalidate) {
     w.bbox = { x0: ev.x - 10, y0: ev.y - 10, x1: ev.x + 10, y1: ev.y + 10 };
     world.scars.insert(w);
     invalidate(w.bbox);
-  }
+  } else for (const b of applyEconEvent(world, ev) || []) invalidate(b);
 }

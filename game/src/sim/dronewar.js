@@ -18,6 +18,7 @@ import { DW_NAMES } from '../mapgen.js';
 import { daylight } from '../power.js';
 import { M } from '../spatial.js';
 import { DWLogistics, VEH } from './dwlogi.js';
+import { DWEconomy } from './dwecon.js';
 
 // ---------------------------------------------------------------- Дроны
 export const DW_DRONES = {
@@ -83,9 +84,11 @@ export const COMP = {
   wt: { name: 'ветроустановка', cost: 45, time: 240, fire: 0.5, hard: 0.7 },
   pv: { name: 'поле солнечных панелей', cost: 35, time: 180, fire: 0.1, hard: 0.6, big: true },
   inv: { name: 'инверторная станция', cost: 30, time: 150, fire: 0.5, hard: 0.8 },
+  silo: { name: 'силосный корпус', cost: 80, time: 360, fire: 0.7, hard: 1.6, big: true }, // зерновая пыль и зерно горят долго
+  dryer: { name: 'зерносушилка', cost: 45, time: 200, fire: 0.8, hard: 0.9 },
 };
 // Потеря узла бьёт по устойчивости тыла (разрушен — полностью, выведен из строя — наполовину)
-const SHOCK = { hgen: 2, wt: 0.3, pv: 0.3, inv: 0.4, unit: 2, at: 2, gsu: 1.5, span: 1.5, tr: 1, oru: 1, shop: 1, tank: 0.6, bunker: 0.6, hall: 0.6, chimney: 0.6, tower: 0.6, coal: 0.5, launcher: 0.3, ctrl: 0.3, pump: 0.3, rack: 0.2, store: 0.3 };
+const SHOCK = { silo: 0.8, dryer: 0.3, hgen: 2, wt: 0.3, pv: 0.3, inv: 0.4, unit: 2, at: 2, gsu: 1.5, span: 1.5, tr: 1, oru: 1, shop: 1, tank: 0.6, bunker: 0.6, hall: 0.6, chimney: 0.6, tower: 0.6, coal: 0.5, launcher: 0.3, ctrl: 0.3, pump: 0.3, rack: 0.2, store: 0.3 };
 // Темп: полёт в 1,5 раза быстрее реального (карта 40 км, партия 25 мин); вероятности огня ПВО
 // в секунду умножены на тот же коэффициент — время в зоне поражения и шансы сбития те же
 export const PACE = 2;
@@ -96,12 +99,12 @@ const REPAIR_K = 0.55;
 // Время ремонта сжато под темп партии (25 мин): замена трансформатора — минуты, а не часы
 const REPAIR_T = 0.5;
 // По гражданским объектам удары не наносятся (магазины, ТЦ, погранпереход)
-export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel']);
+export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel', 'agro']);
 export const SHELTER = [null, { name: 'Габионы и мешки (защита от осколков)', cost: 35, time: 90 }, { name: 'Бетонное укрытие (защита от прямого попадания)', cost: 110, time: 300 }];
 // Сетка над пролётом моста: лёгкие дроны (до 25 кг БЧ: «Бобёр», «Ланцет», Warmate) рвутся на ней
 export const NET = [null, { name: 'Антидроновая сетка над пролётом', cost: 30, time: 150 }];
 export const shelterDef = (c, level) => (COMP[c.k]?.net ? NET[level] : SHELTER[level]);
-export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
+export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', agro: 'Мехдвор', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
 
 // Западные образцы ПВО точнее, у Кардагора — массовость и ложные цели
 const AD_EFF = { blue: 1.1, red: 1.0 };
@@ -164,6 +167,7 @@ export class DroneWar {
       };
     }
     this.logi = new DWLogistics(this);
+    this.econ = new DWEconomy(this);
     this.deployStart();
     this.flow(true);
   }
@@ -273,6 +277,14 @@ export class DroneWar {
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     const sites = this.launchPoints(side, D);
     if (!sites.length) return 'Нет исправных стартовых позиций';
+    // Пропускная способность стартовых позиций: пусковых и расчётов мало — больше за раз не поднять
+    const fromSites = D.cls === 'strike' || D.cls === 'decoy' || (D.cls === 'hunter' && !D.front);
+    if (fromSites) {
+      const free = this.econ.launchFree(side);
+      if (count > free) return free > 0 ? `Стартовые позиции загружены: сейчас можно поднять не больше ${free} (лимит ${this.econ.launchCap(side)} за 5 мин — стройте и улучшайте стартовые позиции)` : `Стартовые позиции загружены: все пусковые заняты (лимит ${this.econ.launchCap(side)} за 5 мин)`;
+      this.econ.useLaunch(side, count);
+    }
+    this.econ.useParts(side, cost);
     S.points -= cost;
     S.stats.spent += cost;
     const rng = this.sim.rng;
@@ -311,12 +323,13 @@ export class DroneWar {
   droneCost(side, type) {
     const fac = this.objs(side, 'factory')[0];
     const ok = fac ? fac.comps.filter((c) => c.k === 'shop' && this.compOk(c)).length / fac.comps.filter((c) => c.k === 'shop').length : 0;
-    return DW_DRONES[type].cost * (1 - 0.3 * ok); // свой завод удешевляет дроны до 30%
+    return DW_DRONES[type].cost * (1 - 0.3 * ok) * (this.econ ? this.econ.partsK(side) : 1); // свой завод удешевляет дроны до 30%, без комплектующих — дороже
   }
   launchPoints(side, D) {
     if (D.cls === 'strike' || D.cls === 'decoy' || (D.cls === 'hunter' && !D.front)) {
       const out = [];
       for (const o of this.objs(side, 'launch')) {
+        if (o.build && !o.build.up) continue;
         const ok = o.comps.filter((c) => c.k === 'launcher' && this.compOk(c));
         ok.forEach((c, i) => out.push({ x: c.x, y: c.y, oid: o.id, delay: i * 2 }));
       }
@@ -387,6 +400,9 @@ export class DroneWar {
     }
     return false;
   }
+  // Стройка и реконструкция (гражданская экономика — dwecon.js)
+  buildCivil(side, kind, x, y) { return this.econ.build(side, kind, x, y); }
+  upgrade(side, id) { return this.econ.upgrade(side, id); }
   buyCrew(side) {
     const S = this.sides[side];
     if (S.points < 60) return 'Не хватает очков: нужно 60';
@@ -425,6 +441,7 @@ export class DroneWar {
     if (this.detTimer <= 0) { this.detTimer = 1; this.detect(); }
     this.updateFires(dt);
     this.logi.update(dt);
+    this.econ.update(dt);
     this.updateRepairs(dt);
     this.flowTimer -= dt;
     if (this.flowTimer <= 0) { this.flowTimer = 2; this.flow(); }
@@ -640,19 +657,24 @@ export class DroneWar {
       // Промышленность при отключениях проседает сильнее, чем свет: цеха стоят целиком
       const ind = (ci) => town(ci) ** 2;
       // Промышленность (от света) + торговля в магазинах (начисляется при продажах, см. логистику)
-      const perMin = (4 + 10 * ind(0) + (4 * ind(1) + 4 * ind(2)) * logi + 4 * facOk * town(0) + 2 * S.oil) * this.incomeK(side);
+      // Рабочие руки: мобилизованные (ПВО, бригады, пусковые) не работают на заводах
+      const labor = this.econ.labor(side);
+      const perMin = (4 + 10 * ind(0) + (4 * ind(1) + 4 * ind(2)) * logi + 4 * facOk * town(0) + 2 * S.oil) * this.incomeK(side) * labor;
+      const tax = this.econ.taxes(side, dt) * this.incomeK(side) * labor;
+      const upkeep = this.econ.upkeep(side);
       const L = this.logi.side[side];
       // Скользящие средние по статьям дохода (очков в минуту)
       const rate = (key) => { const v = (L.stats[key] - (L['last_' + key] ?? L.stats[key])) * (60 / dt); L['last_' + key] = L.stats[key]; return v; };
       const avg = (k, v) => (S.inc[k] = (S.inc[k] ?? v) * 0.88 + v * 0.12);
       S.inc = S.inc || {};
       S.inc.industry = perMin;
-      avg('trade', rate('trade')); avg('fuel', rate('fuel')); avg('transit', rate('transit'));
+      avg('trade', rate('trade')); avg('fuel', rate('fuel')); avg('transit', rate('transit')); S.inc.agro = (S.inc.agro ?? 0) * 0.97 + rate('agro') * 0.03; // экспорт идёт партиями — среднее за ~3 мин
       S.tradeAvg = S.inc.trade + S.inc.fuel + S.inc.transit;
-      S.income = perMin + S.tradeAvg;
+      S.inc.tax = tax;
+      S.inc.upkeep = -upkeep;
       S.inc.wages = -S.crews.length * WAGE;
-      S.income += S.inc.wages;
-      if (!this.prep) { S.points += ((perMin + S.inc.wages) * dt) / 60; S.stats.spent += (S.crews.length * WAGE * dt) / 60; }
+      S.income = perMin + S.tradeAvg + S.inc.agro + tax + S.inc.wages - upkeep;
+      if (!this.prep) { S.points += ((perMin + tax + S.inc.wages - upkeep) * dt) / 60; S.stats.spent += ((S.crews.length * WAGE + upkeep) * dt) / 60; }
       if (!this.prep) this.moraleTick(side, dt);
       // История снабжения для итога
       S.history.push(S.supply);
@@ -1242,6 +1264,7 @@ export class DroneWar {
     const cal = wh >= 90 ? 'dw105' : wh >= 45 ? 'dw50' : wh >= 15 ? 'dw20' : 'dw3';
     sim.art.explode(x, y, cal, 'ground', d.side, true);
     this.fx.push({ t: 'impact', x, y, wh, t0: sim.time });
+    if (wh > 0) this.econ?.onImpact(x, y, wh);
     // Радиусы: сплошного поражения и осколочный
     const rl = 3 + wh * 0.13, rf = 8 + wh * 0.45;
     const enemy = d.side === 'blue' ? 'red' : 'blue';
@@ -1409,7 +1432,7 @@ DroneWar.prototype.snapshot = function () {
   const sideSnap = (S) => [R1(S.points), R1(S.income), Math.round(S.supply * 1000) / 1000, S.gen, S.demand, S.delivered, R1(S.achrUntil), R1(S.collapse), S.spare, S.auto ? 1 : 0,
     S.crews.map((c) => (c.job ? [c.id, c.job.id, R1(c.job.left), R1(c.job.total), c.job.state, c.job.shelter ? 1 : 0, c.job.level || 0, c.veh ? 1 : 0, c.job.kind || 'repair'] : [c.id, c.veh ? 1 : 0])), S.queue.slice(0, 60), R1(S.tradeAvg ?? 0),
     [S.stats.launched, S.stats.hits, S.stats.shot, S.stats.lostAD, S.stats.spent, S.stats.repairs], R1(S.logi ?? 1), R1(S.oil ?? 1), R1(S.ammo ?? 1),
-    R1(S.morale), S.inc ? [R1(S.inc.industry), R1(S.inc.trade), R1(S.inc.fuel), R1(S.inc.transit), R1(S.inc.wages || 0)] : 0, S.moraleParts ? Object.values(S.moraleParts).map(R1) : 0];
+    R1(S.morale), S.inc ? [R1(S.inc.industry), R1(S.inc.trade), R1(S.inc.fuel), R1(S.inc.transit), R1(S.inc.wages || 0), R1(S.inc.tax || 0), R1(S.inc.upkeep || 0), R1(S.inc.agro || 0)] : 0, S.moraleParts ? Object.values(S.moraleParts).map(R1) : 0];
   return {
     d: this.drones.filter((d) => !d.dead && d.state !== 'wait').map((d) => [d.id, d.side, d.type, R1(d.x), R1(d.y), Math.round(d.alt), R1(d.heading), R1(d.aimX ?? d.x), R1(d.aimY ?? d.y), seenBits(d), d.state === 'loiter' ? 1 : 0, (d.route || []).map((p) => [Math.round(p.x), Math.round(p.y)]), d.variant || 0]),
     a: this.ad.map((a) => [a.id, a.side, a.type, R1(a.x), R1(a.y), R1(a.heading), AST.indexOf(a.state), a.dead ? 1 : 0, a.missiles, a.stock, Math.round(a.ammo), a.kills || 0, a.target ? 1 : 0, R1(a.aim), R1(a.spotted.blue || 0), R1(a.spotted.red || 0), a.roe, R1(a.until), R1(a.fireT), a.dest ? [Math.round(a.dest.x), Math.round(a.dest.y)] : 0]),
@@ -1428,11 +1451,13 @@ DroneWar.prototype.snapshot = function () {
     g: [this.prep ? 1 : 0, R1(this.prepEnd), R1(this.endAt), this.winner, this.reason, this.ready.blue ? 1 : 0, this.ready.red ? 1 : 0, this.endless ? 1 : 0, R1(this.startAt ?? 0)],
     v: this.logi.vehicles.map((v) => [v.id, v.side, v.kind, R1(v.x), R1(v.y), R1(v.heading), v.state, v.dead ? 1 : 0, v.wreck ? 1 : 0, (v.spotted.blue && t - v.spotted.blue < 90 ? 1 : 0) | (v.spotted.red && t - v.spotted.red < 90 ? 2 : 0), v.task.type, R1(v.deadAt ?? 0)]),
     st: this.objects.map((o) => (o.stock === undefined ? -1 : o.stock)),
+    eco: this.econ.snap(),
     ls: ['blue', 'red'].map((sd) => { const L = this.logi.side[sd]; return [L.stats.imports, L.stats.deliveries, L.stats.sold, L.stats.lostTrucks, L.stats.trade]; }),
   };
 };
 DroneWar.prototype.applySnapshot = function (s) {
   const t = this.sim.time;
+  if (s.eco) this.econ.applySnap(s.eco); // сначала — построенные объекты (индексы остальных массивов)
   const old = new Map(this.drones.map((d) => [d.id, d]));
   this.drones = s.d.map((q) => {
     const o = old.get(q[0]);
@@ -1475,7 +1500,7 @@ DroneWar.prototype.applySnapshot = function (s) {
     S.crews = q[10].map((c) => (c.length > 2 ? { id: c[0], job: { id: c[1], left: c[2], total: c[3], state: c[4], shelter: !!c[5], level: c[6], kind: c[8] }, veh: c[7] ? {} : null } : { id: c[0], job: null, veh: c[1] ? {} : null }));
     [S.stats.launched, S.stats.hits, S.stats.shot, S.stats.lostAD, S.stats.spent, S.stats.repairs] = q[13];
     S.morale = q[17];
-    if (q[18]) { S.inc = { industry: q[18][0], trade: q[18][1], fuel: q[18][2], transit: q[18][3], wages: q[18][4] }; S.tradeAvg = q[18][1] + q[18][2] + q[18][3]; }
+    if (q[18]) { S.inc = { industry: q[18][0], trade: q[18][1], fuel: q[18][2], transit: q[18][3], wages: q[18][4], tax: q[18][5] || 0, upkeep: q[18][6] || 0, agro: q[18][7] || 0 }; S.tradeAvg = q[18][1] + q[18][2] + q[18][3]; }
     if (q[19]) { const [power, bridges, shops, fires, border, regen] = q[19]; S.moraleParts = { power, bridges, shops, fires, border, regen }; }
   }
   [this.prep, this.prepEnd, this.endAt, this.winner, this.reason] = [!!s.g[0], s.g[1], s.g[2], s.g[3], s.g[4]];
