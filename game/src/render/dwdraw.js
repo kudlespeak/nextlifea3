@@ -9,6 +9,7 @@ import { DW_DRONES, DW_AD, KIND_NAME } from '../sim/dronewar.js';
 import { daylight } from '../power.js';
 import { FACTIONS } from '../sim/factions.js';
 import { CivTraffic } from './dwtraffic.js';
+import { drawExtras } from './dwextra.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
@@ -393,6 +394,15 @@ function linkItems(ctx, o, toS, z, dpr) {
   // трансформаторы → ОРУ: шины прямо к ячейке (автотрансформатор — к обоим напряжениям);
   // несколько блочных трансформаторов к одному ОРУ — каждый на своей высоте, пучком
   const toOru = new Map();
+  // обесточена подстанция или повреждён трансформатор — разъединители его ячейки разомкнуты
+  const deadPs = o.supply !== undefined && o.supply < 0.05;
+  const openAt = (a, b, h, T) => out.push({ y: (Wp(...a)[1] + Wp(...b)[1]) / 2 + 0.1, draw: () => {
+    const m = [a[0] + (b[0] - a[0]) * 0.75, a[1] + (b[1] - a[1]) * 0.75], m2 = [a[0] + (b[0] - a[0]) * 0.82, a[1] + (b[1] - a[1]) * 0.82];
+    const A = P(m[0], m[1], h), B = P(m2[0], m2[1], h + 3.5);
+    ctx.strokeStyle = '#c9ccc4'; ctx.lineWidth = Math.max(1, 0.35 * z);
+    ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke(); // поднятый нож разъединителя
+    if (z > 0.6) { ctx.fillStyle = T.state === 'ok' ? '#e0b030' : '#ef5a4a'; ctx.beginPath(); ctx.arc(A[0], A[1], Math.max(1.5, 0.5 * z), 0, Math.PI * 2); ctx.fill(); }
+  } });
   for (const T of by('at', 'gsu', 'tr')) {
     const targets = T.k === 'at' ? orus : orus.length ? [near(orus, T)] : [];
     for (const O of targets) {
@@ -402,6 +412,7 @@ function linkItems(ctx, o, toS, z, dpr) {
       const hT = T.k === 'tr' ? 4 : 6.5, hO = ORU_H(O) - (T.k === 'gsu' ? k * 1.6 : 0);
       if (r.length === 2) wire(a, hT, b, hO, 3, T.k === 'tr' ? 1.2 : 2.2, 'rgba(70,72,68,0.95)', 0.35);
       else { wire(a, hT, r[1], hO, 3, 2.2, 'rgba(70,72,68,0.95)', 0.35); wire(r[1], hO, b, hO, 3, 2.2, 'rgba(70,72,68,0.95)', 0.35, 0.1); }
+      if (deadPs || T.state !== 'ok') openAt(r[r.length - 2], b, hO, T);
     }
   }
   // энергоблок / гидроагрегат → блочный трансформатор: закрытый токопровод
@@ -490,10 +501,13 @@ export function drawDW(ctx, sim, view, side, ui) {
       if (fenced) drawFence(ctx, o, toS, z, dpr, 'front');
       // Пар градирен и дым труб — пока блоки работают
       const units = o.comps.filter((c) => c.k === 'unit' && c.state === 'ok').length;
-      if (o.kind === 'tpp' && units) {
+      // пар и дым — по фактической выработке (разгрузка при нехватке угля или сети видна сразу)
+      const cap = o.kind === 'tpp' ? 750 : o.kind === 'chp' ? 140 : 0;
+      const load = cap && o.gen !== undefined ? Math.min(1, o.gen / cap) : units / 3;
+      if ((o.kind === 'tpp' || o.kind === 'chp') && units && load > 0.02) {
         for (const c of o.comps) {
-          if (c.k === 'tower' && c.state === 'ok') plume(ctx, toS, c.x, c.y, 76, z, now, 'steam', units / 3, c.x * 3);
-          if (c.k === 'chimney' && c.state === 'ok') plume(ctx, toS, c.x, c.y, 120, z, now, 'smoke', units / 3, c.y * 3);
+          if (c.k === 'tower' && c.state === 'ok') plume(ctx, toS, c.x, c.y, 76, z, now, 'steam', load, c.x * 3);
+          if (c.k === 'chimney' && c.state === 'ok') plume(ctx, toS, c.x, c.y, o.kind === 'chp' ? 80 : 120, z, now, 'smoke', load, c.y * 3);
         }
       }
     }
@@ -803,6 +817,9 @@ export function drawDW(ctx, sim, view, side, ui) {
     }
     if (ui.selVeh === v.id) { ctx.strokeStyle = '#fff27a'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.arc(sx, sy, Math.max(8 * dpr, 6 * z), 0, Math.PI * 2); ctx.stroke(); }
   }
+
+  // ---------- Поезда, люди, пыль, фары, пожары на полях, временные обходы ЛЭП ----------
+  drawExtras(ctx, g, sim, view, side, toS, inView, now, t, night, fire);
 
   // ---------- Дроны ----------
   const drones = g.visibleDrones(side);

@@ -127,6 +127,7 @@ export function drawChunk(ctx, world, b, ppm) {
   for (const k of world.areas.query(q)) if (k.kind === 'kpp') drawKpp(ctx, k, ppm);
   drawRailCrossings(ctx, world, b, q, ppm);
   drawForts(ctx, world, q, ppm);
+  drawDetours(ctx, world, scars, ppm);
   for (const s of scars) if (s.kind === 'crater') drawCrater(ctx, s, ppm);
   for (const s of scars) if (s.kind === 'wreck') drawWreck(ctx, s, ppm);
   drawBuildings(ctx, world, q, ppm);
@@ -867,6 +868,30 @@ function drawRailCrossings(ctx, world, b, q, ppm) {
       strokeLine(ctx, offsetLine(seg, -0.76), w, '#2f2d2a');
       strokeLine(ctx, offsetLine(seg, 0.76), w, '#2f2d2a');
     }
+  }
+}
+
+// Объезд воронки на дороге: машины накатали колею по обочине в обход ямы
+function drawDetours(ctx, world, scars, ppm) {
+  if (ppm < 0.5) return;
+  for (const c of scars) {
+    if (c.kind !== 'crater' || (c.r || 0) < 1.5) continue;
+    let best = null, bd = Infinity, bt = null;
+    for (const r of world.roads.query({ x0: c.x - 20, y0: c.y - 20, x1: c.x + 20, y1: c.y + 20 }, false)) {
+      if (r.type === 'dirt') continue;
+      for (let i = 1; i < r.line.length; i++) {
+        const a = r.line[i - 1], b = r.line[i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+        const u = Math.max(0, Math.min(1, ((c.x - a[0]) * dx + (c.y - a[1]) * dy) / L2)), d = Math.hypot(a[0] + dx * u - c.x, a[1] + dy * u - c.y);
+        if (d < bd) { bd = d; best = r; const L = Math.sqrt(L2); bt = [dx / L, dy / L]; }
+      }
+    }
+    if (!best || bd > best.width / 2 + c.r * 0.5) continue;
+    const w = best.type === 'highway' ? 13 : best.width / 2, off = w + c.r + 3.5;
+    const nx = -bt[1], ny = bt[0], D = c.r * 3 + 14;
+    const pts = [];
+    for (let k = 0; k <= 12; k++) { const tt = -1 + (2 * k) / 12, bump = Math.cos((tt * Math.PI) / 2); pts.push([c.x + bt[0] * tt * D + nx * off * bump, c.y + bt[1] * tt * D + ny * off * bump]); }
+    strokeLine(ctx, pts, 4, 'rgba(112,96,70,0.85)');
+    if (ppm >= 1) { strokeLine(ctx, offsetLine(pts, -0.9), 0.5, 'rgba(80,66,46,0.8)'); strokeLine(ctx, offsetLine(pts, 0.9), 0.5, 'rgba(80,66,46,0.8)'); }
   }
 }
 

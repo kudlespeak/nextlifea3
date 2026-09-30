@@ -14,7 +14,8 @@
 // с премией. Проигрывает сторона, чья устойчивость упала до нуля (или энергосистема рухнула без
 // средств на ремонт); по истечении времени побеждает более устойчивый тыл.
 
-import { DW_NAMES } from '../mapgen.js';
+import { DW_NAMES, applyEconEvent } from '../mapgen.js';
+import { pointInPoly } from '../geom.js';
 import { daylight } from '../power.js';
 import { M } from '../spatial.js';
 import { DWLogistics, VEH } from './dwlogi.js';
@@ -1183,6 +1184,7 @@ export class DroneWar {
   updateDrones(dt) {
     const sim = this.sim;
     const ews = this.ad.filter((a) => !a.dead && (a.type === 'ew' || a.type === 'ewd') && a.state === 'ready');
+    this.updateFieldFires(dt);
     for (const f of this.falling || []) if (!f.done && sim.time >= f.at) { f.done = true; this.impact({ side: f.side, type: 'debris', wh: f.wh }, f.x, f.y, true); }
     if (this.falling) this.falling = this.falling.filter((f) => !f.done);
     for (const d of this.drones) {
@@ -1347,6 +1349,32 @@ export class DroneWar {
     for (const v of this.logi.vehicles) if (!v.dead && v.side !== d.side && hyp(v.x - d.x, v.y - d.y) < R) v.spotted[d.side] = sim.time;
   }
 
+  // Пожар на поле: летом и осенью сухая стерня и хлеб загораются от подрыва или обломков; огонь
+  // расходится несколько минут, потом на карте остаётся выгоревшее пятно
+  maybeFieldFire(x, y, wh) {
+    const sid = this.infra?.season?.().id;
+    if (sid !== 'summer' && sid !== 'autumn') return;
+    const w = this.world;
+    if (w.mask.has(x, y, M.ROAD | M.WATER | M.BUILD | M.CITY | M.VILLAGE)) return;
+    const f = w.fields.query({ x0: x, y0: y, x1: x, y1: y }, false).find((q) => q.kind === 'field' && !q.removed && pointInPoly(x, y, q.poly));
+    if (!f || f.crop === 'green' || !this.sim.rng.chance(Math.min(0.8, 0.25 + wh * 0.01))) return;
+    (this.fieldFires ||= []).push({ x, y, r: 6, max: 40 + Math.min(90, wh * 1.2), t0: this.sim.time, until: this.sim.time + 240 + wh * 2, seed: Math.floor(x * 7 + y * 13) });
+  }
+  updateFieldFires(dt) {
+    if (!this.fieldFires?.length) return;
+    const t = this.sim.time;
+    for (const f of this.fieldFires) {
+      f.r = Math.min(f.max, f.r + dt * 0.35);
+      if (t >= f.until && !f.done) {
+        f.done = true;
+        const ev = { k: 'burn', x: f.x, y: f.y, r: f.r, s: f.seed };
+        applyEconEvent(this.world, ev);
+        this.sim.events.push({ type: 'net', ev }, { type: 'forts', bbox: { x0: f.x - f.r * 1.5, y0: f.y - f.r * 1.5, x1: f.x + f.r * 1.5, y1: f.y + f.r * 1.5 } });
+      }
+    }
+    this.fieldFires = this.fieldFires.filter((f) => !f.done);
+  }
+
   // Подрыв: урон узлам в радиусе, эффект на местности (воронка, дома, пожар)
   impact(d, x, y, debris = false) {
     const sim = this.sim;
@@ -1357,6 +1385,7 @@ export class DroneWar {
     sim.art.explode(x, y, cal, 'ground', d.side, true);
     this.fx.push({ t: 'impact', x, y, wh, t0: sim.time });
     if (wh > 0) { this.econ?.onImpact(x, y, wh); this.state?.onImpact(d.side, x, y); this.infra?.onImpact(x, y, wh); }
+    this.maybeFieldFire(x, y, wh);
     // Радиусы: сплошного поражения и осколочный
     const rl = 3 + wh * 0.13, rf = 8 + wh * 0.45;
     const enemy = d.side === 'blue' ? 'red' : 'blue';
@@ -1545,6 +1574,7 @@ DroneWar.prototype.snapshot = function () {
     a: this.ad.map((a) => [a.id, a.side, a.type, R1(a.x), R1(a.y), R1(a.heading), AST.indexOf(a.state), a.dead ? 1 : 0, a.missiles, a.stock, Math.round(a.ammo), a.kills || 0, a.target ? 1 : 0, R1(a.aim), R1(a.spotted.blue || 0), R1(a.spotted.red || 0), a.roe, R1(a.until), R1(a.fireT), a.dest ? [Math.round(a.dest.x), Math.round(a.dest.y)] : 0]),
     c: this.objects.map((o) => o.comps.map((c) => [Math.round(c.hp * 100), STI.indexOf(c.state), Math.round(c.fire), c.shelter, c.burned ? 1 : 0])),
     ps: this.objects.map((o) => (o.supply === undefined ? -1 : Math.round(o.supply * 1000) / 1000)),
+    ff: (this.fieldFires || []).map((f) => [Math.round(f.x), Math.round(f.y), Math.round(f.r)]),
     l: this.lines.map((l) => (l.cut ? [Math.round(l.cut.x), Math.round(l.cut.y)] : 0)),
     m: this.missiles.map((m) => [R1(m.x), R1(m.y), Math.round(m.alt), m.side]),
     f: this.fx.filter((f) => t - f.t0 < 0.3 || (f.t !== 'tracer' && t - f.t0 < 0.3)).map((f) => [f.t, R1(f.x ?? f.x0), R1(f.y ?? f.y0), R1(f.x1 ?? 0), R1(f.y1 ?? 0), Math.round(f.alt || 0), f.side || '', f.heavy ? 1 : 0, f.small ? 1 : 0, f.wh || 0, f.v || 0]),
@@ -1639,6 +1669,7 @@ DroneWar.prototype.applySnapshot = function (s) {
   }
   if (s.gn) this.gens = s.gn.map((q) => ({ id: q[0], side: q[1], ps: q[2], x: q[3], y: q[4], angle: q[5], state: q[6], dead: !!q[7] }));
   if (s.tp) { const P = this.world.power; let ch = false; P.tps.forEach((q, i) => { const a = s.tp[i] === '1'; if (q.alive !== a) { q.alive = a; ch = true; } }); if (ch) P.version++; }
+  if (s.ff) this.fieldFires = s.ff.map(([x, y, r]) => ({ x, y, r }));
   if (s.pw) this.objects.forEach((o, i) => { const q = s.pw[i]; if (Array.isArray(q)) [o.shed, o.unstable, o.overT, o.avail, o.demand, o.trCap] = [q[0], !!q[1], q[2], q[3], q[4], q[5]]; else if (q) o.gen = q; });
   if (s.en) { this.wind = s.en[0]; ['blue', 'red'].forEach((sd, i) => { const S = this.sides[sd]; [S.autoShed, S.powerLoss, S.genBy] = [!!s.en[1][i][0], s.en[1][i][1], s.en[1][i][2]]; }); }
   if (s.n) this.nets = s.n.map((q) => { const xs = q[3].map((p) => p[0]), ys = q[3].map((p) => p[1]); const m = q[3][Math.floor(q[3].length / 2)]; return { id: q[0], side: q[1], done: !!q[2], line: q[3], w: q[4], x: m[0], y: m[1], bb: { x0: Math.min(...xs) - 12, y0: Math.min(...ys) - 12, x1: Math.max(...xs) + 12, y1: Math.max(...ys) + 12 } }; });
