@@ -12,7 +12,7 @@ import { CivTraffic } from './dwtraffic.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', elevator: 'ЭЛ', agro: 'МД', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 

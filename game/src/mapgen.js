@@ -345,6 +345,16 @@ export function infraLayout(kind, L = 0) {
       c('silo', -48, -18, 62, 30, { n: 'Силосный корпус №1' }), c('silo', 22, -18, 62, 30, { n: 'Силосный корпус №2' }),
       c('dryer', 74, -16, 16, 16, { n: 'Зерносушилка' }), c('hall', -30, 30, 90, 24, { n: 'Склад напольного хранения' }), c('ctrl', 60, 32, 18, 12, { n: 'Весовая' })] };
     case 'agro': return { w: 120, h: 80, comps: [c('garage', -22, -14, 64, 24, { n: 'Гараж сельхозтехники' }), c('canopy', 26, 16, 44, 20, { n: 'Навес для комбайнов' }), c('tank', 44, -20, 9, 9, { n: 'Ёмкость ГСМ' })] };
+    case 'housing': return { w: 160, h: 90, comps: [c('house', -40, -22, 64, 13, { n: 'Жилой дом №1' }), c('house', 40, -22, 64, 13, { n: 'Жилой дом №2' }), c('house', 0, 24, 96, 13, { n: 'Жилой дом №3' })] };
+    case 'hospital': return { w: 130, h: 90, comps: [c('house', -10, -14, 84, 16, { n: 'Главный корпус' }), c('house', 40, 24, 36, 14, { n: 'Приёмное отделение' }), c('ctrl', -45, 26, 18, 12, { n: 'Котельная' })] };
+    case 'school': return { w: 120, h: 90, comps: [c('house', -5, -18, 80, 14, { n: 'Учебный корпус' }), c('hall', 30, 22, 40, 20, { n: 'Спортзал' })] };
+    case 'mill': return { w: 160, h: 100, comps: [c('shop', -35, -16, 70, 30, { n: 'Мельничный цех' }), c('silo', 45, -18, 40, 20, { n: 'Силос муки' }), c('hall', 0, 30, 90, 20, { n: 'Хлебозавод и склад' })] };
+    case 'dairy': return { w: 150, h: 90, comps: [c('barn', -35, -12, 62, 18, { n: 'Коровник №1' }), c('barn', 35, -12, 62, 18, { n: 'Коровник №2' }), c('ctrl', 0, 28, 20, 12, { n: 'Молочный блок' })] };
+    case 'solar': return { w: 200, h: 130, comps: [c('pv', -55, -30, 80, 44, { n: 'Поле панелей №1' }), c('pv', 35, -30, 80, 44, { n: 'Поле панелей №2' }), c('pv', -10, 32, 100, 40, { n: 'Поле панелей №3' }), c('inv', 72, 24, 16, 12, { n: 'Инверторная' }), c('oru', 72, 46, 22, 14, { n: 'ОРУ 110 кВ' })] };
+    case 'bess': return { w: 90, h: 64, comps: [c('bess', -20, -4, 30, 26, { n: 'Контейнеры АКБ №1' }), c('bess', 20, -4, 30, 26, { n: 'Контейнеры АКБ №2' }), c('tr', 0, 22, 10, 8, { n: 'Трансформатор' })] };
+    case 'pontoon': return { w: Math.max(40, L), h: 10, comps: [c('pont', 0, 0, Math.max(40, L), 8, { n: 'Понтонный мост' })] };
+    case 'autopark': return { w: 130, h: 80, comps: [c('garage', -20, -12, 70, 24, { n: 'Гаражи' }), c('canopy', 30, 18, 50, 20, { n: 'Стоянка грузовиков' }), c('ctrl', -50, 25, 16, 10, { n: 'Диспетчерская' })] };
+    case 'reserve': return { w: 140, h: 90, comps: [c('hall', -25, 0, 70, 40, { n: 'Склад госрезерва' }), c('tank', 45, -20, 14, 14, { n: 'Резервуар ГСМ №1' }), c('tank', 45, 20, 14, 14, { n: 'Резервуар ГСМ №2' })] };
     case 'rembase': return { w: 170, h: 110, comps: [c('garage', -35, -15, 80, 34, { n: 'Гараж техники' }), c('hall', 50, 10, 50, 40, { n: 'Склад оборудования' }), c('ctrl', -60, 35, 26, 14, { n: 'Диспетчерская' })] };
     case 'bridge': {
       const n = Math.max(2, Math.round(L / 40));
@@ -977,18 +987,26 @@ function buildFields(world, rng, keep = null) {
 // То же, что делает place() при генерации: площадка с отсыпкой (для фоновой отрисовки карты),
 // занятость маски и подъезд к дороге. Вызывается в основном потоке и в воркере по событию.
 export function addSite(world, s) {
-  const lay = infraLayout(s.kind);
+  if (s.kind === 'pontoon') return { x0: s.x - 60, y0: s.y - 60, x1: s.x + 60, y1: s.y + 60 }; // на воде: без площадки
+  const lay = infraLayout(s.kind, s.L);
   const pad = lay.w >= 140 ? 45 : lay.w >= 60 ? 22 : 12;
   const poly = rectCorners(s.x, s.y, lay.w + 16, lay.h + 16, s.angle);
   const apron = rectCorners(s.x, s.y, lay.w + pad * 2, lay.h + pad * 2, s.angle);
   world.mask.stampPoly(apron, M.BUILD);
+  // поле под площадкой изымается (для агрофирмы оно пропадает)
+  const out = bboxOf(apron, 60);
+  for (const f of world.fields.query(bboxOf(apron, 0))) {
+    if (f.kind !== 'field' || f.removed) continue;
+    let cx = 0, cy = 0; for (const [x, y] of f.poly) { cx += x; cy += y; } cx /= f.poly.length; cy /= f.poly.length;
+    if (pointInPoly(cx, cy, apron) || apron.some(([x, y]) => pointInPoly(x, y, f.poly))) { f.removed = true; out.x0 = Math.min(out.x0, f.bbox.x0); out.y0 = Math.min(out.y0, f.bbox.y0); out.x1 = Math.max(out.x1, f.bbox.x1); out.y1 = Math.max(out.y1, f.bbox.y1); }
+  }
   addItem(world.areas, { kind: 'dwsite', poly, apron, site: s.kind, x: s.x, y: s.y, angle: s.angle, w: lay.w + 16, h: lay.h + 16, pad, gateQ: s.gateQ, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
   if (s.drive && s.drive.length > 1) {
     const line = resample(s.drive, 8);
     addItem(world.roads, { kind: 'road', type: 'dirt', line, width: ROAD_STYLE.dirt.width, built: true }, ROAD_STYLE.dirt.width + 6);
     world.mask.stampLine(line, ROAD_STYLE.dirt.stamp, M.ROAD);
   }
-  return bboxOf(apron, 60);
+  return out;
 }
 
 // События экономики для фоновой отрисовки и гостя: стройка (площадка) и смена культур на полях.

@@ -108,7 +108,7 @@ export function drawChunk(ctx, world, b, ppm) {
   const q = { x0: b.x0 - 10, y0: b.y0 - 10, x1: b.x1 + 10, y1: b.y1 + 10 };
 
   drawSteppeTexture(ctx, world, b, ppm);
-  const fl = world.fields.query(q);
+  const fl = world.fields.query(q).filter((f) => !f.removed); // под стройкой поле убрано
   fl.sort((a, b2) => (CROPS[b2.crop].soft ? 1 : 0) - (CROPS[a.crop].soft ? 1 : 0)); // пятна степи — под полями
   for (const f of fl) drawField(ctx, f, b, ppm);
   drawAreas(ctx, world, b, q, ppm);

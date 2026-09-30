@@ -6,9 +6,9 @@ import { DW_AD, DW_DRONES, COMP, GTU } from './dronewar.js';
 import { BUILD, upgradeCost } from './dwecon.js';
 import { SALE } from './dwlogi.js';
 
-const VALUE = { elevator: 5, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
+const VALUE = { elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
 const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
-const TARGET_COMPS = { elevator: ['silo', 'dryer'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const TARGET_COMPS = { elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 const D_RANGE = (D) => D.range || 99999;
 
@@ -63,7 +63,9 @@ export class DroneWarAI {
     if (!g.prep && t > this.next.strike) {
       const night = ((t / 3600) % 24) > 20 || ((t / 3600) % 24) < 5;
       // Эскалация: к третьей фазе удары вдвое чаще
-      this.next.strike = t + ((night ? 200 : 300) / this.k + this.sim.rng.float(0, 120)) / (1 + (g.endless ? 0.25 : 0.5) * g.phase());
+      // Богатая казна — удары чаще (деньги копить незачем, когда стройки окупились)
+      const rich = Math.min(2.5, 1 + Math.max(0, S.points - 800) / 2000);
+      this.next.strike = t + ((night ? 200 : 300) / this.k + this.sim.rng.float(0, 120)) / (1 + (g.endless ? 0.25 : 0.5) * g.phase()) / Math.sqrt(rich);
       this.strike();
     }
     this.nets();
@@ -234,7 +236,8 @@ export class DroneWarAI {
       ? (heavy || rng.chance(0.15) ? T.strike.find((d) => d.k === 'geran3') : null) || T.strike.find((d) => d.k === 'shahed')
       : heavy ? T.strike.find((d) => d.k === 'fp2') : rng.chance(0.5) ? T.strike.find((d) => d.k === 'lyutyi') : T.strike.find((d) => d.k === (best.kind === 'ps110' || best.kind === 'launch' ? 'bober' : 'fp1'));
     const unit = g.droneCost(this.side, main.k);
-    let n = Math.max(2, Math.min(Math.round(12 * this.k), Math.floor((budget * 0.8) / unit)));
+    const rich = Math.min(3, 1 + Math.max(0, S.points - 800) / 1500);
+    let n = Math.max(2, Math.min(Math.round(12 * this.k * rich), Math.floor((budget * 0.8) / unit)));
     if (n * unit > budget) n = Math.floor(budget / unit);
     // Пропускная способность стартовых позиций: 300 дронов разом не поднять
     const free = g.econ.launchFree(this.side);
@@ -292,8 +295,8 @@ export class DroneWarAI {
     for (const o of g.objs(side)) {
       if (!BUILD[o.kind] || o.build || (o.level || 1) >= 3 || o.comps.some((c) => c.state === 'destroyed')) continue;
       let gain = 0;
-      if (SALE[o.kind]) gain = o.stock > 0 ? 0.4 * SALE[o.kind].value * (60 / SALE[o.kind].every) * K : 0;
-      else if (o.kind === 'hub') gain = 0.12 * ((I.trade || 0) + (I.fuel || 0));
+      if (SALE[o.kind]) gain = o.stock > 0 ? (0.4 * SALE[o.kind].value * (60 / SALE[o.kind].every) * K) / logi.crowd(o) : 0;
+      else if (o.kind === 'hub') gain = o.stock >= 0.8 * g.logi.hubCap(o) ? 0.08 * ((I.trade || 0) + (I.fuel || 0)) : 0; // склад забит — нужен больше
       else if (o.kind === 'elevator') gain = (o.grain || 0) > 0.6 * E.elevCap(o) ? 0.3 * (I.agro || 0) + 2 : 0;
       else if (o.kind === 'launch') gain = this.launchShort >= 2 || this.S.points > 1500 ? 9 : 0;
       else if (o.kind === 'agro') gain = 1.2;
@@ -307,7 +310,8 @@ export class DroneWarAI {
       const kind = near.some((m) => m.kind === 'mall') || near.length < 2 ? 'market' : 'mall';
       if (near.length >= (c.capital ? 5 : 3)) continue;
       const p = this.spot(kind, c.x, c.y, 900, 2200);
-      if (p) out.push({ act: 'build', kind, x: p[0], y: p[1], cost: BUILD[kind].cost, gain: (kind === 'mall' ? 5 : 4) * (60 / SALE[kind].every) * K * 0.85 + 0.4, name: `${BUILD[kind].name} у города ${c.name}` });
+      const rival = L.markets.filter((m) => m.kind !== 'store' && Math.hypot(m.x - (p?.[0] ?? 0), m.y - (p?.[1] ?? 0)) < 3000).length;
+      if (p) out.push({ act: 'build', kind, x: p[0], y: p[1], cost: BUILD[kind].cost, gain: (kind === 'mall' ? 5 : 4) * (60 / SALE[kind].every) * K * 0.85 / (1 + 0.3 * rival) + 0.4, name: `${BUILD[kind].name} у города ${c.name}` });
     }
     // АЗС на трассе вдали от других заправок
     {
@@ -320,7 +324,8 @@ export class DroneWarAI {
         const d = Math.min(...L.fuels.map((m) => Math.hypot(m.x - q[0], m.y - q[1])), 1e9);
         if (d > bd) { bd = d; best = q; }
       }
-      if (best && bd > 5000) { const p = this.spot('fuel', best[0], best[1], 60, 350); if (p) out.push({ act: 'build', kind: 'fuel', x: p[0], y: p[1], cost: BUILD.fuel.cost, gain: SALE.fuel.value * (60 / SALE.fuel.every) * K * 0.8, name: 'АЗС на трассе' }); }
+      // выручка АЗС ограничена подвозом: чем больше заправок, тем меньше каждой достаётся бензовозов
+      if (best && bd > 5000) { const p = this.spot('fuel', best[0], best[1], 60, 350); if (p) out.push({ act: 'build', kind: 'fuel', x: p[0], y: p[1], cost: BUILD.fuel.cost, gain: SALE.fuel.value * (60 / SALE.fuel.every) * K * 0.8 * Math.min(1, 10 / Math.max(1, L.fuels.length)), name: 'АЗС на трассе' }); }
     }
     // Логистический хаб у города, далёкого от складов
     const hubs = g.objs(side, 'hub');
@@ -337,6 +342,23 @@ export class DroneWarAI {
       for (const f of E.farms) { if (f.side !== side) continue; const d = Math.min(...els.map((e) => Math.hypot(e.x - f.x, e.y - f.y)), 1e9); if (d * (1 + f.grain / 3000) > fd) { fd = d * (1 + f.grain / 3000); far = f; } }
       if (far) { const p = this.spot('elevator', far.x, far.y, 600, 2200); if (p) out.push({ act: 'build', kind: 'elevator', x: p[0], y: p[1], cost: BUILD.elevator.cost, gain: 0.35 * (I.agro || 0) + sum.farmGrain * 0.0004 + 2, name: `элеватор у ${far.name}` }); }
     }
+    // ----- развитие страны -----
+    const add = (kind, ax, ay, r0, r1, gain, name) => { if (gain <= 0 || S.points < 0) return; const p = this.spot(kind, ax, ay, r0, r1); if (p) out.push({ act: 'build', kind, x: p[0], y: p[1], cost: BUILD[kind].cost, gain, name }); };
+    const have = (kind) => g.objs(side, kind).length;
+    const labor = E.labor(side), tax = I.tax || 0, ind = I.industry || 0;
+    const city = cities[rng.int(0, cities.length - 1)];
+    if (city) {
+      if (sum.happy > 0.8 && have('housing') < 6) add('housing', city.x, city.y, 1200, 3500, 2.4 * K * sum.happy * labor + 0.6, `жилой квартал у города ${city.name}`);
+      if (have('hospital') < cities.length && !g.objs(side, 'hospital').some((o) => Math.hypot(o.x - city.x, o.y - city.y) < 6000)) add('hospital', city.x, city.y, 800, 3000, 0.04 * tax + (sum.happy < 0.8 ? 2 : 0.6), `больница в городе ${city.name}`);
+      if (labor < 0.95 && have('school') < 4) add('school', city.x, city.y, 800, 3000, (1 - labor) * 0.6 * (ind + tax) + 0.5, `школа и колледж в городе ${city.name}`);
+    }
+    if (sum.elevGrain > 4000 && have('mill') < 3) { const e = g.objs(side, 'elevator').sort((a, b) => (b.grain || 0) - (a.grain || 0))[0]; if (e) add('mill', e.x, e.y, 800, 4000, 3.5 * K, `мелькомбинат у элеватора «${e.name}»`); }
+    { const vs = g.world.settlements.filter((q) => q.side === side && q.type === 'village' && !g.objs(side, 'dairy').some((o) => Math.hypot(o.x - q.x, o.y - q.y) < 5000)); const v = vs[rng.int(0, Math.max(0, vs.length - 1))]; if (v && have('dairy') < 6) add('dairy', v.x, v.y, 400, 2000, 1.4 * K, `молочная ферма у села ${v.name}`); }
+    if (have('solar') < 5) { const ps = g.objs(side, 'ps110')[rng.int(0, g.objs(side, 'ps110').length - 1)]; if (ps) add('solar', ps.x, ps.y, 1000, 3500, S.supply < 0.97 ? (1 - S.supply) * (ind + tax) * 0.6 + 1.5 : 0.8, 'солнечная станция'); }
+    { const ps = g.objs(side, 'ps110').find((q) => (q.shed || 0) > 0 && !g.objs(side, 'bess').some((o) => o.ps === q.id || Math.hypot(o.x - q.x, o.y - q.y) < 1500)); if (ps) add('bess', ps.x, ps.y, 300, 1300, 2.5, `накопитель энергии у ${ps.name}`); }
+    { const br = g.objs(side, 'bridge').find((b) => b.btype !== 'rail' && g.bridgeCap(b) === 0 && !g.objects.some((o) => o.kind === 'pontoon' && o.bridge === b.id)); if (br) { const s0 = E.siteFor(side, 'pontoon', br.x, br.y); if (!s0.err) out.push({ act: 'build', kind: 'pontoon', x: br.x, y: br.y, cost: BUILD.pontoon.cost, gain: 5, name: `понтонная переправа у моста «${br.name.replace(/^Мост через /, '')}»` }); } }
+    if ((sum.farmGrain > 12000 || this.S.stats.lostAD > 6) && have('autopark') < 3) { const c = cities[0]; if (c) add('autopark', c.x, c.y, 1500, 4000, 2, 'автобаза'); }
+    if (S.spare === 0 && have('reserve') < 2) { const c = cities[rng.int(0, cities.length - 1)]; if (c) add('reserve', c.x, c.y, 2000, 5000, 3, 'склад госрезерва'); }
     // Стартовая позиция, если пусковые не успевают
     if ((this.launchShort >= 3 || S.points > 1500) && g.objs(side, 'launch').length < 8) {
       const x = g.frontX + (side === 'blue' ? -1 : 1) * rng.float(9000, 14000), y = rng.float(3000, g.world.H - 3000);

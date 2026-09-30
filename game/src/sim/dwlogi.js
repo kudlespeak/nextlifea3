@@ -226,6 +226,16 @@ export class DWLogistics {
   gate(o) { return o.gate || [o.x, o.y]; }
   // Торговля с учётом уровня объекта (реконструкция: больше выручки и места на складе)
   sale(m) { const S = SALE[m.kind], L = m.level || 1; return { value: S.value * (1 + 0.4 * (L - 1)), cap: Math.round(S.cap * (1 + 0.5 * (L - 1))), load: S.load, every: S.every }; }
+  // Конкуренция: соседние магазины того же типа делят покупателей (продажи реже)
+  crowd(m) {
+    const n0 = this.g.objects.length;
+    if (m._crowdN === n0) return m._crowd;
+    const R = m.kind === 'fuel' ? 5000 : m.kind === 'store' ? 1500 : 3000;
+    const same = m.kind === 'fuel' ? this.side[m.side].fuels : this.side[m.side].markets.filter((q) => (q.kind === 'store') === (m.kind === 'store'));
+    const k = same.filter((q) => q !== m && Math.hypot(q.x - m.x, q.y - m.y) < R).length;
+    m._crowdN = n0; m._crowd = 1 + 0.3 * k;
+    return m._crowd;
+  }
   hubCap(h) { return Math.round(45 * (1 + 0.5 * ((h.level || 1) - 1)) * (h === this.side[h.side]?.hub ? 1 : 0.7)); }
   // Ближайшая действующая ремонтная база (РЭС) к точке
   baseNear(side, x, y) {
@@ -357,7 +367,7 @@ export class DWLogistics {
         const sup = this.supplyAt(side, m);
         m.saleT -= dt * (0.25 + 0.75 * sup) * (ok ? 1 : 0);
         if (m.saleT <= 0) {
-          m.saleT += SALE[m.kind].every;
+          m.saleT += SALE[m.kind].every * this.crowd(m);
           if (m.stock >= 1) {
             const val = this.sale(m).value * this.g.incomeK(side);
             m.stock--; S.points += val; L.stats.sold++;

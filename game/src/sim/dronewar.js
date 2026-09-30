@@ -86,6 +86,10 @@ export const COMP = {
   inv: { name: 'инверторная станция', cost: 30, time: 150, fire: 0.5, hard: 0.8 },
   silo: { name: 'силосный корпус', cost: 80, time: 360, fire: 0.7, hard: 1.6, big: true }, // зерновая пыль и зерно горят долго
   dryer: { name: 'зерносушилка', cost: 45, time: 200, fire: 0.8, hard: 0.9 },
+  house: { name: 'корпус', cost: 60, time: 300, fire: 0.5, hard: 1.4, big: true },
+  barn: { name: 'коровник', cost: 30, time: 150, fire: 0.6, hard: 0.9, big: true },
+  bess: { name: 'контейнеры АКБ', cost: 90, time: 240, fire: 0.9, hard: 0.7 },
+  pont: { name: 'понтоны', cost: 40, time: 150, fire: 0, hard: 0.8 },
 };
 // Потеря узла бьёт по устойчивости тыла (разрушен — полностью, выведен из строя — наполовину)
 const SHOCK = { silo: 0.8, dryer: 0.3, hgen: 2, wt: 0.3, pv: 0.3, inv: 0.4, unit: 2, at: 2, gsu: 1.5, span: 1.5, tr: 1, oru: 1, shop: 1, tank: 0.6, bunker: 0.6, hall: 0.6, chimney: 0.6, tower: 0.6, coal: 0.5, launcher: 0.3, ctrl: 0.3, pump: 0.3, rack: 0.2, store: 0.3 };
@@ -99,19 +103,19 @@ const REPAIR_K = 0.55;
 // Время ремонта сжато под темп партии (25 мин): замена трансформатора — минуты, а не часы
 const REPAIR_T = 0.5;
 // По гражданским объектам удары не наносятся (магазины, ТЦ, погранпереход)
-export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel', 'agro']);
+export const CIVIL = new Set(['mall', 'market', 'store', 'border', 'firest', 'rembase', 'fuel', 'agro', 'housing', 'hospital', 'school', 'mill', 'dairy', 'autopark']);
 export const SHELTER = [null, { name: 'Габионы и мешки (защита от осколков)', cost: 35, time: 90 }, { name: 'Бетонное укрытие (защита от прямого попадания)', cost: 110, time: 300 }];
 // Сетка над пролётом моста: лёгкие дроны (до 25 кг БЧ: «Бобёр», «Ланцет», Warmate) рвутся на ней
 export const NET = [null, { name: 'Антидроновая сетка над пролётом', cost: 30, time: 150 }];
 export const shelterDef = (c, level) => (COMP[c.k]?.net ? NET[level] : SHELTER[level]);
-export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', agro: 'Мехдвор', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
+export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', agro: 'Мехдвор', housing: 'Жилой квартал', hospital: 'Больница', school: 'Школа', mill: 'Мелькомбинат', dairy: 'Молочная ферма', solar: 'Солнечная станция', bess: 'Накопитель энергии', pontoon: 'Понтонная переправа', autopark: 'Автобаза', reserve: 'Госрезерв', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
 
 // Западные образцы ПВО точнее, у Кардагора — массовость и ложные цели
 const AD_EFF = { blue: 1.1, red: 1.0 };
 const DEMAND = { 0: 260, 1: 200, 2: 200 }; // МВт на одну ПС 110 кВ (столицу питают две)
 const TR_CAP = { 0: 170, 1: 130, 2: 130 }; // МВт на трансформатор 110/10 кВ
 // Генерация по типам: МВт на агрегат
-const GEN = { tpp: 250, hpp: 55, chp: 70, wt: 4.5, pv: 7.5, import: 250, gtu: 25 };
+const GEN = { tpp: 250, hpp: 55, chp: 70, wt: 4.5, pv: 7.5, import: 250, gtu: 25 }; // солнечные станции игрока: 3 поля × 7,5 МВт
 // Мобильная газотурбинная установка: подключается к шинам 10 кВ подстанции 110 кВ
 export const GTU = { cost: 220, deploy: 150, max: 2, name: 'Мобильная ГТУ 25 МВт' };
 const LINE_CAP = { 330: 900, 110: 260 };
@@ -480,7 +484,7 @@ export class DroneWar {
         return all('unit').reduce((a, u, i) => a + (this.compOk(u) && gsus[i] && this.compOk(gsus[i]) ? GEN.chp : 0), 0) * (0.5 + 0.5 * frac('chimney')) * ctrl;
       }
       case 'wpp': return ok('gsu').length ? ok('wt').length * GEN.wt * this.wind : 0;
-      case 'spp': return ok('pv').length * GEN.pv * daylight(t) * (0.3 + 0.7 * frac('inv'));
+      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(t) * (0.3 + 0.7 * frac('inv'));
     }
     return 0;
   }
@@ -505,14 +509,20 @@ export class DroneWar {
       let totalGen = 0;
       // Станции
       for (const o of this.objs(side)) {
-        if (!GEN[o.kind] && !['tpp', 'hpp', 'chp', 'wpp', 'spp'].includes(o.kind)) continue;
+        if (!GEN[o.kind] && !['tpp', 'hpp', 'chp', 'wpp', 'spp', 'solar'].includes(o.kind)) continue;
+        if (o.build && !o.build.up) continue;
         const kv = o.kind === 'tpp' || o.kind === 'hpp' ? 330 : 110;
         const g = this.genOf(o);
         o.gen = g;
-        genBy[o.kind] = (genBy[o.kind] || 0) + g;
+        const key = o.kind === 'solar' ? 'spp' : o.kind;
+        genBy[key] = (genBy[key] || 0) + g;
         totalGen += g;
         E(0, node(`${o.id}:${kv}`), g);
+        // построенная станция — кабелем 110 кВ к ближайшей подстанции
+        if (o.built && o.ps != null) { E(node(`${o.id}:110`), node(`${o.ps}:110`), 150); }
       }
+      // накопители энергии отдают мощность прямо на шины 10 кВ своей подстанции
+      for (const x of this.econ.gridExtras(side)) { E(0, node(`${x.ps}:10`), x.mw); genBy.bess = (genBy.bess || 0) + x.mw; totalGen += x.mw; }
       const imp = this.lines.find((l) => l.a === 'import' && l.side === side);
       const impCap = imp && !imp.cut ? GEN.import : 0;
       genBy.import = impCap; totalGen += impCap;
@@ -671,10 +681,11 @@ export class DroneWar {
       avg('trade', rate('trade')); avg('fuel', rate('fuel')); avg('transit', rate('transit')); S.inc.agro = (S.inc.agro ?? 0) * 0.97 + rate('agro') * 0.03; // экспорт идёт партиями — среднее за ~3 мин
       S.tradeAvg = S.inc.trade + S.inc.fuel + S.inc.transit;
       S.inc.tax = tax;
+      S.inc.other = this.econ.extraIncome(side); // инвестиции и сборы на армию
       S.inc.upkeep = -upkeep;
       S.inc.wages = -S.crews.length * WAGE;
-      S.income = perMin + S.tradeAvg + S.inc.agro + tax + S.inc.wages - upkeep;
-      if (!this.prep) { S.points += ((perMin + tax + S.inc.wages - upkeep) * dt) / 60; S.stats.spent += ((S.crews.length * WAGE + upkeep) * dt) / 60; }
+      S.income = perMin + S.tradeAvg + S.inc.agro + tax + S.inc.other + S.inc.wages - upkeep;
+      if (!this.prep) { S.points += ((perMin + tax + S.inc.other + S.inc.wages - upkeep) * dt) / 60; S.stats.spent += ((S.crews.length * WAGE + upkeep) * dt) / 60; }
       if (!this.prep) this.moraleTick(side, dt);
       // История снабжения для итога
       S.history.push(S.supply);
@@ -806,9 +817,14 @@ export class DroneWar {
     return side === 'blue' ? x > rp[0] : x < rp[0];
   }
   bridgeCap(b) {
+    if (!b) return 1;
     const spans = b.comps.filter((c) => c.k === 'span');
-    if (spans.some((c) => c.state === 'destroyed')) return 0;
-    return spans.some((c) => c.state === 'damaged') ? 0.5 : 1;
+    const cap = spans.some((c) => c.state === 'destroyed') ? 0 : spans.some((c) => c.state === 'damaged') ? 0.5 : 1;
+    if (cap >= 0.5) return cap;
+    // понтонная переправа рядом: машины идут медленно, но идут
+    if (b.pontoon === undefined || this.sim.time > (b._pT || 0)) { b._pT = this.sim.time + 5; b.pontoon = this.objects.find((o) => o.kind === 'pontoon' && o.bridge === b.id) || null; }
+    const p = b.pontoon;
+    return p && !(p.build && !p.build.up) && p.comps.some((c) => c.state !== 'destroyed') ? 0.4 : cap;
   }
 
   // ---------- Ремонт ----------

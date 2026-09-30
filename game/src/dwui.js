@@ -3,7 +3,7 @@
 
 import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef, GTU, PACE } from './sim/dronewar.js';
 import { VEH } from './sim/dwlogi.js';
-import { BUILD, STAGE_NAME, upgradeCost, UPKEEP, LAUNCH_PER } from './sim/dwecon.js';
+import { BUILD, BUILD_GROUPS, STAGE_NAME, upgradeCost, UPKEEP, LAUNCH_PER } from './sim/dwecon.js';
 const CREW_ST = { travel: 'едет к объекту', waitfire: 'ждёт, пока потушат', work: 'ремонтирует' };
 
 const $ = (id) => document.getElementById(id);
@@ -60,7 +60,10 @@ export class DWUI {
       h += `<div id="dw-crews"></div><div class="dw-sub">Повреждено</div><div id="dw-dmg"></div>`;
     } else if (this.state.tab === 'econ') {
       h += `<div class="dw-note">Гражданская экономика зарабатывает, армия тратит. Стройте у дороги на своей земле: выберите объект и кликните по карте (ПКМ — отмена). Реконструкция до 3-го уровня — в карточке объекта.</div>`;
-      for (const [k, B] of Object.entries(BUILD)) h += `<div class="dw-row${this.state.mode === 'build:' + k ? ' sel' : ''}" data-build="${k}" title="${esc(B.desc)}"><div><b>${esc(B.name)}</b><small>${esc(B.desc)} · ${Math.round(B.time / 60)} мин</small></div><span class="cost">${B.cost}</span></div>`;
+      for (const [grp, kinds] of BUILD_GROUPS) {
+        h += `<div class="dw-sub">${esc(grp)}</div>`;
+        for (const k of kinds) { const B = BUILD[k]; h += `<div class="dw-row${this.state.mode === 'build:' + k ? ' sel' : ''}" data-build="${k}" title="${esc(B.desc)}"><div><b>${esc(B.name)}</b><small>${esc(B.desc)} · ${Math.round(B.time / 60)} мин</small></div><span class="cost">${B.cost}</span></div>`; }
+      }
       h += `<div id="dw-econ"></div>`;
     }
     $('dw-body').innerHTML = h;
@@ -183,7 +186,7 @@ export class DWUI {
   econ() {
     const g = this.g, side = this.side, S = this.S, I = S.inc || {}, E = g.econ.summary(side);
     const k = (v) => (v >= 10000 ? `${(v / 1000).toFixed(0)} тыс.` : Math.round(v).toLocaleString('ru-RU'));
-    const plus = [['промышленность', I.industry], ['налоги', I.tax], ['магазины', I.trade], ['АЗС', I.fuel], ['фуры (пошлины)', I.transit], ['экспорт зерна', I.agro]];
+    const plus = [['промышленность', I.industry], ['налоги', I.tax], ['магазины и производство', I.trade], ['АЗС', I.fuel], ['фуры (пошлины)', I.transit], ['экспорт зерна', I.agro], ['инвестиции и сборы', I.other]];
     const minus = [['зарплата бригад', -(I.wages || 0)], ['содержание армии', -(I.upkeep || 0)]];
     const civ = plus.reduce((a, [, v]) => a + (v || 0), 0), mil = minus.reduce((a, [, v]) => a + (v || 0), 0);
     let h = `<div class="dw-sub">Бюджет, оч/мин</div><div class="dw-income"><b style="color:var(--ok)">+${civ.toFixed(1)}</b> гражданская экономика: ${plus.map(([n, v]) => `${n} ${(v || 0).toFixed(1)}`).join(' · ')}<br><b class="bad">−${mil.toFixed(1)}</b> ${minus.map(([n, v]) => `${n} ${v.toFixed(1)}`).join(' · ')}<br>Расходы на удары и ПВО — разовые (пуски, позиции, ракеты).</div>`;
@@ -232,6 +235,10 @@ export class DWUI {
       if (own && (o.build || BUILD[o.kind] || o.grain !== undefined)) {
         const lv = o.level || 1;
         let e = `<div class="dw-income">Уровень <b>${lv}</b>${o.grain !== undefined ? ` · зерна ${Math.round(o.grain)} т из ${Math.round(g.econ.elevCap(o))}` : ''}${o.kind === 'hub' ? ` · на складе ${o.stock}` : ''}`;
+        if (o.kind === 'bess') e += ` · заряд ${Math.round((o.charge ?? 1) * 100)}%`;
+        if (o.kind === 'solar') e += ` · выработка ${Math.round(o.gen || 0)} МВт`;
+        if (o.idle) e += ` · <span class="warn">простой: ${esc(o.idle)}</span>`;
+        if (o.kind === 'pontoon') e += ` · ${g.obj(o.bridge) && g.bridgeCap(g.obj(o.bridge)) === 0.4 ? 'машины идут по понтонам' : 'в резерве: мост цел'}`;
         if (o.build) e += ` · <span class="warn">${o.build.up ? 'реконструкция' : 'строится'}: ${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%</span>`;
         else if (BUILD[o.kind] && lv < 3) e += ` <button data-upg="${o.id}" title="реконструкция: больше выручки и вместимости">Реконструкция до ${lv + 1} ур. — ${upgradeCost(o)}</button>`;
         h += e + '</div>';

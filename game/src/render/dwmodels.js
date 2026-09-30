@@ -171,6 +171,30 @@ function oilTank(M, w, st) {
   // Обвалование (земляной вал) — общее для площадки, у каждого — кольцо
   M.cylZ(0, 0, r + 4, r + 3.4, 0, 1.2, EARTH, 20, EARTH);
 }
+// Коровник: длинное здание с двускатной крышей
+function barn(M, w, h, st) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 2, SOOT); return; }
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 3.2, st === 'damaged' ? SOOT : mat('#d6d0c2'));
+  M.loft([[3.2, rect(-w / 2 - 0.4, w / 2 + 0.4, -h / 2 - 0.6, h / 2 + 0.6)], [6, rect(-w / 2 - 0.4, w / 2 + 0.4, -0.2, 0.2)]], mat('#7e6a55'));
+}
+// Накопитель энергии: ряды контейнеров с батареями
+function bessBlock(M, w, h, st) {
+  const n = Math.max(2, Math.round(w / 7));
+  for (let k = 0; k < n; k++) for (const row of [-1, 1]) {
+    const x0 = -w / 2 + k * (w / n) + 0.3, x1 = x0 + w / n - 0.6, y0 = row < 0 ? -h / 2 : 0.6, y1 = row < 0 ? -0.6 : h / 2;
+    M.box(x0, x1, y0, y1, 0, st === 'destroyed' && (k + row) % 2 ? 0.8 : 2.6, st === 'destroyed' ? SOOT : mat('#e2e2de', { fn(o, x, y, z, nn) { if (Math.abs(nn[2]) < 0.5 && fr(x * 1.4) < 0.08) mix(o, [90, 100, 110], 0.3); } }));
+  }
+}
+// Понтонный мост: секции на воде и настил
+function pontoon(M, w, h, st) {
+  const n = Math.max(3, Math.round(w / 7));
+  for (let k = 0; k < n; k++) {
+    if (st === 'destroyed' && k % 3 === 1) continue;
+    const x0 = -w / 2 + k * (w / n), x1 = x0 + w / n - 0.4;
+    M.box(x0, x1, -h / 2, h / 2, -0.2, 0.7, mat(st === 'damaged' && k % 2 ? '#3a3a34' : '#5b6448'));
+  }
+  if (st !== 'destroyed') M.box(-w / 2, w / 2, -h / 2 + 1.2, h / 2 - 1.2, 0.7, 0.9, mat('#6e6a5e'));
+}
 // Силосный корпус элеватора: два ряда бетонных банок и галерея транспортёра поверху
 function siloBlock(M, w, h, st) {
   const n = Math.max(3, Math.round(w / 10)), r = Math.min(w / (n * 2), h / 4), H = st === 'destroyed' ? 9 : 30;
@@ -569,6 +593,10 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'shop': workshop(M, w, h, st); break;
     case 'hall': warehouse(M, w, h, st); break;
     case 'silo': siloBlock(M, w, h, st); break;
+    case 'house': building(M, w, h, h >= 15 ? 15 : 27, st, mat('#c9c4b8', { fn(o, x, y, z) { if (fr(z * 0.35) < 0.08) mix(o, [90, 88, 84], 0.25); } }), mat('#8d8b86')); break;
+    case 'barn': barn(M, w, h, st); break;
+    case 'bess': bessBlock(M, w, h, st); break;
+    case 'pont': pontoon(M, w, h, st); break;
     case 'dryer': dryerTower(M, w, st); break;
     case 'canopy': canopy(M, w, h, st); break;
     case 'fcanopy': fuelCanopy(M, w, h, st, side); break;
