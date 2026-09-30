@@ -227,36 +227,48 @@ function lowFreqImage(G, fn, b) {
 }
 
 // Мелкая фактура вблизи: пучки травы, стерня, комья земли (штрихи двух тонов одной заливкой)
-function drawMicro(ctx, world, b, ppm) {
-  const step = ppm >= 8 ? 0.3 : ppm >= 4 ? 0.5 : 0.9;
-  const len = step * 0.9;
+// Микротекстура травы (штрихи и крапинки): плитка 97×97 м, нарисованная один раз на масштаб и
+// привязанная к мировым координатам. Дороги, вода и дома рисуются поверх, так что маска не нужна
+const MICRO_T = 97;
+const microTiles = new Map();
+function microPattern(ctx, ppm) {
+  let pat = microTiles.get(ppm);
+  if (pat) return pat;
+  const step = ppm >= 8 ? 0.3 : ppm >= 4 ? 0.5 : 0.9, len = step * 0.9;
+  const px = Math.round(MICRO_T * ppm), k = px / MICRO_T;
+  const cv = mkCanvas(px, px), g = cv.getContext('2d');
+  g.scale(k, k);
   const light = new Path2D(), dark = new Path2D(), dots = new Path2D();
-  const mask = world.mask;
-  const skip = M.ROAD | M.WATER | M.BUILD;
-  const x0 = Math.floor(b.x0 / step) * step, y0 = Math.floor(b.y0 / step) * step;
-  for (let y = y0; y < b.y1; y += step) {
-    const iy = Math.round(y / step);
-    for (let x = x0; x < b.x1; x += step) {
-      const ix = Math.round(x / step);
+  const n = Math.round(MICRO_T / step);
+  for (let iy = 0; iy < n; iy++)
+    for (let ix = 0; ix < n; ix++) {
       const h = hash2(ix, iy, 991);
       if (h < 0.35) continue;
-      const px = x + hash2(ix, iy, 13) * step, py = y + hash2(ix, iy, 29) * step;
-      if (mask.has(px, py, skip)) continue;
-      if (h > 0.93) { dots.moveTo(px + len * 0.2, py); dots.arc(px, py, len * 0.2, 0, Math.PI * 2); continue; }
-      const a = hash2(ix, iy, 7) * Math.PI;
-      const dx = Math.cos(a) * len * 0.5, dy = Math.sin(a) * len * 0.5;
-      const path = h < 0.64 ? dark : light;
-      path.moveTo(px - dx, py - dy); path.lineTo(px + dx, py + dy);
+      const x = ix * step + hash2(ix, iy, 13) * step, y = iy * step + hash2(ix, iy, 29) * step;
+      // у краёв плитки — копии штриха по ту сторону, чтобы шов не был виден
+      for (const ox of x < 1 ? [0, MICRO_T] : x > MICRO_T - 1 ? [0, -MICRO_T] : [0])
+        for (const oy of y < 1 ? [0, MICRO_T] : y > MICRO_T - 1 ? [0, -MICRO_T] : [0]) {
+          const qx = x + ox, qy = y + oy;
+          if (h > 0.93) { dots.moveTo(qx + len * 0.2, qy); dots.arc(qx, qy, len * 0.2, 0, Math.PI * 2); continue; }
+          const a = hash2(ix, iy, 7) * Math.PI, dx = Math.cos(a) * len * 0.5, dy = Math.sin(a) * len * 0.5;
+          const path = h < 0.64 ? dark : light;
+          path.moveTo(qx - dx, qy - dy); path.lineTo(qx + dx, qy + dy);
+        }
     }
-  }
-  ctx.lineWidth = step * 0.16;
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = 'rgba(40,44,18,0.22)';
-  ctx.stroke(dark);
-  ctx.strokeStyle = 'rgba(214,206,150,0.2)';
-  ctx.stroke(light);
-  ctx.fillStyle = 'rgba(60,48,30,0.22)';
-  ctx.fill(dots);
+  g.lineWidth = step * 0.16; g.lineCap = 'round';
+  g.strokeStyle = 'rgba(40,44,18,0.22)'; g.stroke(dark);
+  g.strokeStyle = 'rgba(214,206,150,0.2)'; g.stroke(light);
+  g.fillStyle = 'rgba(60,48,30,0.22)'; g.fill(dots);
+  pat = { cv, k };
+  microTiles.set(ppm, pat);
+  return pat;
+}
+function drawMicro(ctx, world, b, ppm) {
+  const { cv, k } = microPattern(ctx, ppm);
+  const pat = ctx.createPattern(cv, 'repeat');
+  pat.setTransform(new DOMMatrix([1 / k, 0, 0, 1 / k, 0, 0])); // плитка в метрах, от начала мира
+  ctx.fillStyle = pat;
+  ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
 }
 
 // Крупные светлые/тёмные разводы поверх полей (влажность, рельеф)
@@ -542,7 +554,7 @@ function drawArea(ctx, a, b, ppm) {
         // проезды не идут сквозь сооружения: продольный — по ближайшей к оси свободной полосе,
         // от ворот — по свободной полосе до продольного
         const band = siteDrive(a);
-        if (!paved && band.v !== null) { ctx.fillStyle = 'rgba(70,70,66,0.55)'; ctx.fillRect(-hw, band.v - 4, a.w, 8); }
+        if (!paved && band.v !== null && a.w > 60) { ctx.fillStyle = 'rgba(70,70,66,0.55)'; ctx.fillRect(-hw, band.v - 4, a.w, 8); }
         if (a.gateQ !== undefined && band.g) {
           ctx.fillStyle = paved ? 'rgba(55,56,54,0.9)' : 'rgba(78,76,70,0.8)';
           const [x, y, w, h] = band.g; ctx.fillRect(x, y, w, h);
@@ -1005,6 +1017,17 @@ function junctions(world) {
   return out;
 }
 // ---------- Здания ----------
+// Выпуклая оболочка точек контура и тех же точек, сдвинутых на (s, s); обход — всегда против часовой
+function shadowHull(poly, s) {
+  const pts = [];
+  for (const [x, y] of poly) pts.push([x, y], [x + s, y + s]);
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
 function drawBuildings(ctx, world, q, ppm) {
   const list = world.buildings.query(q);
   // Тени: одна общая заливка
@@ -1016,29 +1039,68 @@ function drawBuildings(ctx, world, q, ppm) {
       ctx.arc(bd.x + s, bd.y + s, bd.r, 0, Math.PI * 2);
       continue;
     }
-    // Тень = объединение «вытянутых» рёбер; все четырёхугольники в одной
-    // ориентации, чтобы при nonzero-заливке они не вычитались друг из друга
-    const p = bd.poly;
-    for (let i = 0; i < 4; i++) {
-      const a = p[i], c = p[(i + 1) % 4];
-      const quad = [a, c, [c[0] + s, c[1] + s], [a[0] + s, a[1] + s]];
-      let area = 0;
-      for (let k = 0; k < 4; k++) {
-        const u = quad[k], v = quad[(k + 1) % 4];
-        area += u[0] * v[1] - v[0] * u[1];
-      }
-      if (area < 0) quad.reverse();
-      ctx.moveTo(quad[0][0], quad[0][1]);
-      for (let k = 1; k < 4; k++) ctx.lineTo(quad[k][0], quad[k][1]);
-      ctx.closePath();
-    }
+    // Тень выпуклого дома = выпуклая оболочка контура и его сдвига (шестиугольник): один контур на
+    // дом вместо четырёх перекрывающихся — заливка в разы дешевле
+    const h = shadowHull(bd.poly, s);
+    ctx.moveTo(h[0][0], h[0][1]);
+    for (let k = 1; k < h.length; k++) ctx.lineTo(h[k][0], h[k][1]);
+    ctx.closePath();
   }
   ctx.fillStyle = 'rgba(18,18,12,0.42)';
   ctx.fill('nonzero');
 
   // Сначала северные: фасад южного здания должен перекрывать крышу северного (вид с наклоном с юга)
   list.sort((a, b) => a.y - b.y);
+  if (ppm < 1) { drawBuildingsFar(ctx, list, ppm); return; }
   for (const bd of list) drawBuilding(ctx, bd, ppm);
+}
+
+// Издали (меньше 1 пикс/м) — тысячи домов на чанк: стены, крыши и скаты одного цвета собираются
+// в один путь (порядок «стены → крыши → скаты» издали неотличим от посчитанного по дому)
+const FAR_STYLES = new Set(['gable', 'flat', 'barn', 'hangar', 'shed']);
+function drawBuildingsFar(ctx, list, ppm) {
+  const walls = new Map(), roofs = new Map(), facets = new Map();
+  const add = (m, k, pts) => { let a = m.get(k); if (!a) m.set(k, (a = [])); a.push(pts); };
+  for (const bd of list) {
+    if (!FAR_STYLES.has(bd.style) || bd.collapsed || (bd.ruined && bd.interior)) { drawBuilding(ctx, bd, ppm); continue; }
+    const p = bd.poly;
+    if (ppm >= 0.5) {
+      const H = bd.height || 4, D = H * FACADE_K;
+      const pal = WALLS[bd.style] || WALLS.gable, seed = Math.floor(bd.x * 3 + bd.y * 5);
+      const base = pal[Math.floor(hash2(seed, 1, 5) * pal.length)];
+      let area = 0;
+      for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; area += a[0] * b[1] - b[0] * a[1]; }
+      const orient = area > 0 ? 1 : -1;
+      for (let i = 0; i < p.length; i++) {
+        const a = p[i], b = p[(i + 1) % p.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (L < 0.5) continue;
+        const nx = ((b[1] - a[1]) / L) * orient, ny = (-(b[0] - a[0]) / L) * orient;
+        if (ny <= 0.05) continue;
+        const Dq = D * ny;
+        add(walls, litWall(base, -nx * 0.18 - 0.2), [a, b, [b[0], b[1] + Dq], [a[0], a[1] + Dq]]);
+      }
+    }
+    add(roofs, bd.roof, p);
+    if (bd.style === 'gable' || bd.style === 'barn') {
+      const c = Math.cos(bd.angle), s = Math.sin(bd.angle), long = bd.w >= bd.h;
+      const W = (u, v) => [bd.x + u * c - v * s, bd.y + u * s + v * c];
+      const L = long ? bd.w / 2 : bd.h / 2, Sd = long ? bd.h / 2 : bd.w / 2;
+      const LW = (a, b) => (long ? W(a, b) : W(b, a));
+      const n1 = long ? [-s, c] : [c, s];
+      for (const sg of [-1, 1]) {
+        const k = (sg * n1[0]) * SUN[0] + (sg * n1[1]) * SUN[1];
+        const col = k >= 0 ? `rgba(255,250,235,${(Math.round(k * 10) / 10 * 0.22 * 0.8).toFixed(3)})` : `rgba(0,0,0,${(Math.round(-k * 10) / 10 * 0.22 * 1.2).toFixed(3)})`;
+        add(facets, col, [LW(-L, sg * Sd), LW(L, sg * Sd), LW(L, 0), LW(-L, 0)]);
+      }
+    }
+  }
+  for (const m of [walls, roofs, facets])
+    for (const [col, polys] of m) {
+      ctx.beginPath();
+      for (const q of polys) pathPoly(ctx, q);
+      ctx.fillStyle = col;
+      ctx.fill('nonzero');
+    }
 }
 
 // ---------- Фасады (псевдо-3D) ----------
@@ -1052,6 +1114,19 @@ const WALLS = {
 };
 export const FACADE_K = 0.42;
 
+// Цвет стены с учётом освещения (k > 0 — светлее, < 0 — темнее); кэш — стен тысячи, цветов десятки
+const LIT = new Map();
+function litWall(hex, k) {
+  const key = hex + (Math.round(k * 50) / 50);
+  let v = LIT.get(key);
+  if (!v) {
+    const n = parseInt(hex.slice(1), 16), ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    const t = k > 0 ? 255 : 0, a = Math.min(1, Math.abs(k));
+    v = `rgb(${ch.map((c) => Math.round(c + (t - c) * a)).join(',')})`;
+    LIT.set(key, v);
+  }
+  return v;
+}
 function drawFacade(ctx, bd, ppm) {
   const p = bd.poly;
   const H = bd.height || 4;
@@ -1075,9 +1150,10 @@ function drawFacade(ctx, bd, ppm) {
     const Dq = D * ny; // косая стена видна уже
     const quad = [a, b, [b[0], b[1] + Dq], [a[0], a[1] + Dq]];
     ctx.beginPath(); pathPoly(ctx, quad);
-    ctx.fillStyle = base; ctx.fill();
     // Освещение: солнце с северо-запада — западные грани светлее, восточные темнее; низ темнее (земля, тень)
     const k = -nx * 0.18 - 0.06;
+    if (ppm < 1) { ctx.fillStyle = litWall(base, k - 0.14); ctx.fill(); continue; } // издали — одна заливка готовым цветом
+    ctx.fillStyle = base; ctx.fill();
     ctx.fillStyle = k > 0 ? `rgba(255,250,235,${k})` : `rgba(0,0,0,${-k})`;
     ctx.fill();
     const g = ctx.createLinearGradient(a[0], a[1], a[0], a[1] + Dq);

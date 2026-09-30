@@ -786,7 +786,8 @@ function generateDroneWarWorld(seed) {
       place(side, 'fuel', `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${ct.name}`, ct.c[0] + Math.cos(a) * 1100 * ct.sc, ct.c[1] + Math.sin(a) * 900 * ct.sc,
         { forbid: cityForbid, step: 20, paved: true, extra: { city: i, settlement: ct.name } });
     });
-    for (const v of villages) if (v.side === side) place(side, 'store', `Магазин, ${v.name}`, v.c[0], v.c[1], { forbid: cityForbid, step: 20, extra: { settlement: v.name, village: true } });
+    // магазин — на свободном месте у улицы, не на огородах дворов
+    for (const v of villages) if (v.side === side) place(side, 'store', `Магазин, ${v.name}`, v.c[0], v.c[1], { forbid: cityForbid | M.SETTLE, step: 12, extra: { settlement: v.name, village: true } });
     // АЗС вдоль трасс
     let nFuel = 1;
     for (const [road, fr] of [[highway, 0.1], [highway, 0.24], [highway, 0.38], [hwLocal, 0.16], [hwLocal, 0.33]]) {
