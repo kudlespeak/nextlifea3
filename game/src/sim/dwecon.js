@@ -13,7 +13,7 @@
 // позиции. Объекты можно улучшать до 3-го уровня. Всё строится по клику у дороги на своей земле.
 
 import { VEH, SALE } from './dwlogi.js';
-import { infraLayout, addSite } from '../mapgen.js';
+import { infraLayout, addSite, gridFeed, applyEconEvent, FEED_KINDS, FEED110 } from '../mapgen.js';
 import { M } from '../spatial.js';
 import { rectCorners, pointInPoly } from '../geom.js';
 
@@ -511,15 +511,60 @@ export class DWEconomy {
     this.sim.msg(`${o.name}: реконструкция до ${(o.level || 1) + 1}-го уровня (−${cost} оч.)`, side);
     return null;
   }
+  // ---------------------------------------------------------------- Подключение к электросети
+  // Новый объект не работает, пока к нему не протянут отпайку 10 кВ (или ЛЭП 110 кВ для станции и накопителя)
+  needsGrid(o) { return !!o.built && (FEED_KINDS.has(o.kind) || FEED110.has(o.kind)) && o.kind !== 'launch' && o.kind !== 'factory' && o.kind !== 'decoy'; }
+  gridCheck(side, id) {
+    const o = this.g.obj(id);
+    if (!o || o.side !== side) return { err: 'Выберите свой объект' };
+    if (!this.needsGrid(o)) return { err: 'Этому объекту подключение не нужно' };
+    if (o.grid) return { err: 'Уже подключён к сети' };
+    const f = gridFeed(this.world, o);
+    if (!f) return { err: 'Рядом нет своей ТП или подстанции 110 кВ (до 9 км)' };
+    const cost = Math.round((8 + (f.L / 1000) * (f.kv === 110 ? 30 : 10)) * (this.g.state?.k(side, 'build') ?? 1));
+    return { o, f, cost };
+  }
+  gridConnect(side, id, free = false) {
+    const q = this.gridCheck(side, id);
+    if (q.err) return q.err;
+    const S = this.g.sides[side];
+    if (!free) {
+      if (S.points < q.cost) return `Не хватает очков: нужно ${q.cost}`;
+      S.points -= q.cost; S.stats.spent += q.cost;
+    }
+    this.layFeed(q.o, q.f);
+    this.sim.msg(`${q.o.name}: подключён к сети — ${q.f.kv === 110 ? 'ЛЭП 110 кВ' : 'отпайка 10 кВ'} ${(q.f.L / 1000).toFixed(1)} км${free ? '' : ` (−${q.cost} оч.)`}`, side);
+    if (q.o.build?.grid) this.finish(q.o);
+    return null;
+  }
+  layFeed(o, f) {
+    o.grid = true;
+    if (f.kv === 110 && (o.kind === 'solar' || o.kind === 'bess')) o.ps = this.nearestPS(o.side, o.x, o.y)?.id;
+    const ev = { k: 'feed', f };
+    for (const bbox of applyEconEvent(this.world, ev) || []) this.sim.events.push({ type: 'forts', bbox });
+    this.sim.events.push({ type: 'net', ev });
+    this.g.flowTimer = 0;
+  }
   updateBuilds() {
     const t = this.sim.time;
     for (const o of this.g.objects) {
-      if (!o.build || t < o.build.until) continue;
+      if (!o.build || o.build.grid || t < o.build.until) continue;
+      if (!o.build.up && this.needsGrid(o) && !o.grid) {
+        o.build.grid = true;
+        this.sim.msg(`${o.name}: стройка окончена, но объект не подключён к сети — подключите его (карточка объекта)`, o.side);
+        continue;
+      }
+      this.finish(o);
+    }
+  }
+  finish(o) {
+    {
       const up = o.build.up;
       o.build = null;
       if (up) o.level = (o.level || 1) + 1;
       this.sim.msg(up ? `${o.name}: реконструкция завершена — ${o.level}-й уровень` : `${o.name}: построен и работает`, o.side);
       if (o.kind === 'hub' && !up) { o.stock = 10; }
+      if (o.kind === 'decoy' && !up && !o.grid) { const f = gridFeed(this.world, o); if (f) this.layFeed(o, f); } // макет — «как настоящий», с ЛЭП
       this.onReady(o, up);
     }
   }
@@ -654,7 +699,7 @@ export class DWEconomy {
     const R1 = (v) => Math.round(v * 10) / 10;
     return {
       bo: this.g.objects.filter((o) => o.built).map((o) => [o.id, o.side, o.kind, o.name, R1(o.x), R1(o.y), o.angle, o.gate, o.gateQ, o.drive, o.farm ?? -1, o.L || 0, o.bridge ?? 0, o.mimic || 0]),
-      lv: this.g.objects.map((o) => [o.level || 1, o.build ? [R1(o.build.until), o.build.total, o.build.up ? 1 : 0] : 0, o.grain === undefined ? -1 : Math.round(o.grain)]),
+      lv: this.g.objects.map((o) => [o.level || 1, o.build ? [R1(o.build.until), o.build.total, o.build.up ? 1 : 0, o.build.grid ? 1 : 0] : 0, o.grain === undefined ? -1 : Math.round(o.grain), o.grid ? 1 : 0]),
       fm: this.farms.map((f) => [Math.round(f.grain), STAGES.findIndex((q) => q[0] === f.stage), f.work ? [f.work.fi, Math.round(f.work.prog * 100) / 100, f.work.kind === 'combine' ? 1 : 0, R1(f.work.t0)] : 0, f.noFuel ? 1 : 0, Math.round(f.tank)]),
       sd: ['blue', 'red'].map((sd) => { const E = this.side[sd]; return [Math.round(E.parts), Math.round(E.lostGrain), Math.round(E.harvested), Math.round(E.exported), this.launchCap(sd), this.launchFree(sd)]; }),
       st: this.world.settlements.map((q) => [Math.round(q.happy * 100), Math.round(q.fear * 100)]),
@@ -662,7 +707,7 @@ export class DWEconomy {
   }
   applySnap(e) {
     for (const q of e.bo) if (!this.g.byId.has(q[0])) this.addObject({ id: q[0], side: q[1], kind: q[2], name: q[3], x: q[4], y: q[5], angle: q[6], gate: q[7], gateQ: q[8], drive: q[9], farm: q[10], L: q[11] || undefined, bridge: q[12] || undefined, mimic: q[13] || undefined, level: 1, built: true, build: null }, true);
-    this.g.objects.forEach((o, i) => { const q = e.lv[i]; if (!q) return; o.level = q[0]; o.build = q[1] ? { until: q[1][0], total: q[1][1], up: !!q[1][2] } : null; if (q[2] >= 0) o.grain = q[2]; });
+    this.g.objects.forEach((o, i) => { const q = e.lv[i]; if (!q) return; o.level = q[0]; o.build = q[1] ? { until: q[1][0], total: q[1][1], up: !!q[1][2], grid: !!q[1][3] } : null; if (q[2] >= 0) o.grain = q[2]; o.grid = !!q[3]; });
     e.fm.forEach((q, i) => { const f = this.farms[i]; if (!f) return; f.grain = q[0]; f.stage = STAGES[q[1]]?.[0] ?? f.stage; f.work = q[2] ? { fi: q[2][0], prog: q[2][1], kind: q[2][2] ? 'combine' : 'tractor', t0: q[2][3] } : null; f.noFuel = !!q[3]; f.tank = q[4]; });
     this.remote = {};
     ['blue', 'red'].forEach((sd, i) => { const q = e.sd[i], E = this.side[sd]; [E.parts, E.lostGrain, E.harvested, E.exported] = q; this.remote[sd] = q; });

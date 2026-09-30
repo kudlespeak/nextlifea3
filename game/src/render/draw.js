@@ -1965,6 +1965,16 @@ function drawPowerLines(ctx, world, q, ppm) {
         }
       }
     }
+    // заход проводов с портала на шины ОРУ
+    for (const t of [pl[0], pl[pl.length - 1]]) {
+      if (!t.into || !inQ(q, t.x, t.y, 120)) continue;
+      const L = Math.hypot(t.into[0] - t.x, t.into[1] - t.y) || 1;
+      const nx = -(t.into[1] - t.y) / L, ny = (t.into[0] - t.x) / L;
+      ctx.strokeStyle = 'rgba(55,57,55,0.85)'; ctx.lineWidth = Math.max(0.12, 0.8 / ppm);
+      ctx.beginPath();
+      for (const o of [-sp, 0, sp]) { ctx.moveTo(t.x + nx * o, t.y + ny * o); ctx.lineTo(t.into[0] + nx * o * 0.6, t.into[1] + ny * o * 0.6); }
+      ctx.stroke();
+    }
     for (let i = 0; i < pl.length; i++) {
       const t = pl[i];
       if (!inQ(q, t.x, t.y, 60)) continue;
@@ -2009,15 +2019,16 @@ function drawPowerLines(ctx, world, q, ppm) {
     }
   }
   // Фидеры 10 кВ: в городе — кабель в земле (не видно), за городом — бетонные опоры и три провода
-  const inCity = (x, y) => world.mask.has(x, y, M.CITY | M.CITYZONE);
-  for (const tp of p.tps) {
+  // под землю кабель уходит только в застроенной части города (на пустырях у окраин — опоры)
+  const inCity = (x, y) => world.mask.has(x, y, M.CITY | M.CITYZONE) && world.mask.near(x, y, 45, M.BUILD);
+  for (const tp of [...p.tps, ...(p.feeds || [])]) {
     const pts = tp.poles;
     const runs = [];
     let cur = null;
     for (let i = 0; i < pts.length; i++) {
       const [x, y] = pts[i];
       const gap = tp.cut && Math.hypot(x - tp.cut.x, y - tp.cut.y) < 20;
-      if (!inQ(q, x, y) || gap || inCity(x, y)) { cur = null; continue; }
+      if (!inQ(q, x, y, 60) || gap || inCity(x, y)) { cur = null; continue; }
       if (!cur) runs.push((cur = []));
       cur.push([x, y]);
     }

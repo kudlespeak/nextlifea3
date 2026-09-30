@@ -25,6 +25,10 @@ export class DWUI {
     $('dw-body').onclick = (e) => this.onPanel(e);
     $('dw-card').onclick = (e) => this.onPanel(e);
     $('dw-status').onclick = (e) => this.onPanel(e);
+    // пока кнопка мыши зажата над панелью, не перерисовываем её — иначе клик теряется
+    for (const id of ['dw-body', 'dw-card', 'dw-status']) $(id).addEventListener('pointerdown', () => { this.pressing = true; });
+    window.addEventListener('pointerup', () => setTimeout(() => { this.pressing = false; }, 0));
+    window.addEventListener('pointercancel', () => { this.pressing = false; });
     this.build();
   }
   get g() { return this.sim.game; }
@@ -88,7 +92,7 @@ export class DWUI {
     const PH = ['Фаза 1 · пробные удары', 'Фаза 2 · массированные удары', 'Фаза 3 · удар возмездия'];
     let h = bar('Устойчивость тыла', S.morale ?? 100) + bar('У противника', E.morale ?? 100);
     h += `<div class="dw-phase"><span>${g.prep ? 'Подготовка' : PH[g.phaseNo || 0]}${g.infra ? ` · ${g.infra.season().name}` : ''}</span><span>${g.endless ? `идёт ${g.prep ? '0:00' : hhmm(t - (g.startAt || t))}` : `до конца ${mmss(g.endAt - t)}`}</span></div>`;
-    const D = g.directive?.[side], T = g.directive?.[this.enemy];
+    const D = null, T = null; // директивы и предупреждения разведки убраны
     if (D) {
       const o = g.obj(D.oid);
       if (!D.done) h += `<div class="dw-dir go" data-obj="${D.oid}">🎯 <b>Директива:</b> поразить «${esc(o?.name)}» — ${mmss(D.until - t)} · премия ${D.bonus} и −6 противнику</div>`;
@@ -100,7 +104,7 @@ export class DWUI {
 
   update(force = false) {
     const g = this.g, S = this.S, side = this.side;
-    if (!g) return;
+    if (!g || (this.pressing && !force)) return;
     $('dw-pts').textContent = Math.floor(S.points);
     this.status();
     if (this.state.tab === 'grid') {
@@ -248,7 +252,7 @@ export class DWUI {
     const farms = g.econ.farms.filter((f) => f.side === side);
     h += farms.map((f) => `<div class="dw-row small"><div><b>${esc(f.name)}</b><small>${STAGE_NAME[f.stage] || ''}${f.work ? ` · ${f.work.kind === 'combine' ? 'комбайны' : 'тракторы'} в поле` : ''}${f.noFuel ? ' · <span class="bad">нет солярки</span>' : ''} · ГСМ ${f.tank} · на току ${Math.round(f.grain)} т</small></div></div>`).join('');
     const bld = g.objects.filter((o) => o.side === side && o.build);
-    if (bld.length) h += `<div class="dw-sub">Стройка и реконструкция</div>` + bld.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — ${o.build.up ? `реконструкция до ${(o.level || 1) + 1}-го ур.` : 'строится'}<div class="bar"><i style="width:${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%"></i></div></div>`).join('');
+    if (bld.length) h += `<div class="dw-sub">Стройка и реконструкция</div>` + bld.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — ${o.build.grid ? '<span class="bad">ждёт подключения к сети</span>' : o.build.up ? `реконструкция до ${(o.level || 1) + 1}-го ур.` : 'строится'}${o.build.grid ? `<button data-grid="${o.id}">⚡ Подключить</button>` : ''}<div class="bar"><i style="width:${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%"></i></div></div>`).join('');
     const ai = this.sim.ais?.find((a) => a.side === this.enemy);
     if (ai?.intent) h += `<div class="dw-sub">Разведка</div><div class="dw-income">Штаб противника ${esc(ai.intent)}${ai.doctrine ? ` · доктрина: ${esc(ai.doctrine.name)}` : ''}</div>`;
     // История показателей (каждые 30 с, до 2 часов)
@@ -299,7 +303,9 @@ export class DWUI {
         if (o.idle) e += ` · <span class="warn">простой: ${esc(o.idle)}</span>`;
         if (o.kind === 'factory' && !o.build) e += ` <button data-act="evac" data-id="${o.id}" title="вывезти оборудование вглубь тыла (не ближе 14 км к фронту): 300 оч., 10 мин без производства">Эвакуировать в тыл</button>`;
         if (o.kind === 'pontoon') e += ` · ${g.obj(o.bridge) && g.bridgeCap(g.obj(o.bridge)) === 0.4 ? 'машины идут по понтонам' : 'в резерве: мост цел'}`;
-        if (o.build) e += ` · <span class="warn">${o.build.up ? 'реконструкция' : 'строится'}: ${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%</span>`;
+        if (g.econ.needsGrid(o) && !o.grid) { const q = g.econ.gridCheck(side, o.id); e += ` · <span class="bad">не подключён к сети</span> ` + (q.err ? `<span class="warn">${esc(q.err)}</span>` : `<button data-grid="${o.id}" title="протянуть ${q.f.kv === 110 ? 'ЛЭП 110 кВ к ближайшей подстанции' : 'отпайку 10 кВ от ближайшей ТП или подстанции'} (${(q.f.L / 1000).toFixed(1)} км)">⚡ Подключить к сети — ${q.cost}</button>`); }
+        if (o.build?.grid) e += ` · <span class="warn">построен, ждёт подключения</span>`;
+        else if (o.build) e += ` · <span class="warn">${o.build.up ? 'реконструкция' : 'строится'}: ${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%</span>`;
         else if (BUILD[o.kind] && lv < 3) e += ` <button data-upg="${o.id}" title="реконструкция: больше выручки и вместимости">Реконструкция до ${lv + 1} ур. — ${upgradeCost(o)}</button>`;
         h += e + '</div>';
       }
@@ -364,6 +370,7 @@ export class DWUI {
     else if (d.act === 'net') { this.state.mode = this.state.mode === 'net' ? null : 'net'; this.build(); }
     else if (d.build) { this.state.mode = this.state.mode === 'build:' + d.build ? null : 'build:' + d.build; this.build(); }
     else if (d.upg) this.issue('dw', 'upgrade', side, Number(d.upg));
+    else if (d.grid) this.issue('dw', 'gridConnect', side, Number(d.grid));
     else if (d.law) this.issue('dw', 'setLaw', side, d.law, t.checked);
     else if (d.tax) this.issue('dw', 'setTax', side, Number(d.tax));
     else if (d.mobil) this.issue('dw', 'setMobil', side, Number(d.mobil));

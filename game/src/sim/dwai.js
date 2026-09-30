@@ -434,6 +434,12 @@ export class DroneWarAI {
     const g = this.g, S = this.S, side = this.side, St = g.state, T = St.side[side], D = this.doctrine;
     const mor = S.morale ?? 100, sum = g.econ.summary(side);
     const law = (id, on) => { if (!!T.laws[id] !== on && !St.cooldown(T)) St.setLaw(side, id, on); };
+    // новые объекты — сразу к сети (без подключения они не работают)
+    for (const o of g.objs(side)) {
+      if (!g.econ.needsGrid(o) || o.grid) continue;
+      const q = g.econ.gridCheck(side, o.id);
+      if (!q.err && S.points - q.cost >= 20) g.econ.gridConnect(side, o.id);
+    }
     law('martial', mor < 45);
     law('fund', g.pendingCost(side).sum > 300 || T.laws.fund && g.pendingCost(side).sum > 120);
     law('curfew', this.settlementsFear() > 0.35);

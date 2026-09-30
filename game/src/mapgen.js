@@ -341,27 +341,33 @@ export function infraLayout(kind, L = 0) {
     }
     case 'fuel': return { w: 76, h: 48, comps: [c('fcanopy', -8, -4, 34, 18, { n: 'Навес с колонками' }), c('kiosk', 24, 12, 16, 10, { n: 'Магазин АЗС' })] };
     case 'firest': return { w: 90, h: 60, comps: [c('garage', 0, -5, 60, 26, { n: 'Пожарное депо' }), c('ctrl', 32, 18, 16, 10, { n: 'Пункт связи' })] };
-    case 'elevator': return { w: 190, h: 110, comps: [
-      c('silo', -48, -18, 62, 30, { n: 'Силосный корпус №1' }), c('silo', 22, -18, 62, 30, { n: 'Силосный корпус №2' }),
-      c('dryer', 74, -16, 16, 16, { n: 'Зерносушилка' }), c('hall', -30, 30, 90, 24, { n: 'Склад напольного хранения' }), c('ctrl', 60, 32, 18, 12, { n: 'Весовая' })] };
+    case 'elevator': return { w: 300, h: 160, comps: [c('silo', -70, -30, 110, 40, { n: 'Силосный корпус №1' }), c('silo', 60, -30, 110, 40, { n: 'Силосный корпус №2' }), c('dryer', 135, -30, 20, 20, { n: 'Зерносушилка' }), c('hall', -50, 45, 150, 34, { n: 'Склад напольного хранения' }), c('ctrl', 90, 50, 28, 16, { n: 'Весовая' })] };
     case 'agro': return { w: 120, h: 80, comps: [c('garage', -22, -14, 64, 24, { n: 'Гараж сельхозтехники' }), c('canopy', 26, 16, 44, 20, { n: 'Навес для комбайнов' }), c('tank', 44, -20, 9, 9, { n: 'Ёмкость ГСМ' })] };
     case 'decoy': return infraLayout('ps110');
-    case 'refinery': return { w: 200, h: 130, comps: [c('tank', -70, -35, 20, 20, { n: 'Резервуар сырой нефти' }), c('tank', -40, -35, 20, 20, { n: 'Резервуар бензина' }), c('tank', -10, -35, 20, 20, { n: 'Резервуар дизтоплива' }), c('shop', 40, -20, 60, 30, { n: 'Установка перегонки' }), c('dryer', 70, 25, 16, 16, { n: 'Ректификационная колонна' }), c('chimney', 20, 30, 12, 12, { n: 'Факел и труба' }), c('rack', -40, 30, 70, 8, { n: 'Эстакада налива' })] };
-    case 'watertower': return { w: 70, h: 56, comps: [c('wtower', -12, 0, 14, 14, { n: 'Водонапорная башня' }), c('ctrl', 18, 6, 22, 14, { n: 'Насосная с резервным генератором' })] };
-    case 'railterm': return { w: 190, h: 80, comps: [c('rack', 0, -22, 150, 10, { n: 'Погрузочная эстакада' }), c('hall', -45, 18, 70, 24, { n: 'Склад зерна' }), c('ctrl', 55, 20, 20, 12, { n: 'Диспетчерская станции' })] };
-    case 'port': return { w: 150, h: 80, comps: [c('rack', 0, -25, 120, 8, { n: 'Причал с кранами' }), c('hall', -30, 15, 60, 26, { n: 'Портовый склад' }), c('tank', 45, 18, 16, 16, { n: 'Бункер зерна' })] };
-    case 'coalmine': return { w: 160, h: 110, comps: [c('headframe', -45, -20, 16, 16, { n: 'Копёр шахты' }), c('shop', 20, -25, 60, 26, { n: 'Обогатительная фабрика' }), c('coal', 20, 28, 80, 30, { n: 'Угольный склад' })] };
-    case 'cement': return { w: 170, h: 100, comps: [c('silo', 45, -20, 50, 24, { n: 'Силосы цемента' }), c('shop', -30, -15, 70, 30, { n: 'Печной цех' }), c('chimney', -60, 30, 12, 12, { n: 'Труба печи' }), c('hall', 20, 28, 70, 22, { n: 'Склад стройматериалов' })] };
-    case 'housing': return { w: 160, h: 90, comps: [c('house', -40, -22, 64, 13, { n: 'Жилой дом №1' }), c('house', 40, -22, 64, 13, { n: 'Жилой дом №2' }), c('house', 0, 24, 96, 13, { n: 'Жилой дом №3' })] };
-    case 'hospital': return { w: 130, h: 90, comps: [c('house', -10, -14, 84, 16, { n: 'Главный корпус' }), c('house', 40, 24, 36, 14, { n: 'Приёмное отделение' }), c('ctrl', -45, 26, 18, 12, { n: 'Котельная' })] };
-    case 'school': return { w: 120, h: 90, comps: [c('house', -5, -18, 80, 14, { n: 'Учебный корпус' }), c('hall', 30, 22, 40, 20, { n: 'Спортзал' })] };
-    case 'mill': return { w: 160, h: 100, comps: [c('shop', -35, -16, 70, 30, { n: 'Мельничный цех' }), c('silo', 45, -18, 40, 20, { n: 'Силос муки' }), c('hall', 0, 30, 90, 20, { n: 'Хлебозавод и склад' })] };
-    case 'dairy': return { w: 150, h: 90, comps: [c('barn', -35, -12, 62, 18, { n: 'Коровник №1' }), c('barn', 35, -12, 62, 18, { n: 'Коровник №2' }), c('ctrl', 0, 28, 20, 12, { n: 'Молочный блок' })] };
-    case 'solar': return { w: 200, h: 130, comps: [c('pv', -55, -30, 80, 44, { n: 'Поле панелей №1' }), c('pv', 35, -30, 80, 44, { n: 'Поле панелей №2' }), c('pv', -10, 32, 100, 40, { n: 'Поле панелей №3' }), c('inv', 72, 24, 16, 12, { n: 'Инверторная' }), c('oru', 72, 46, 22, 14, { n: 'ОРУ 110 кВ' })] };
+    case 'refinery': {
+      // НПЗ в реальную величину: резервуарный парк, установки, колонны, факел, эстакада налива
+      const cs = [];
+      for (let i = 0; i < 12; i++) cs.push(c('tank', -290 + (i % 6) * 58, -150 + Math.floor(i / 6) * 62, 44, 44, { n: `Резервуар №${i + 1}` }));
+      cs.push(c('shop', 60, -120, 150, 60, { n: 'Установка первичной перегонки' }), c('shop', 60, -30, 150, 50, { n: 'Установка каталитического крекинга' }));
+      cs.push(c('dryer', 190, -110, 22, 22, { n: 'Ректификационная колонна №1' }), c('dryer', 190, -50, 22, 22, { n: 'Ректификационная колонна №2' }), c('chimney', 250, 60, 16, 16, { n: 'Факельная труба' }));
+      cs.push(c('rack', -120, 130, 320, 14, { n: 'Эстакада налива' }), c('hall', 150, 110, 120, 40, { n: 'Товарный парк и насосная' }), c('ctrl', -250, 110, 50, 24, { n: 'Операторная' }));
+      return { w: 700, h: 400, comps: cs };
+    }
+    case 'watertower': return { w: 110, h: 80, comps: [c('wtower', -25, 0, 18, 18, { n: 'Водонапорная башня' }), c('ctrl', 25, 8, 36, 20, { n: 'Насосная с резервным генератором' })] };
+    case 'railterm': return { w: 520, h: 130, comps: [c('rack', 0, -40, 440, 12, { n: 'Погрузочная эстакада' }), c('hall', -120, 25, 180, 40, { n: 'Склад зерна' }), c('silo', 90, 20, 120, 34, { n: 'Силосы перевалки' }), c('ctrl', 220, 30, 30, 16, { n: 'Диспетчерская станции' })] };
+    case 'port': return { w: 360, h: 150, comps: [c('rack', 0, -52, 300, 12, { n: 'Причал с кранами' }), c('hall', -80, 20, 150, 50, { n: 'Портовый склад' }), c('silo', 90, 15, 110, 34, { n: 'Бункеры зерна' }), c('ctrl', 150, 55, 26, 14, { n: 'Управление порта' })] };
+    case 'coalmine': return { w: 480, h: 320, comps: [c('headframe', -160, -80, 22, 22, { n: 'Копёр ствола №1' }), c('headframe', -110, -80, 22, 22, { n: 'Копёр ствола №2' }), c('shop', 60, -90, 170, 60, { n: 'Обогатительная фабрика' }), c('coal', 40, 70, 280, 110, { n: 'Угольный склад' }), c('hall', -160, 60, 90, 50, { n: 'Административно-бытовой комбинат' })] };
+    case 'cement': return { w: 440, h: 240, comps: [c('silo', 120, -60, 150, 40, { n: 'Силосы цемента' }), c('shop', -80, -50, 200, 60, { n: 'Печной цех' }), c('chimney', -190, 60, 16, 16, { n: 'Труба печи' }), c('hall', 60, 60, 220, 50, { n: 'Склад стройматериалов' })] };
+    case 'housing': return { w: 320, h: 200, comps: [c('house', -90, -55, 110, 14, { n: 'Жилой дом №1' }), c('house', 70, -55, 110, 14, { n: 'Жилой дом №2' }), c('house', -90, 5, 110, 14, { n: 'Жилой дом №3' }), c('house', 70, 5, 110, 14, { n: 'Жилой дом №4' }), c('house', -10, 65, 180, 14, { n: 'Жилой дом №5' }), c('hall', 120, 70, 50, 30, { n: 'Детский сад' })] };
+    case 'hospital': return { w: 240, h: 160, comps: [c('house', -30, -35, 150, 18, { n: 'Главный корпус' }), c('house', 70, 30, 70, 16, { n: 'Приёмное отделение' }), c('house', -60, 40, 80, 16, { n: 'Инфекционный корпус' }), c('ctrl', 100, -60, 24, 14, { n: 'Котельная' })] };
+    case 'school': return { w: 200, h: 140, comps: [c('house', -20, -35, 120, 16, { n: 'Учебный корпус' }), c('hall', 50, 30, 60, 28, { n: 'Спортзал' }), c('house', -50, 35, 60, 14, { n: 'Колледж' })] };
+    case 'mill': return { w: 280, h: 170, comps: [c('shop', -60, -35, 120, 44, { n: 'Мельничный цех' }), c('silo', 80, -40, 90, 30, { n: 'Силосы муки и зерна' }), c('hall', 0, 45, 170, 34, { n: 'Хлебозавод и склад' })] };
+    case 'dairy': return { w: 320, h: 160, comps: [c('barn', -80, -40, 120, 22, { n: 'Коровник №1' }), c('barn', 80, -40, 120, 22, { n: 'Коровник №2' }), c('barn', -80, 20, 120, 22, { n: 'Коровник №3' }), c('ctrl', 60, 25, 40, 20, { n: 'Молочный блок' }), c('tank', 120, 50, 16, 16, { n: 'Силосная башня' })] };
+    case 'solar': return { w: 620, h: 420, comps: [c('pv', -170, -110, 250, 150, { n: 'Поле панелей №1' }), c('pv', 110, -110, 250, 150, { n: 'Поле панелей №2' }), c('pv', -170, 80, 250, 150, { n: 'Поле панелей №3' }), c('pv', 110, 70, 200, 130, { n: 'Поле панелей №4' }), c('inv', 260, 60, 22, 16, { n: 'Инверторная' }), c('oru', 260, 150, 50, 40, { n: 'ОРУ 110 кВ' })] };
     case 'bess': return { w: 90, h: 64, comps: [c('bess', -20, -4, 30, 26, { n: 'Контейнеры АКБ №1' }), c('bess', 20, -4, 30, 26, { n: 'Контейнеры АКБ №2' }), c('tr', 0, 22, 10, 8, { n: 'Трансформатор' })] };
     case 'pontoon': return { w: Math.max(40, L), h: 10, comps: [c('pont', 0, 0, Math.max(40, L), 8, { n: 'Понтонный мост' })] };
-    case 'autopark': return { w: 130, h: 80, comps: [c('garage', -20, -12, 70, 24, { n: 'Гаражи' }), c('canopy', 30, 18, 50, 20, { n: 'Стоянка грузовиков' }), c('ctrl', -50, 25, 16, 10, { n: 'Диспетчерская' })] };
-    case 'reserve': return { w: 140, h: 90, comps: [c('hall', -25, 0, 70, 40, { n: 'Склад госрезерва' }), c('tank', 45, -20, 14, 14, { n: 'Резервуар ГСМ №1' }), c('tank', 45, 20, 14, 14, { n: 'Резервуар ГСМ №2' })] };
+    case 'autopark': return { w: 240, h: 150, comps: [c('garage', -40, -30, 140, 34, { n: 'Гаражи' }), c('canopy', 60, 35, 110, 36, { n: 'Стоянка грузовиков' }), c('ctrl', -90, 45, 24, 14, { n: 'Диспетчерская' }), c('tank', -40, 45, 14, 14, { n: 'Заправка' })] };
+    case 'reserve': return { w: 280, h: 170, comps: [c('hall', -60, 0, 140, 70, { n: 'Склад госрезерва' }), c('tank', 80, -45, 28, 28, { n: 'Резервуар ГСМ №1' }), c('tank', 80, 10, 28, 28, { n: 'Резервуар ГСМ №2' }), c('tank', 80, 60, 28, 28, { n: 'Резервуар ГСМ №3' })] };
     case 'rembase': return { w: 170, h: 110, comps: [c('garage', -35, -15, 80, 34, { n: 'Гараж техники' }), c('hall', 50, 10, 50, 40, { n: 'Склад оборудования' }), c('ctrl', -60, 35, 26, 14, { n: 'Диспетчерская' })] };
     case 'bridge': {
       const n = Math.max(2, Math.round(L / 40));
@@ -524,6 +530,8 @@ function generateDroneWarWorld(seed) {
   for (const v of villages) { setBuildStyle(v.side); buildVillageStreet(world, rng, v.street, 0.9); if (rng.chance(0.5)) buildFarm(world, rng, v); }
   setBuildStyle(null);
 
+  trimStubs(world); // дороги не торчат «хвостами» за перекрёсток
+
   // ---------- Объекты инфраструктуры ----------
   const FORBID = M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY | M.SETTLE | M.BALKA | M.VILLAGE | M.CITYZONE;
   let nextId = 1;
@@ -557,7 +565,7 @@ function generateDroneWarWorld(seed) {
     });
     const cands = [];
     for (const r of world.roadList) {
-      if (r.type === 'street' || r.type === 'dirt') continue;
+      if (r.type === 'dirt') continue;
       for (let i = 0; i < r.line.length; i += 3) {
         const d = Math.hypot(r.line[i][0] - at[0], r.line[i][1] - at[1]);
         if (d < 5000) cands.push({ p: r.line[i], d, r });
@@ -570,7 +578,7 @@ function generateDroneWarWorld(seed) {
       const g = gates.slice().sort((a, b) => Math.hypot(c.p[0] - a.p[0], c.p[1] - a.p[1]) - Math.hypot(c.p[0] - b.p[0], c.p[1] - b.p[1]))[0];
       const L = Math.hypot(c.p[0] - g.p[0], c.p[1] - g.p[1]);
       if (L < 12) { o.gate = g.p; o.gateQ = g.q; done = true; break; }
-      const line = L < 200 ? resample([g.p, c.p], 8) : wobblyRoad(R, g.p, c.p, 3);
+      const line = cutAtRoad(world, L < 200 ? resample([g.p, c.p], 8) : wobblyRoad(R, g.p, c.p, 3), apron);
       if (!clear(line)) continue;
       addRoad(world, line, opts.paved ? 'local' : 'dirt');
       o.gate = g.p; o.gateQ = g.q; done = true;
@@ -579,7 +587,7 @@ function generateDroneWarWorld(seed) {
     if (!done) {
       // запасной вариант: прямой отрезок от любых ворот к любой точке, лишь бы не сквозь площадки
       outer: for (const c of cands.slice(0, 200)) for (const g of gates) {
-        const line = resample([g.p, c.p], 8);
+        const line = cutAtRoad(world, resample([g.p, c.p], 8), apron);
         if (clear(line)) { addRoad(world, line, opts.paved ? 'local' : 'dirt'); o.gate = g.p; o.gateQ = g.q; done = true; break outer; }
       }
       if (!done) { o.gate = gates[1].p; o.gateQ = gates[1].q; }
@@ -589,17 +597,7 @@ function generateDroneWarWorld(seed) {
     return o;
   };
   const lines = [];
-  // Конец ЛЭП — портал ОРУ нужного напряжения, со стороны, обращённой к другому концу
-  const portal = (o, kv, toward) => {
-    if (!o.comps) return [o.x, o.y];
-    const orus = o.comps.filter((q) => q.k === 'oru');
-    const oru = orus.find((q) => q.n.includes(String(kv))) || orus[0];
-    if (!oru) return [o.x, o.y];
-    const c = Math.cos(o.angle), s = Math.sin(o.angle);
-    const lx = (toward[0] - o.x) * c + (toward[1] - o.y) * s - oru.u, ly = -(toward[0] - o.x) * s + (toward[1] - o.y) * c - oru.v;
-    const [u, v] = Math.abs(lx) / oru.w > Math.abs(ly) / oru.h ? [oru.u + Math.sign(lx) * oru.w / 2, oru.v] : [oru.u, oru.v + Math.sign(ly) * oru.h / 2];
-    return [o.x + u * c - v * s, o.y + u * s + v * c];
-  };
+  const portal = (o, kv, toward) => portalOf(o, kv, toward).pt;
   const line = (a, b, kv) => {
     const ca = [a.x, a.y], cb = [b.x ?? b[0], b.y ?? b[1]];
     const pa = portal(a, kv, cb), pb = b.comps ? portal(b, kv, ca) : cb;
@@ -614,6 +612,9 @@ function generateDroneWarWorld(seed) {
     // опоры не ставим на площадках объектов и в воде (кроме порталов на концах)
     pyl = pyl.filter((p, i) => i === 0 || i === pyl.length - 1 || !mask.has(p.x, p.y, M.BUILD | M.WATER | M.ROAD));
     pyl[0].portal = true; pyl[pyl.length - 1].portal = !!b.comps;
+    // провода заходят на шины ОРУ (а не обрываются у ограды)
+    if (a.comps) pyl[0].into = portalOf(a, kv, cb).into;
+    if (b.comps) pyl[pyl.length - 1].into = portalOf(b, kv, ca).into;
     lines.push({ id: lines.length + 1, kv, a: a.id ?? null, b: b.id ?? null, pylons: pyl, side: a.side });
   };
   for (const [side, S] of Object.entries(sides)) {
@@ -755,6 +756,9 @@ function generateDroneWarWorld(seed) {
   world.mapFix = checkWorld(world, true); // починка: дома на дорогах и внахлёст, поля поперёк дорог, деревья на асфальте
   finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0), false);
   buildPowerGridDW(world, new Rng((seed ^ 0x9092) >>> 0));
+  // отпайки 10 кВ: каждый объект запитан от ближайшей ТП или подстанции — провода видно на карте
+  world.power.feeds = [];
+  for (const o of world.infra) if (FEED_KINDS.has(o.kind)) { const f = gridFeed(world, o); if (f) world.power.feeds.push(f); }
   refreshCanopy(world, { x0: 0, y0: 0, x1: W, y1: H });
   world.genTime = performance.now() - t0;
   return world;
@@ -779,6 +783,59 @@ export const ROAD_STYLE = {
   dirt: { width: 4.5, stamp: 8 },
 };
 
+// Подъезд обрывается на первой встреченной дороге (примыкание), а не пересекает её к дальней
+function cutAtRoad(world, line, apron) {
+  for (let k = 2; k < line.length - 1; k++) {
+    const [x, y] = line[k];
+    if (apron && pointInPoly(x, y, apron)) continue;
+    if (world.mask.has(x, y, M.ROAD)) return line.slice(0, k + 1);
+  }
+  return line;
+}
+// Концы дорог, заехавшие за перекрёсток на 3–80 м, обрезаем по перекрёстку
+function trimStubs(world) {
+  const distToSeg = (p, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)); return Math.hypot(a[0] + dx * t - p[0], a[1] + dy * t - p[1]); };
+  const segX = (a, b, c, d) => {
+    const r = [b[0] - a[0], b[1] - a[1]], s = [d[0] - c[0], d[1] - c[1]], den = r[0] * s[1] - r[1] * s[0];
+    if (Math.abs(den) < 1e-9) return -1;
+    const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den, u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : -1;
+  };
+  const roads = world.roadList.filter((r) => r.type !== 'street' && r.line.length > 2);
+  const bb = (l) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const [x, y] of l) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); } return { x0, y0, x1, y1 }; };
+  const boxes = new Map(world.roadList.map((r) => [r, bb(r.line)]));
+  let n = 0;
+  for (const r of roads) {
+    for (const end of [0, 1]) {
+      const L = end ? r.line.slice().reverse() : r.line;
+      // хвост: первые до 80 м от конца
+      let acc = 0, k = 1;
+      while (k < L.length && acc < 80) { acc += Math.hypot(L[k][0] - L[k - 1][0], L[k][1] - L[k - 1][1]); k++; }
+      const tail = L.slice(0, k);
+      const tb = bb(tail);
+      let hit = null, attached = false;
+      const near = world.roadList.filter((o) => { if (o === r) return false; const ob = boxes.get(o); return !(ob.x0 > tb.x1 + 15 || ob.x1 < tb.x0 - 15 || ob.y0 > tb.y1 + 15 || ob.y1 < tb.y0 - 15); });
+      // конец лежит на другой дороге — это примыкание, а не хвост
+      for (const o of near) for (let j = 1; j < o.line.length && !attached; j++) if (distToSeg(tail[0], o.line[j - 1], o.line[j]) < 12) attached = true;
+      if (attached || !near.length) continue;
+      for (let i = 1; i < tail.length; i++) {
+        let bt = 2;
+        for (const o of near) for (let j = 1; j < o.line.length; j++) { const t = segX(tail[i - 1], tail[i], o.line[j - 1], o.line[j]); if (t >= 0 && t < bt) bt = t; }
+        if (bt > 1) continue;
+        const px = tail[i - 1][0] + (tail[i][0] - tail[i - 1][0]) * bt, py = tail[i - 1][1] + (tail[i][1] - tail[i - 1][1]) * bt;
+        const d = Math.hypot(px - tail[0][0], py - tail[0][1]);
+        if (d > 3) hit = { i, p: [px, py] };
+        break;
+      }
+      if (!hit) continue;
+      const rest = [hit.p, ...L.slice(hit.i)];
+      if (rest.length < 2) continue;
+      r.line = end ? rest.reverse() : rest;
+      n++;
+    }
+  }
+  world.stubsTrimmed = n;
+}
 function addRoad(world, line, type) {
   const st = ROAD_STYLE[type];
   const road = addItem(world.roads, { kind: 'road', type, line, width: st.width }, st.width + 6);
@@ -1009,11 +1066,67 @@ export function addSite(world, s) {
   }
   addItem(world.areas, { kind: 'dwsite', poly, apron, site: s.kind, x: s.x, y: s.y, angle: s.angle, w: lay.w + 16, h: lay.h + 16, pad, gateQ: s.gateQ, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
   if (s.drive && s.drive.length > 1) {
-    const line = resample(s.drive, 8);
+    const line = cutAtRoad(world, resample(s.drive, 8), apron);
     addItem(world.roads, { kind: 'road', type: 'dirt', line, width: ROAD_STYLE.dirt.width, built: true }, ROAD_STYLE.dirt.width + 6);
     world.mask.stampLine(line, ROAD_STYLE.dirt.stamp, M.ROAD);
   }
   return out;
+}
+
+// ---------------------------------------------------------------- Подключение объектов к сети
+// Кому нужна отпайка 10 кВ (генерация и подстанции соединены магистральными ЛЭП, мост и импорт — не потребители)
+export const FEED_KINDS = new Set(['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'factory', 'oil', 'ammo', 'rembase', 'firest', 'border',
+  'housing', 'hospital', 'school', 'mill', 'dairy', 'autopark', 'refinery', 'watertower', 'railterm', 'port', 'coalmine', 'cement', 'reserve', 'launch']);
+export const FEED110 = new Set(['solar', 'bess', 'decoy']);
+// Портал ОРУ нужного напряжения со стороны, обращённой к другому концу; into — середина шин (туда заходят провода)
+export function portalOf(o, kv, toward) {
+  if (!o.comps) return { pt: [o.x, o.y], into: null };
+  const orus = o.comps.filter((q) => q.k === 'oru');
+  const oru = orus.find((q) => q.n.includes(String(kv))) || orus[0];
+  if (!oru) return { pt: edgeOf(o, toward), into: null };
+  const c = Math.cos(o.angle), s = Math.sin(o.angle);
+  const lx = (toward[0] - o.x) * c + (toward[1] - o.y) * s - oru.u, ly = -(toward[0] - o.x) * s + (toward[1] - o.y) * c - oru.v;
+  const [u, v] = Math.abs(lx) / oru.w > Math.abs(ly) / oru.h ? [oru.u + Math.sign(lx) * oru.w / 2, oru.v] : [oru.u, oru.v + Math.sign(ly) * oru.h / 2];
+  const [iu, iv] = Math.abs(lx) / oru.w > Math.abs(ly) / oru.h ? [oru.u + Math.sign(lx) * oru.w * 0.15, oru.v] : [oru.u, oru.v + Math.sign(ly) * oru.h * 0.15];
+  return { pt: [o.x + u * c - v * s, o.y + u * s + v * c], into: [o.x + iu * c - iv * s, o.y + iu * s + iv * c] };
+}
+// Точка на границе площадки объекта в сторону цели
+export function edgeOf(o, toward) {
+  const c = Math.cos(o.angle || 0), s = Math.sin(o.angle || 0);
+  const lx = (toward[0] - o.x) * c + (toward[1] - o.y) * s, ly = -(toward[0] - o.x) * s + (toward[1] - o.y) * c;
+  const hw = (o.w || 20) / 2 - 4, hh = (o.h || 20) / 2 - 4;
+  const k = Math.min(hw / (Math.abs(lx) || 1e-6), hh / (Math.abs(ly) || 1e-6));
+  const u = lx * k, v = ly * k;
+  return [o.x + u * c - v * s, o.y + u * s + v * c];
+}
+// Трасса подключения: 10 кВ — к ближайшей ТП своей стороны (до 3,5 км) или к ПС 110 кВ;
+// солнечная станция, накопитель и макет — ЛЭП 110 кВ к порталу ближайшей ПС 110 кВ
+export function gridFeed(world, o, maxPs = 9000) {
+  const side = o.side, fx = world.frontX ?? world.W / 2;
+  const own = (x) => (side === 'blue' ? x < fx : x > fx);
+  const pss = world.infra.filter((q) => q.kind === 'ps110' && q.side === side);
+  const h = ((typeof o.id === 'number' ? o.id : [...String(o.id)].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7)) * 2654435761) >>> 0;
+  const bend = ((h % 1000) / 1000 - 0.5) * 0.25;
+  const route = (A, B, step) => {
+    const L = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1;
+    const mid = [(A[0] + B[0]) / 2 - ((B[1] - A[1]) / L) * L * bend, (A[1] + B[1]) / 2 + ((B[0] - A[0]) / L) * L * bend];
+    return resample(L > 300 ? catmullRom([A, mid, B], 6) : [A, B], step);
+  };
+  let best = null, bd = Infinity;
+  for (const p of pss) { const d = Math.hypot(p.x - o.x, p.y - o.y); if (d < bd) { bd = d; best = p; } }
+  if (FEED110.has(o.kind)) {
+    if (!best || bd > maxPs * 1.5) return null;
+    const P = portalOf(best, 110, [o.x, o.y]);
+    const A = edgeOf(o, P.pt);
+    const pyl = route(A, P.pt, 220).map(([x, y]) => ({ x, y }));
+    pyl[0].portal = true; pyl[pyl.length - 1].portal = true; pyl[pyl.length - 1].into = P.into;
+    return { oid: o.id, kv: 110, side, pylons: pyl, id: 'f' + o.id, L: bd };
+  }
+  let tgt = null, td = 3500;
+  for (const tp of world.power?.tps || []) { if (!own(tp.x)) continue; const d = Math.hypot(tp.x - o.x, tp.y - o.y); if (d < td) { td = d; tgt = [tp.x, tp.y]; } }
+  if (!tgt) { if (!best || bd > maxPs) return null; tgt = edgeOf(best, [o.x, o.y]); td = bd; }
+  const A = edgeOf(o, tgt);
+  return { oid: o.id, kv: 10, side, poles: route(A, tgt, 45), L: td };
 }
 
 // События экономики для фоновой отрисовки и гостя: стройка (площадка) и смена культур на полях.
@@ -1031,6 +1144,15 @@ export function applyEconEvent(world, ev) {
     if (!world.power.lines.some((l) => l.id === ev.ln.id)) world.power.lines.push(ev.ln);
     world.power.version = (world.power.version || 0) + 1;
     const xs = ev.ln.pylons.map((p) => p.x), ys = ev.ln.pylons.map((p) => p.y);
+    return [{ x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 }];
+  }
+  if (ev.k === 'feed') {
+    const f = ev.f;
+    if (f.kv === 110) { if (!world.power.lines.some((l) => l.id === f.id)) world.power.lines.push({ id: f.id, kv: 110, a: f.oid, b: null, side: f.side, pylons: f.pylons, feed: true }); }
+    else if (!(world.power.feeds ||= []).some((q) => q.oid === f.oid)) world.power.feeds.push(f);
+    world.power.version = (world.power.version || 0) + 1;
+    const P = f.pylons || f.poles.map(([x, y]) => ({ x, y }));
+    const xs = P.map((p) => p.x), ys = P.map((p) => p.y);
     return [{ x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 }];
   }
   if (ev.k === 'crop') {

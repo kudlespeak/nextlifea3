@@ -186,7 +186,7 @@ export function drawDW(ctx, sim, view, side, ui) {
   // ---------- Объекты ----------
   for (const o of g.objects) {
     if (o.kind === 'import' || !inView(o.x, o.y, Math.max(o.w, o.h))) continue;
-    if (o.build && !o.build.up) { construction(ctx, o, toS, z, dpr, 1 - (o.build.until - t) / o.build.total); continue; }
+    if (o.build && !o.build.up && !o.build.grid) { construction(ctx, o, toS, z, dpr, 1 - (o.build.until - t) / o.build.total); continue; }
     // крупные объекты (ТЭС, ГЭС, подстанции) видны в объёме и издали — пока на экране больше ~60 px
     if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
       // Сначала дальние узлы (по y экрана), чтобы высокие не перекрывались неверно

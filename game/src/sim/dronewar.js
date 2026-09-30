@@ -436,6 +436,7 @@ export class DroneWar {
   takeCredit(side, kind) { return this.state.takeCredit(side, kind); }
   acceptContract(side, id) { return this.state.acceptContract(side, id); }
   upgrade(side, id) { return this.econ.upgrade(side, id); }
+  gridConnect(side, id) { return this.econ.gridConnect(side, id); }
   buyCrew(side) {
     const S = this.sides[side];
     if (S.points < 60) return 'Не хватает очков: нужно 60';
@@ -774,7 +775,7 @@ export class DroneWar {
         sim.msg(`Удар противника по объекту «${this.obj(D.oid).name}» сорван — устойчивость +3`, enemy);
       }
     }
-    if (t >= this.nextDirective) {
+    if (false && t >= this.nextDirective) { // директивы штаба отключены (по просьбе игрока)
       this.nextDirective = t + 300;
       for (const side of ['blue', 'red']) {
         const enemy = side === 'blue' ? 'red' : 'blue';

@@ -184,6 +184,7 @@ buildMenu();
 
 // ================= Запуск партии =================
 function startGame(c) {
+  for (const id of ['btn-forts', 'btn-interior']) { const b = $(id); if (b) b.style.display = c.mode === 'drones' ? 'none' : ''; }
   cfg = c;
   controlSide = c.playerSide;
   $('menu-screen').classList.add('hide');
@@ -218,6 +219,8 @@ function startGame(c) {
     const enemy = controlSide === 'blue' ? 'red' : 'blue';
     if (c.mode === 'drones') {
       if (!c.multiplayer) $('speed8').style.display = '';
+      // в «Войне дронов» окопов и планировок зданий нет
+      for (const id of ['btn-forts', 'btn-interior']) { const b = $(id); if (b) b.style.display = 'none'; }
       dwui = new DWUI({ sim, side: controlSide, issue, log, focus: (x, y, zm) => focus(x, y, zm * dpr), screenToWorld, view });
       $('prep-text').innerHTML = 'Разверните ПВО: мобильные группы, РЛС, РЭБ, посты. Удары дронами — после окончания развёртывания.';
       log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
