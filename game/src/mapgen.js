@@ -1005,7 +1005,10 @@ function buildFieldsDW(world, rng, massifs) {
     return best;
   };
   // ----- Межевание вдоль дорог: ряды участков по обе стороны, границы повторяют изгибы дороги -----
-  const belt = (line, bw) => { for (let k = 0; k + 1 < line.length; k += 4) segsBelt(world, rng, line[k], line[Math.min(line.length - 1, k + 4)], avoid, bw); };
+  // Лесополосы копим и сажаем в конце — только там, где с боку действительно есть поле и полоса
+  // не режет чужое поле (иначе остаются «обрывки» посреди степи)
+  const pend = [], tracks = [];
+  const belt = (line, bw) => pend.push([line, bw]);
   const areaOf = (poly) => { let a = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; } return Math.abs(a) / 2; };
   const parcelOk = (poly) => {
     if (!mask.polyFree(poly, avoid | M.ROAD | M.RAIL, 14)) return false;
@@ -1090,8 +1093,6 @@ function buildFieldsDW(world, rng, massifs) {
       const g = m.road.half + 22; // обочина и придорожная лесополоса
       for (let v = g; v < R;) { const sw = rng.float(300, 700); strips.push([v, sw, v === g]); v += sw; }
       for (let v = -g; v > -R;) { const sw = rng.float(300, 700); strips.push([v - sw, sw, v === -g]); v -= sw; }
-      // лесополосы вдоль дороги с обеих сторон
-      for (const sg of [1, -1]) if (rng.chance(0.7)) edges.push(['road', toW(-R, sg * (m.road.half + 11)), toW(R, sg * (m.road.half + 11))]);
     } else for (let v = -R + rng.float(0, 200); v < R;) { const sw = rng.float(260, 720); strips.push([v, sw, false]); v += sw; }
     let prevCrop = null;
     for (const [v, sw] of strips) {
@@ -1162,7 +1163,7 @@ function buildFieldsDW(world, rng, massifs) {
         const p = [a[0] + ((b[0] - a[0]) * t) / L, a[1] + ((b[1] - a[1]) * t) / L];
         const ok = busy(p[0] + 0.001, p[1]) || busyNear(p);
         if (ok && !run) run = [p, p]; else if (ok) run[1] = p;
-        if ((!ok || t + 50 > L) && run) { if (Math.hypot(run[1][0] - run[0][0], run[1][1] - run[0][1]) > 150) segsBelt(world, rng, run[0], run[1], avoid, rng.float(9, 13)); run = null; }
+        if ((!ok || t + 50 > L) && run) { if (Math.hypot(run[1][0] - run[0][0], run[1][1] - run[0][1]) > 150) pend.push([[run[0], run[1]], rng.float(9, 13)]); run = null; }
       }
       continue;
     }
@@ -1171,7 +1172,53 @@ function buildFieldsDW(world, rng, massifs) {
     if (seen.has(k)) continue;
     seen.add(k);
     if (!rng.chance(0.13)) continue;
-    segsBelt(world, rng, a, b, avoid, rng.float(10, 14));
+    pend.push([[a, b], rng.float(10, 14)]);
+  }
+  const inField = (x, y) => { for (const f of world.fields.query({ x0: x, y0: y, x1: x, y1: y })) if (f.kind === 'field' && pointInPoly(x, y, f.poly)) return true; return false; };
+  for (const [line0, bw] of pend) {
+    const line = resample(line0, 20);
+    if (line.length < 2) continue;
+    const off = bw / 2 + 22;
+    // ломаная делится на «годные» куски: сбоку поле, сама полоса не режет поле
+    let run = [], sideVote = 0;
+    const flush = () => {
+      let L = 0;
+      for (let i = 1; i < run.length; i++) L += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+      if (run.length >= 2 && L >= 90) {
+        for (let k = 0; k + 1 < run.length; k += 5) segsBelt(world, rng, run[k], run[Math.min(run.length - 1, k + 5)], avoid, bw);
+        if (L >= 160 && rng.chance(0.9)) tracks.push(offsetLine(run, (sideVote >= 0 ? 1 : -1) * (bw / 2 + 2.5)));
+      }
+      run = []; sideVote = 0;
+    };
+    for (let i = 0; i < line.length; i++) {
+      const [x, y] = line[i], p = line[Math.max(0, i - 1)], q = line[Math.min(line.length - 1, i + 1)];
+      let dx = q[0] - p[0], dy = q[1] - p[1];
+      const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
+      const l = inField(x - dy * off, y + dx * off), r = inField(x + dy * off, y - dx * off);
+      if (!inField(x, y) && (l || r)) { run.push([x, y]); sideVote += (l ? 1 : 0) - (r ? 1 : 0); } else flush();
+    }
+    flush();
+  }
+  // Полевые дороги вдоль лесополос; концы примыкают к ближайшей дороге, если до неё недалеко и
+  // съезд не режет поле. В дорожный граф логистики не входят (только для вида и сельхозтехники)
+  world.fieldTracks = [];
+  for (const line of tracks) {
+    const a = line[0], b = line[line.length - 1];
+    for (const [e, tail] of [[a, true], [b, false]]) {
+      const nr = nearRoad(e[0], e[1], 320);
+      if (!nr) continue;
+      const d = Math.hypot(nr.x - e[0], nr.y - e[1]);
+      let ok = d > 8;
+      for (let t = 12; t < d - 12 && ok; t += 10) {
+        const x = e[0] + ((nr.x - e[0]) * t) / d, y = e[1] + ((nr.y - e[1]) * t) / d;
+        if (inField(x, y) || mask.has(x, y, M.WATER | M.BUILD | M.RAIL | M.VILLAGE)) ok = false;
+      }
+      if (!ok) continue;
+      if (tail) line.unshift([nr.x, nr.y]); else line.push([nr.x, nr.y]);
+    }
+    const tr = addItem(world.roads, { kind: 'road', type: 'dirt', track: true, line, width: 3.5 }, 10);
+    world.fieldTracks.push(tr);
+    world.mask.stampLine(line, 5, M.ROAD);
   }
   // Степь: пятна залежи, выгоревшей травы и сырых понижений (мягкие края)
   for (let i = 0; i < Math.round((W * H) / 5.5e6); i++) {
@@ -1793,7 +1840,27 @@ function blockBuild(world, blk, u, v, w, h, props) {
   const [x, y] = blk.toW(u, v);
   const poly = rectCorners(x, y, w, h, blk.phi + (props.rot || 0));
   if (!world.mask.polyFree(poly, M.ROAD | M.WATER | M.RAIL | M.BUILD, 4)) return null;
+  if (hitsBuilding(world, rectCorners(x, y, w + 6, h + 6, blk.phi + (props.rot || 0)))) return null;
   return addBuilding(world, { ...props, x, y, w, h, angle: blk.phi + (props.rot || 0) });
+}
+
+// Точная проверка пересечения с уже поставленными зданиями (маска 9 м пропускает узкие корпуса под углом)
+function hitsBuilding(world, poly) {
+  const bb = bboxOf(poly, 0);
+  for (const o of world.buildings.query(bb)) if (convexOverlap(poly, o.poly)) return true;
+  return false;
+}
+function convexOverlap(A, B) {
+  for (const P of [A, B])
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i], q = P[(i + 1) % P.length];
+      const nx = q[1] - p[1], ny = p[0] - q[0];
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const [x, y] of A) { const d = x * nx + y * ny; a0 = Math.min(a0, d); a1 = Math.max(a1, d); }
+      for (const [x, y] of B) { const d = x * nx + y * ny; b0 = Math.min(b0, d); b1 = Math.max(b1, d); }
+      if (a1 <= b0 || b1 <= a0) return false;
+    }
+  return true;
 }
 
 function buildPanelBlock(world, rng, blk, roofs, d) {

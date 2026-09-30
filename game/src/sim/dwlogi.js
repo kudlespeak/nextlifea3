@@ -189,7 +189,7 @@ class Heap {
 
 // ---------------------------------------------------------------- Логистика стороны
 export const SALE = { mall: { value: 5, every: 60, load: 3, cap: 9 }, market: { value: 4, every: 90, load: 3, cap: 7 }, store: { value: 2, every: 180, load: 2, cap: 4 }, fuel: { value: 2.5, every: 60, load: 4, cap: 10 } };
-const FLEET = { supply: 4, fire: 3 };
+const FLEET = { supply: 10, fire: 3 };
 let nextVeh = 1;
 
 export class DWLogistics {
@@ -210,6 +210,8 @@ export class DWLogistics {
       this.side[side] = {
         hub, border: game.objects.find((o) => o.side === side && o.kind === 'border'),
         arsenal: game.objects.find((o) => o.side === side && o.kind === 'ammo'),
+        // пункты боепитания: арсенал и склады при стартовых позициях (запас везут с арсенала)
+        depots: game.objects.filter((o) => o.side === side && (o.kind === 'ammo' || o.kind === 'launch')),
         bases: game.objects.filter((o) => o.side === side && o.kind === 'rembase'),
         stations: game.objects.filter((o) => o.side === side && o.kind === 'firest'),
         oilDepot: game.objects.find((o) => o.side === side && o.kind === 'oil'),
@@ -236,11 +238,38 @@ export class DWLogistics {
   route(a, b, offroad = false) {
     const r = this.roadRoute(a, b);
     if (!offroad) return r;
+    if (!r) return this.approach(a, b);
     const D = Math.hypot(b[0] - a[0], b[1] - a[1]);
     if (r && r.len < D * 1.8 + 1500) return r;
     const mask = this.g.world.mask;
     for (let t = 120; t <= D - 120; t += 10) if (mask.has(a[0] + ((b[0] - a[0]) * t) / D, a[1] + ((b[1] - a[1]) * t) / D, M.WATER)) return r;
     return { path: [[a[0], a[1]], [b[0], b[1]]], len: D, bridges: [], offroad: true };
+  }
+  // Цель за водой или у дороги, отрезанной от сети: доезжаем по дорогам до ближайшей доступной
+  // точки (до 2,5 км), дальше — напрямую, если по пути нет воды
+  approach(a, b) {
+    const R = this.roads, s = R.nearest(a[0], a[1]);
+    if (s < 0) return null;
+    const mask = this.g.world.mask;
+    const cands = R.near(b[0], b[1], 2500).filter((id) => R.comp[id] === R.comp[s]).map((id) => [id, Math.hypot(R.x[id] - b[0], R.y[id] - b[1])]).sort((p, q) => p[1] - q[1]);
+    for (const [id, d] of cands.slice(0, 6)) {
+      let wet = false;
+      for (let t = 10; t < d - 10 && !wet; t += 10) wet = mask.has(R.x[id] + ((b[0] - R.x[id]) * t) / d, R.y[id] + ((b[1] - R.y[id]) * t) / d, M.WATER);
+      if (wet) continue;
+      const r = this.roadRoute(a, [R.x[id], R.y[id]]);
+      if (r) return { path: [...r.path, [b[0], b[1]]], len: r.len + d, bridges: r.bridges, offroad: true };
+    }
+    return null;
+  }
+  // Ближайший действующий пункт боепитания
+  depotNear(side, x, y) {
+    let best = null, bd = Infinity;
+    for (const o of this.side[side].depots) {
+      if (!o.comps.some((c) => c.state !== 'destroyed')) continue;
+      const d = Math.hypot(o.x - x, o.y - y);
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
   }
   roadRoute(a, b) {
     const ver = this.bridgeVer();
@@ -331,13 +360,14 @@ export class DWLogistics {
       const ars = L.arsenal;
       const arsOk = ars && ars.comps.some((c) => c.k === 'bunker' && c.state !== 'destroyed');
       if (arsOk && L.trucksFree > 0) {
-        const need = g.ad.filter((a) => a.side === side && !a.dead && a.state === 'ready' && !a.supplyComing && this.needs(a));
+        // недоступные (нет подъезда) пропускаем и пробуем снова через минуту, чтобы не держать очередь
+        const need = g.ad.filter((a) => a.side === side && !a.dead && a.state === 'ready' && !a.supplyComing && this.needs(a) && !(sim.time - (a.supplyCut ?? -1e9) < 60));
         need.sort((a, b) => this.needs(b) - this.needs(a));
-        const a = need[0];
-        if (a) {
-          const v = this.spawn(side, 'supply', this.gate(ars), [a.x, a.y], { type: 'resupply', ad: a.id });
-          if (v) { L.trucksFree--; a.supplyComing = v.id; }
-          else a.supplyCut = sim.time;
+        for (const a of need.slice(0, 3)) {
+          const dep = this.depotNear(side, a.x, a.y) || ars;
+          const v = this.spawn(side, 'supply', this.gate(dep), [a.x, a.y], { type: 'resupply', ad: a.id, depot: dep.id });
+          if (v) { L.trucksFree--; a.supplyComing = v.id; a.supplyCut = null; break; }
+          a.supplyCut = sim.time;
         }
       }
       // Пожарные: к горящим узлам без расчёта
@@ -419,11 +449,13 @@ export class DWLogistics {
     if (T.type === 'resupply') {
       const a = g.ad.find((q) => q.id === T.ad);
       if (a && !a.dead) {
-        // Позиция могла уехать — догоняем
-        if (Math.hypot(a.x - v.x, a.y - v.y) > 80) { if (this.send(v, [a.x, a.y])) return; }
-        v.state = 'work'; v.workLeft = 25; return;
+        // Позиция могла уехать — догоняем (не больше двух раз; не доехать — позиция без подъезда)
+        const d = Math.hypot(a.x - v.x, a.y - v.y);
+        if (d > 80 && (v.chase = (v.chase || 0) + 1) <= 2 && this.send(v, [a.x, a.y])) return;
+        if (d <= 400) { v.state = 'work'; v.workLeft = 25; return; }
+        a.supplyComing = null; a.supplyCut = sim.time;
       }
-      if (!this.send(v, this.gate(L.arsenal), 'back')) this.home(v);
+      if (!this.send(v, this.gate(g.obj(T.depot) || L.arsenal), 'back')) this.home(v);
       return;
     }
     if (T.type === 'fire' || T.type === 'repair') { v.state = 'work'; v.workLeft = 0; return; }
@@ -437,7 +469,18 @@ export class DWLogistics {
       if (v.workLeft > 0) return;
       const a = g.ad.find((q) => q.id === T.ad);
       if (a) { g.restockAD(a); a.supplyComing = null; }
-      if (!this.send(v, this.gate(L.arsenal), 'back')) this.home(v);
+      // в кузове три комплекта: по пути развозим соседним позициям, которым нужно
+      T.left = (T.left ?? 3) - 1;
+      if (T.left > 0) {
+        let nb = null, bd = 7000;
+        for (const q of g.ad) {
+          if (q.side !== v.side || q.dead || q.state !== 'ready' || q.supplyComing || !this.needs(q)) continue;
+          const d = Math.hypot(q.x - v.x, q.y - v.y);
+          if (d < bd) { bd = d; nb = q; }
+        }
+        if (nb && this.send(v, [nb.x, nb.y])) { T.ad = nb.id; v.chase = 0; nb.supplyComing = v.id; return; }
+      }
+      if (!this.send(v, this.gate(g.obj(T.depot) || L.arsenal), 'back')) this.home(v);
       return;
     }
     if (T.type === 'fire') {
