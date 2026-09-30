@@ -73,7 +73,16 @@ export class DWState {
     this.tickT = 0;
   }
   // ---------------------------------------------------------------- Множители
+  // Кэш множителей: пересчёт раз в 5 с и после команд (k() зовут в каждой стрельбе ПВО)
   k(side, key) {
+    const ck = side + key;
+    const c = this.cache?.[ck];
+    if (c !== undefined) return c;
+    const v = this.kRaw(side, key);
+    (this.cache = this.cache || {})[ck] = v;
+    return v;
+  }
+  kRaw(side, key) {
     const T = this.side[side];
     if (!T) return 1;
     let k = 1;
@@ -110,6 +119,7 @@ export class DWState {
   // ---------------------------------------------------------------- Команды
   cooldown(T) { return this.sim.time < T.lawT ? `Законы меняют не чаще раза в 3 минуты (ещё ${Math.ceil(T.lawT - this.sim.time)} с)` : null; }
   setLaw(side, id, on) {
+    this.cache = {};
     const T = this.side[side];
     if (!LAWS[id]) return 'Нет такого закона';
     const cd = this.cooldown(T); if (cd) return cd;
@@ -118,6 +128,7 @@ export class DWState {
     return null;
   }
   setTax(side, level) {
+    this.cache = {};
     const T = this.side[side];
     const cd = this.cooldown(T); if (cd) return cd;
     T.tax = Math.max(0, Math.min(2, level | 0)); T.lawT = this.sim.time + 180;
@@ -125,6 +136,7 @@ export class DWState {
     return null;
   }
   setMobil(side, level) {
+    this.cache = {};
     const T = this.side[side];
     const cd = this.cooldown(T); if (cd) return cd;
     T.mobil = Math.max(0, Math.min(2, level | 0)); T.lawT = this.sim.time + 180;
@@ -189,6 +201,7 @@ export class DWState {
     const t = this.sim.time;
     this.tickT -= dt;
     if (this.tickT > 0) return;
+    this.cache = {};
     const step = 5 - this.tickT; this.tickT = 5;
     const g = this.g;
     // цена зерна: случайное блуждание около 1
@@ -224,6 +237,7 @@ export class DWState {
       this.events(side, t);
       this.ecoVictory(side);
     }
+    this.cache = {};
     this.histT -= step;
     if (this.histT <= 0) { this.histT = 30; for (const side of ['blue', 'red']) { const S = g.sides[side], H = this.side[side].hist; H.push([Math.round(S.income), Math.round(S.morale ?? 100), Math.round((S.supply ?? 1) * 100), Math.round(g.econ.summary(side).pop / 1000)]); if (H.length > 240) H.shift(); } }
   }
@@ -311,5 +325,6 @@ export class DWState {
   applySnap(q) {
     this.grainPrice = q.gp;
     ['blue', 'red'].forEach((sd, i) => Object.assign(this.side[sd], q.s[i]));
+    this.cache = {};
   }
 }
