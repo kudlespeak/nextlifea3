@@ -68,10 +68,11 @@ export class DWUI {
     const E = g.sides[this.enemy], S = this.S;
     const col = (v) => (v > 60 ? '#7ddc6a' : v > 30 ? '#f0c34a' : '#ef5a4a');
     const bar = (label, v) => `<div class="dw-mor"><span>${label}</span><div class="bar"><i style="width:${Math.max(0, v).toFixed(0)}%;background:${col(v)}"></i></div><b style="color:${col(v)}">${Math.max(0, v).toFixed(0)}</b></div>`;
+    const hhmm = (s) => `${Math.floor(s / 3600)} ч ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} мин`;
     const mmss = (s) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`;
     const PH = ['Фаза 1 · пробные удары', 'Фаза 2 · массированные удары', 'Фаза 3 · удар возмездия'];
     let h = bar('Устойчивость тыла', S.morale ?? 100) + bar('У противника', E.morale ?? 100);
-    h += `<div class="dw-phase"><span>${g.prep ? 'Подготовка' : PH[g.phaseNo || 0]}</span><span>до конца ${mmss(g.endAt - t)}</span></div>`;
+    h += `<div class="dw-phase"><span>${g.prep ? 'Подготовка' : PH[g.phaseNo || 0]}</span><span>${g.endless ? `идёт ${g.prep ? '0:00' : hhmm(t - (g.startAt || t))}` : `до конца ${mmss(g.endAt - t)}`}</span></div>`;
     const D = g.directive?.[side], T = g.directive?.[this.enemy];
     if (D) {
       const o = g.obj(D.oid);

@@ -52,7 +52,7 @@ export class DroneWarAI {
     if (!g.prep && t > this.next.strike) {
       const night = ((t / 3600) % 24) > 20 || ((t / 3600) % 24) < 5;
       // Эскалация: к третьей фазе удары вдвое чаще
-      this.next.strike = t + ((night ? 200 : 300) / this.k + this.sim.rng.float(0, 120)) / (1 + 0.5 * g.phase());
+      this.next.strike = t + ((night ? 200 : 300) / this.k + this.sim.rng.float(0, 120)) / (1 + (g.endless ? 0.25 : 0.5) * g.phase());
       this.strike();
     }
     this.nets();

@@ -8,7 +8,7 @@ import { M } from '../spatial.js';
 
 const GROUND = '#7b784e';
 
-const AREA_ORDER = ['hill', 'floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'park', 'plot', 'garden', 'stadium', 'platform', 'dam', 'path'];
+const AREA_ORDER = ['hill', 'floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'square', 'park', 'plot', 'garden', 'stadium', 'pitch', 'platform', 'dam', 'drive', 'path'];
 const AREA_COLORS = {
   floodplain: '#6c7843',
   urban: '#7d7c64',
@@ -18,6 +18,8 @@ const AREA_COLORS = {
   industrial: '#86837b',
   park: '#5c6b3b',
   platform: '#aaa69d',
+  square: '#a29e92',
+  pitch: '#5f7f41',
   path: '#b0a78c',
   dam: '#8e8a6e',
 };
@@ -118,6 +120,7 @@ export function drawChunk(ctx, world, b, ppm) {
   for (const s of scars) if (s.kind === 'tracks') drawTracks(ctx, s, ppm);
   drawRails(ctx, world, b, q, ppm);
   drawRoads(ctx, world, b, q, ppm);
+  drawRailCrossings(ctx, world, b, q, ppm);
   drawForts(ctx, world, q, ppm);
   for (const s of scars) if (s.kind === 'crater') drawCrater(ctx, s, ppm);
   for (const s of scars) if (s.kind === 'wreck') drawWreck(ctx, s, ppm);
@@ -139,14 +142,22 @@ export function drawChunk(ctx, world, b, ppm) {
 function drawSteppeTexture(ctx, world, b, ppm) {
   const size = b.x1 - b.x0;
   const G = 48;
+  // Крупные плавные переходы (выгоревшие склоны, зелёные понижения) + мягкая средняя пятнистость;
+  // контраст невысокий — без «камуфляжа»
   const img = lowFreqImage(G, (wx, wy) => {
-    const n = fbm(wx / 180, wy / 180, world.seed + 31, 4);
-    const t = Math.min(1, Math.max(0, (n - 0.3) * 2.2));
-    // от зелёно-оливкового к выгоревшему соломенному
-    return [lerp(104, 150, t), lerp(112, 140, t), lerp(66, 90, t), 255];
+    const big = fbm(wx / 2200, wy / 2200, world.seed + 31, 3);
+    const mid = fbm(wx / 420, wy / 420, world.seed + 57, 3);
+    const t = Math.min(1, Math.max(0, (big - 0.5) * 1.6 + (mid - 0.5) * 0.55 + 0.5));
+    const g2 = fbm(wx / 900, wy / 900, world.seed + 91, 2) - 0.5; // оттенок: чуть зеленее / суше
+    return [lerp(112, 146, t) - g2 * 10, lerp(116, 136, t) + g2 * 6, lerp(70, 88, t) - g2 * 4, 255];
   }, b);
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(img, b.x0, b.y0, size, size);
+  drawLF(ctx, img, G, b, size);
+}
+// Отсчёты шума берутся на краях чанка включительно и рисуются от центра первого пикселя до центра
+// последнего — соседние чанки делят краевые отсчёты, швов нет
+function drawLF(ctx, img, G, b, size) {
+  ctx.drawImage(img, 0.5, 0.5, G - 1, G - 1, b.x0, b.y0, size, size);
 }
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -159,7 +170,7 @@ function lowFreqImage(G, fn, b) {
   const size = b.x1 - b.x0;
   for (let j = 0; j < G; j++)
     for (let i = 0; i < G; i++) {
-      const [r, gg, bb, a] = fn(b.x0 + ((i + 0.5) / G) * size, b.y0 + ((j + 0.5) / G) * size);
+      const [r, gg, bb, a] = fn(b.x0 + (i / (G - 1)) * size, b.y0 + (j / (G - 1)) * size);
       const k = (j * G + i) * 4;
       img.data[k] = r; img.data[k + 1] = gg; img.data[k + 2] = bb; img.data[k + 3] = a;
     }
@@ -204,11 +215,11 @@ function drawMicro(ctx, world, b, ppm) {
 function drawLowFreq(ctx, world, b, ppm) {
   const size = b.x1 - b.x0;
   const img = lowFreqImage(40, (wx, wy) => {
-    const n = fbm(wx / 420, wy / 420, world.seed + 77, 3) * 0.7 + fbm(wx / 90, wy / 90, world.seed + 13, 2) * 0.3;
+    const n = fbm(wx / 420, wy / 420, world.seed + 77, 3) * 0.7 + fbm(wx / 120, wy / 120, world.seed + 13, 2) * 0.3;
     const d = n - 0.5;
-    return d < 0 ? [30, 28, 10, Math.min(255, -d * 190)] : [255, 245, 215, Math.min(255, d * 110)];
+    return d < 0 ? [30, 28, 10, Math.min(255, -d * 110)] : [255, 245, 215, Math.min(255, d * 70)];
   }, b);
-  ctx.drawImage(img, b.x0, b.y0, size, size);
+  drawLF(ctx, img, 40, b, size);
 }
 
 // ---------- Поле ----------
@@ -259,8 +270,9 @@ function drawField(ctx, f, b, ppm) {
   };
 
   // Борозды / рядки
-  if (crop.furrow && ppm >= 0.3) {
-    const sp = ppm >= 2 ? 1.6 : ppm >= 1 ? 3 : ppm >= 0.5 ? 6 : 10;
+  if (crop.furrow && ppm >= 0.6) {
+    const sp = ppm >= 2 ? 1.6 : ppm >= 1 ? 3 : 6;
+    ctx.globalAlpha = ppm >= 2 ? 0.8 : 0.45; // издали рядки сливаются
     ctx.beginPath();
     const start = Math.floor(mn / sp) * sp;
     for (let off = start; off <= mx; off += sp) {
@@ -270,6 +282,7 @@ function drawField(ctx, f, b, ppm) {
     ctx.lineWidth = sp * 0.35;
     ctx.strokeStyle = crop.furrow;
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   // Технологическая колея (трамлайны) каждые 24 м
   if (crop.tram && ppm >= 0.4) {
@@ -281,7 +294,7 @@ function drawField(ctx, f, b, ppm) {
     }
   }
   // Подсолнух — жёлтые головки на крупном плане
-  if (crop.dots && ppm >= 2) {
+  if (crop.dots && ppm >= 4) {
     ctx.fillStyle = 'rgba(165,145,50,0.45)';
     for (let y = Math.floor(bb.y0); y < bb.y1; y += 0.8)
       for (let x = Math.floor(bb.x0); x < bb.x1; x += 0.8)
@@ -301,11 +314,11 @@ function drawField(ctx, f, b, ppm) {
   // Разворотная полоса по краю поля
   ctx.beginPath();
   pathPoly(ctx, f.poly);
-  ctx.lineWidth = 30;
-  ctx.strokeStyle = 'rgba(70,60,30,0.10)';
+  ctx.lineWidth = 24;
+  ctx.strokeStyle = 'rgba(70,60,30,0.07)';
   ctx.stroke();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(95,90,55,0.55)';
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(105,100,62,0.35)'; // межа
   ctx.stroke();
   ctx.restore();
 }
@@ -497,6 +510,9 @@ function drawArea(ctx, a, b, ppm) {
       break;
     case 'path':
       strokeLine(ctx, a.line, a.width, AREA_COLORS.path);
+      break;
+    case 'drive':
+      strokeLine(ctx, a.line, a.width, '#5c5d59');
       break;
     case 'garden': {
       const [soil, green] = GARDEN_TONES[a.tone];
@@ -704,6 +720,28 @@ function drawRails(ctx, world, b, q, ppm) {
   }
   // Мосты — парапеты над водой
   for (const r of rails) for (const run of bridgeRuns(world, r)) drawParapets(ctx, run, 5.5);
+}
+
+// Переезды: где дорога пересекает путь, поверх покрытия — настил и рельсы (рельсы не «тонут» под грунтовкой)
+function drawRailCrossings(ctx, world, b, q, ppm) {
+  if (ppm < 0.5) return;
+  const rails = world.rails.query(q);
+  if (!rails.length) return;
+  const roads = world.roads.query(q);
+  for (const r of rails) for (const part of clipLine(r.line, b, 20)) {
+    for (let i = 1; i < part.length; i++) {
+      const a = part[i - 1], c = part[i];
+      const mx = (a[0] + c[0]) / 2, my = (a[1] + c[1]) / 2;
+      if (!world.mask.has(mx, my, M.ROAD)) continue;
+      const road = roads.find((rd) => distToLine(mx, my, rd.line) < rd.width / 2 + 2);
+      if (!road) continue;
+      const seg = [a, c];
+      strokeLine(ctx, seg, Math.min(road.width, 6), road.type === 'dirt' ? '#a0907a' : road.type === 'village' ? '#5f5e59' : '#555653'); // покрытие дороги на переезде
+      const w = Math.max(0.18, 0.6 / ppm);
+      strokeLine(ctx, offsetLine(seg, -0.76), w, '#2f2d2a');
+      strokeLine(ctx, offsetLine(seg, 0.76), w, '#2f2d2a');
+    }
+  }
 }
 
 // ---------- Дороги ----------

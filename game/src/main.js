@@ -93,7 +93,7 @@ function buildMenu() {
     const b = document.createElement('button');
     b.textContent = m.name;
     b.className = menu.mode === k ? 'sel' : '';
-    b.onclick = () => { if (k !== menu.mode && (k === 'drones' || menu.mode === 'drones')) { menu.duration = k === 'drones' ? 2400 : 3600; menu.prep = k === 'drones' ? 120 : 300; } menu.mode = k; buildMenu(); };
+    b.onclick = () => { if (k !== menu.mode && (k === 'drones' || menu.mode === 'drones')) { menu.duration = k === 'drones' ? 0 : 3600; menu.prep = k === 'drones' ? 120 : 300; } menu.mode = k; buildMenu(); };
     mo.appendChild(b);
   }
   $('mode-desc').textContent = MODES[menu.mode].desc;
@@ -103,8 +103,8 @@ function buildMenu() {
   opts('opt-fog', 'Туман войны', [[true, 'Включён'], [false, 'Выключен']], 'fog');
   opts('opt-diff', 'Сложность ИИ', [['easy', 'Лёгкая'], ['normal', 'Нормальная'], ['hard', 'Тяжёлая']], 'difficulty');
   // «Война дронов» — короткие партии с фазами эскалации
-  const durs = menu.mode === 'drones' ? [[1200, '20 мин'], [2400, '40 мин'], [3600, '60 мин']] : [[1800, '30 мин'], [3600, '60 мин'], [5400, '90 мин']];
-  if (!durs.some(([v]) => v === menu.duration)) menu.duration = menu.mode === 'drones' ? 2400 : 3600;
+  const durs = menu.mode === 'drones' ? [[2400, '40 мин'], [7200, '2 часа'], [0, 'Без ограничения']] : [[1800, '30 мин'], [3600, '60 мин'], [5400, '90 мин']];
+  if (!durs.some(([v]) => v === menu.duration)) menu.duration = menu.mode === 'drones' ? 0 : 3600;
   opts('opt-dur', 'Длительность', durs, 'duration');
   const preps = menu.mode === 'drones' ? [[0, 'Нет'], [60, '1 мин'], [120, '2 мин'], [180, '3 мин']] : [[0, 'Нет'], [180, '3 мин'], [300, '5 мин'], [600, '10 мин']];
   if (!preps.some(([v]) => v === menu.prep)) menu.prep = menu.mode === 'drones' ? 120 : 300;
@@ -1154,7 +1154,7 @@ $('end-menu').onclick = () => { location.reload(); };
 function updateScoreboard() {
   const g = sim.game;
   if (!g) return;
-  const left = Math.max(0, g.endAt - sim.time);
+  const left = g.endless ? sim.time - (g.startAt ?? sim.time) : Math.max(0, g.endAt - sim.time);
   const pb = $('prep-bar');
   pb.classList.toggle('show', !!g.prep);
   if (g.prep) {
@@ -1179,7 +1179,8 @@ function updateScoreboard() {
     const d = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
     mid = `<span class="b">${d(t.blue - i.blue)}</span> : <span class="r">${d(t.red - i.red)}</span> <span class="m">продвижение</span>`;
   }
-  $('scoreboard').innerHTML = `${mid} <span class="m">· ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}</span> <span title="Время суток">${sun}</span>`;
+  const clock = left >= 3600 ? `${Math.floor(left / 3600)}:${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(left % 60)).padStart(2, '0')}` : `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`;
+  $('scoreboard').innerHTML = `${mid} <span class="m" title="${g.endless ? 'Идёт партия (без ограничения по времени)' : 'До конца партии'}">· ${g.endless ? '⏱ ' : ''}${clock}</span> <span title="Время суток">${sun}</span>`;
   if (g.winner && !$('end-screen').classList.contains('show')) showEnd();
 }
 
@@ -1572,7 +1573,7 @@ if (params.get('autostart')) {
   if (params.get('fog') === '0') menu.fog = false;
   if (params.get('role')) menu.role = params.get('role');
   if (params.get('prep')) menu.prep = Number(params.get('prep'));
-  if (menu.mode === 'drones') menu.duration = Number(params.get('dur')) || 2400;
+  if (menu.mode === 'drones') menu.duration = params.has('dur') ? Number(params.get('dur')) : 0;
   startGame(gameConfig());
 }
 

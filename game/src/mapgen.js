@@ -475,8 +475,8 @@ function generateDroneWarWorld(seed) {
   }
   for (const v of villages) addRoad(world, v.street, 'village');
 
-  // Городские мосты столиц
-  for (const S of Object.values(sides)) {
+  // Городские мосты столиц — теперь это продолжения проспектов городской сетки (см. buildCityDW)
+  for (const S of []) {
     const cap = S.cities[0].c;
     for (const dy of [-380, 420]) {
       const y = cap[1] + dy;
@@ -491,7 +491,7 @@ function generateDroneWarWorld(seed) {
   // ---------- Города ----------
   for (const [side, S] of Object.entries(sides)) {
     setBuildStyle(side);
-    S.cities.forEach((ct, i) => buildCity(world, rng, ct.c, i === 2 ? S.branch : S.rail, S.river, growth.get(ct), ct.sc));
+    S.cities.forEach((ct, i) => buildCityDW(world, rng, ct.c, i === 2 ? S.branch : S.rail, S.river, growth.get(ct), ct.sc));
   }
   setBuildStyle(null);
   for (const lines of growth.values()) for (const line of lines) connectToCity(world, line);
@@ -685,11 +685,16 @@ function generateDroneWarWorld(seed) {
 
   // ---------- Поля: массивы вокруг жилья (свой разворот, поля разной длины вразбежку) + пятна степи ----------
   const massifs = [
-    ...allC.map((ct) => ({ x: ct.c[0], y: ct.c[1], r: 3300 * ct.sc })),
-    ...allC.map((ct) => { const a = rng.float(0, 6.28); return { x: ct.c[0] + Math.cos(a) * 2600 * ct.sc, y: ct.c[1] + Math.sin(a) * 2600 * ct.sc, r: 1900 * ct.sc }; }),
-    ...villages.map((v) => ({ x: v.c[0], y: v.c[1], r: rng.float(1100, 2000) })),
+    ...allC.map((ct) => ({ x: ct.c[0], y: ct.c[1], r: 4600 * ct.sc })),
+    ...allC.flatMap((ct) => [0, 1].map(() => { const a = rng.float(0, 6.28); return { x: ct.c[0] + Math.cos(a) * 3600 * ct.sc, y: ct.c[1] + Math.sin(a) * 3600 * ct.sc, r: 2200 * ct.sc }; })),
+    ...villages.map((v) => ({ x: v.c[0], y: v.c[1], r: rng.float(1500, 2500) })),
   ];
-  for (let i = 0; i < 18; i++) massifs.push({ x: rng.float(1500, W - 1500), y: rng.float(1500, H - 1500), r: rng.float(700, 1300) }); // хутора и агрофирмы в степи
+  // Вся остальная земля — тоже пашня (как на юге в реальности): массивы агрофирм сплошным покрытием;
+  // редкие пропуски — выпасы и залежь
+  for (let y = 1200; y < H; y += 2700) for (let x = 1200; x < W; x += 2900) {
+    if (rng.chance(0.08)) continue;
+    massifs.push({ x: x + rng.float(-600, 600), y: y + rng.float(-600, 600), r: rng.float(2000, 2600) });
+  }
   buildFieldsDW(world, rng, massifs);
   // Редкие рощи и одиночные деревья в степи
   for (let i = 0; i < 480; i++) {
@@ -965,52 +970,159 @@ function buildFieldsDW(world, rng, massifs) {
   const taken = new Uint8Array(gw * gh);
   const cell = (x, y) => { const i = Math.floor(x / G), j = Math.floor(y / G); return i < 0 || j < 0 || i >= gw || j >= gh ? -1 : j * gw + i; };
   const busy = (x, y) => { const k = cell(x, y); return k < 0 || taken[k] === 1; };
+  const busyNear = (p) => { for (const d of [30, 50]) for (const [dx, dy] of [[d, 0], [-d, 0], [0, d], [0, -d]]) { const k = cell(p[0] + dx, p[1] + dy); if (k >= 0 && taken[k] === 1) return true; } return false; };
   const take = (poly) => {
     const bb = bboxOf(poly, 0);
     for (let y = Math.floor(bb.y0 / G) * G + G / 2; y < bb.y1; y += G)
       for (let x = Math.floor(bb.x0 / G) * G + G / 2; x < bb.x1; x += G) if (pointInPoly(x, y, poly)) { const k = cell(x, y); if (k >= 0) taken[k] = 1; }
   };
+  const edges = [];
   const crops = [['wheat', 4], ['stubble', 4], ['sunflower', 3], ['plowed', 1.6], ['harrowed', 1.4], ['corn', 1.5], ['fallow', 1.2], ['meadow', 0.6]];
   let nFields = 0;
+  // Поля нарезаны вдоль дорог: массивы по трассам и дорогам (ось массива — дорога, первый ряд полей
+  // сразу за обочиной и придорожной лесополосой); остальные массивы повёрнуты по ближайшей дороге
+  const fieldRoads = world.roadList.filter((r) => r.type === 'highway' || r.type === 'local' || r.type === 'village');
+  const roadPts = [];
+  for (const r of fieldRoads) {
+    const pts = resample(r.line, 60);
+    for (let i = 1; i + 1 < pts.length; i++) roadPts.push({ x: pts[i][0], y: pts[i][1], tx: pts[i + 1][0] - pts[i - 1][0], ty: pts[i + 1][1] - pts[i - 1][1], half: r.width / 2 + (r.type === 'highway' ? 4 : 0) });
+    let acc = 1400;
+    for (let i = 1; i + 1 < pts.length; i++) {
+      acc += 60;
+      if (acc < 2600) continue;
+      const [x, y] = pts[i];
+      if (mask.has(x, y, M.CITY | M.CITYZONE | M.WATER | M.VILLAGE)) continue;
+      acc = 0;
+      massifs.push({ x, y, r: 1500, road: { tx: pts[i + 1][0] - pts[i - 1][0], ty: pts[i + 1][1] - pts[i - 1][1], half: r.width / 2 + (r.type === 'highway' ? 4 : 0) } });
+    }
+  }
+  const RB = 600, rbins = new Map();
+  for (const p of roadPts) { const k = `${Math.floor(p.x / RB)},${Math.floor(p.y / RB)}`; (rbins.get(k) || rbins.set(k, []).get(k)).push(p); }
+  const nearRoad = (x, y, maxD) => {
+    let best = null, bd = maxD;
+    const ix = Math.floor(x / RB), iy = Math.floor(y / RB), n = Math.ceil(maxD / RB);
+    for (let dx = -n; dx <= n; dx++) for (let dy = -n; dy <= n; dy++) for (const p of rbins.get(`${ix + dx},${iy + dy}`) || []) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } }
+    return best;
+  };
+  // ----- Межевание вдоль дорог: ряды участков по обе стороны, границы повторяют изгибы дороги -----
+  const belt = (line, bw) => { for (let k = 0; k + 1 < line.length; k += 4) segsBelt(world, rng, line[k], line[Math.min(line.length - 1, k + 4)], avoid, bw); };
+  const areaOf = (poly) => { let a = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; } return Math.abs(a) / 2; };
+  const parcelOk = (poly) => {
+    if (!mask.polyFree(poly, avoid | M.ROAD | M.RAIL, 14)) return false;
+    const bb = bboxOf(poly, 0);
+    for (let y = bb.y0 + 20; y < bb.y1; y += 60) for (let x = bb.x0 + 20; x < bb.x1; x += 60) if (pointInPoly(x, y, poly) && busy(x, y)) return false;
+    return true;
+  };
+  const placeParcel = (poly, angle) => {
+    const crop = rng.weighted(crops);
+    const front = Math.abs(poly[0][0] - W / 2) < 2500;
+    const field = { kind: 'field', poly, crop: front && rng.chance(0.6) ? rng.pick(['fallow', 'meadow']) : crop, angle, seed: rng.int(0, 1e9), patches: [] };
+    const bb = bboxOf(poly, 0);
+    for (let k = rng.int(0, 3); k > 0; k--) field.patches.push({ x: rng.float(bb.x0, bb.x1), y: rng.float(bb.y0, bb.y1), rx: rng.float(30, 110), ry: rng.float(20, 70), a: rng.float(0, 3.14), dark: rng.chance(0.6) });
+    addItem(world.fields, field, 0);
+    take(poly);
+    nFields++;
+  };
+  const roadsByRank = world.roadList.filter((r) => r.type === 'highway' || r.type === 'local' || r.type === 'village').sort((a, b) => (b.type === 'highway') - (a.type === 'highway'));
+  for (const r of roadsByRank) {
+    const line = resample(r.line, 25);
+    if (line.length < 20) continue;
+    const g = r.width / 2 + (r.type === 'highway' ? 30 : 24); // обочина и придорожная лесополоса
+    for (const sg of [1, -1]) {
+      let i = rng.int(0, 10);
+      while (i + 12 < line.length) {
+        const n = Math.round(rng.float(450, 1250) / 25);
+        const j = Math.min(line.length - 1, i + n);
+        const sub = line.slice(i, j + 1);
+        i = j;
+        if (sub.length < 12) break;
+        const inner = sub.slice(1, -1); // межа между соседними участками
+        let d = g;
+        let ok = false;
+        const tg = [sub[sub.length - 1][0] - sub[0][0], sub[sub.length - 1][1] - sub[0][1]];
+        const ang = Math.atan2(tg[1], tg[0]) + (rng.chance(0.15) ? Math.PI / 2 : 0);
+        // участок (кусок ряда); не помещается — делим пополам по длине
+        const tryRow = (pts, d0, d1, depth2) => {
+          if (pts.length < 6) return false;
+          const poly = [...offsetLine(pts, sg * d0), ...offsetLine(pts, sg * d1).reverse()];
+          if (areaOf(poly) < 50000) return false;
+          if (parcelOk(poly)) { placeParcel(poly, ang); return true; }
+          if (depth2 >= 2) return false;
+          const mid = Math.floor(pts.length / 2);
+          const l = tryRow(pts.slice(0, mid - 1), d0, d1, depth2 + 1), rr = tryRow(pts.slice(mid + 1), d0, d1, depth2 + 1);
+          return l || rr;
+        };
+        let miss = 0;
+        for (let row = 0; row < 3 && miss < 2; row++) {
+          const depth = rng.float(300, 650);
+          if (tryRow(inner, d, d + depth, 0)) { if (row === 0) ok = true; if (row > 0 && rng.chance(0.2)) belt(offsetLine(inner, sg * (d - 6)), 10); } else miss++;
+          d += depth + 12;
+        }
+        if (ok && rng.chance(0.4)) belt(offsetLine(inner, sg * (g - 12)), rng.float(9, 12)); // вдоль дороги
+      }
+    }
+  }
+  const MB = 3000, mbins = new Map();
+  for (const m of massifs) { const k = `${Math.floor(m.x / MB)},${Math.floor(m.y / MB)}`; (mbins.get(k) || mbins.set(k, []).get(k)).push(m); }
+  const owner = (x, y) => {
+    let best = null, bd = Infinity;
+    const ix = Math.floor(x / MB), iy = Math.floor(y / MB);
+    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (const m of mbins.get(`${ix + dx},${iy + dy}`) || []) {
+      const d = Math.hypot(x - m.x, y - m.y) / m.r;
+      if (d < bd) { bd = d; best = m; }
+    }
+    return bd < 1.5 ? best : null;
+  };
   for (const m of massifs) {
-    const th = rng.float(-0.7, 0.7) + (rng.chance(0.5) ? Math.PI / 2 : 0);
+    const nr = m.road ? null : nearRoad(m.x, m.y, 2200);
+    const th = m.road ? Math.atan2(m.road.ty, m.road.tx) : nr ? Math.atan2(nr.ty, nr.tx) + (rng.chance(0.25) ? Math.PI / 2 : 0) : rng.float(-0.7, 0.7) + (rng.chance(0.5) ? Math.PI / 2 : 0);
     const c = Math.cos(th), s = Math.sin(th);
     const toW = (u, v) => [m.x + u * c - v * s, m.y + u * s + v * c];
     const ph = [rng.float(0, 6.28), rng.float(0, 6.28), rng.float(0, 6.28)];
-    const rad = (a) => m.r * (0.8 + 0.14 * Math.sin(a * 2 + ph[0]) + 0.1 * Math.sin(a * 3 + ph[1]) + 0.06 * Math.sin(a * 5 + ph[2]));
-    const inside = (x, y) => Math.hypot(x - m.x, y - m.y) < rad(Math.atan2(y - m.y, x - m.x));
-    const R = m.r * 1.15;
-    let v = -R + rng.float(0, 200);
+    void ph;
+    // территория массива — ячейка Вороного: точка принадлежит ближайшему (с учётом размера) массиву,
+    // поэтому массивы стыкуются без пустот
+    const inside = (x, y) => owner(x, y) === m;
+    const R = m.r * 1.6;
+    // полосы полей: у дорожного массива — от обочины в обе стороны, иначе — сплошь
+    const strips = [];
+    if (m.road) {
+      const g = m.road.half + 22; // обочина и придорожная лесополоса
+      for (let v = g; v < R;) { const sw = rng.float(300, 700); strips.push([v, sw, v === g]); v += sw; }
+      for (let v = -g; v > -R;) { const sw = rng.float(300, 700); strips.push([v - sw, sw, v === -g]); v -= sw; }
+      // лесополосы вдоль дороги с обеих сторон
+      for (const sg of [1, -1]) if (rng.chance(0.7)) edges.push(['road', toW(-R, sg * (m.road.half + 11)), toW(R, sg * (m.road.half + 11))]);
+    } else for (let v = -R + rng.float(0, 200); v < R;) { const sw = rng.float(260, 720); strips.push([v, sw, false]); v += sw; }
     let prevCrop = null;
-    while (v < R) {
-      const sw = rng.float(260, 720);
+    for (const [v, sw] of strips) {
       let u = -R - rng.float(0, 700);
       while (u < R) {
         const fl = rng.float(420, 1500);
         const u0 = u + 9, u1 = u + fl - 9, v0 = v + 9, v1 = v + sw - 9;
-        u += fl + (rng.chance(0.2) ? rng.float(15, 50) : 0);
+        u += fl + (rng.chance(0.1) ? rng.float(15, 40) : 0);
         const cen = toW((u0 + u1) / 2, (v0 + v1) / 2);
         if (!inside(cen[0], cen[1]) || busy(cen[0], cen[1])) continue;
         // Поле, возможно, разрезанное пополам, если частично заходит на запретное
         const tryPart = (a0, a1, b0, b1, depth) => {
-          // края массива — неровные: поле укорачивается вдоль длинной стороны до контура
-          const ok2 = (a) => { const p = toW(a, b0), q = toW(a, b1); return inside(p[0], p[1]) && inside(q[0], q[1]); };
+          // подрезаем поле до чистой земли: своя ячейка массива, без дорог, воды, застройки и соседних полей
+          const clean = (x, y) => inside(x, y) && !busy(x, y) && !mask.has(x, y, avoid | M.ROAD | M.RAIL);
+          const lineU = (a) => { for (let k = 0; k <= 5; k++) { const p = toW(a, b0 + ((b1 - b0) * k) / 5); if (!clean(p[0], p[1])) return false; } return true; };
+          while (a1 - a0 > 200 && !lineU(a0)) a0 += 25;
+          while (a1 - a0 > 200 && !lineU(a1)) a1 -= 25;
+          const lineV = (b) => { for (let k = 0; k <= 6; k++) { const p = toW(a0 + ((a1 - a0) * k) / 6, b); if (!clean(p[0], p[1])) return false; } return true; };
+          while (b1 - b0 > 150 && !lineV(b0)) b0 += 25;
+          while (b1 - b0 > 150 && !lineV(b1)) b1 -= 25;
+          if (a1 - a0 < 200 || b1 - b0 < 150) return;
           const along = a1 - a0 >= b1 - b0;
-          if (along) {
-            if (!ok2(a0)) { let lo = a0, hi = (a0 + a1) / 2; if (!ok2(hi)) return; for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (ok2(m)) hi = m; else lo = m; } a0 = hi; }
-            if (!ok2(a1)) { let lo = (a0 + a1) / 2, hi = a1; if (!ok2(lo)) return; for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (ok2(m)) lo = m; else hi = m; } a1 = lo; }
-            if (a1 - a0 < 220) return;
-          }
           const poly = [toW(a0, b0), toW(a1, b0), toW(a1, b1), toW(a0, b1)];
-          if (!along && poly.some((p) => !inside(p[0], p[1]))) return;
-          let bad = false;
+          let bad = !mask.polyFree(poly, M.ROAD | M.RAIL, 10); // поле не наезжает на дороги
           for (let i = 0; i <= 4 && !bad; i++) for (let j = 0; j <= 4 && !bad; j++) {
             const x = poly[0][0] + (poly[1][0] - poly[0][0]) * (i / 4) + (poly[3][0] - poly[0][0]) * (j / 4);
             const y = poly[0][1] + (poly[1][1] - poly[0][1]) * (i / 4) + (poly[3][1] - poly[0][1]) * (j / 4);
             if (mask.has(x, y, avoid) || busy(x, y)) bad = true;
           }
           if (bad) {
-            if (depth > 1) return;
+            if (depth > 2) return;
             if (a1 - a0 > b1 - b0) { const mid = (a0 + a1) / 2; tryPart(a0, mid - 6, b0, b1, depth + 1); tryPart(mid + 6, a1, b0, b1, depth + 1); }
             else { const mid = (b0 + b1) / 2; tryPart(a0, a1, b0, mid - 6, depth + 1); tryPart(a0, a1, mid + 6, b1, depth + 1); }
             return;
@@ -1018,7 +1130,8 @@ function buildFieldsDW(world, rng, massifs) {
           let area = 0;
           for (let i = 0; i < 4; i++) { const p = poly[i], q = poly[(i + 1) % 4]; area += p[0] * q[1] - q[0] * p[1]; }
           if (Math.abs(area) / 2 < 40000) return;
-          const crop = prevCrop && rng.chance(0.3) ? prevCrop : rng.weighted(crops);
+          const front = Math.abs(toW((a0 + a1) / 2, (b0 + b1) / 2)[0] - W / 2) < 2500; // у линии фронта поля брошены
+          const crop = front && rng.chance(0.6) ? rng.pick(['fallow', 'meadow']) : prevCrop && rng.chance(0.3) ? prevCrop : rng.weighted(crops);
           prevCrop = crop;
           const field = { kind: 'field', poly, crop, angle: (a1 - a0 > b1 - b0 ? th : th + Math.PI / 2) + (rng.chance(0.12) ? Math.PI / 2 : 0), seed: rng.int(0, 1e9), patches: [] };
           for (let k = rng.int(0, 3); k > 0; k--) {
@@ -1028,22 +1141,37 @@ function buildFieldsDW(world, rng, massifs) {
           addItem(world.fields, field, 0);
           take(poly);
           nFields++;
+          // длинные края поля — кандидаты под лесополосу (в меже между полями)
+          const long = a1 - a0 > b1 - b0;
+          edges.push(long ? [toW(a0, b0 - 9), toW(a1, b0 - 9)] : [toW(a0 - 9, b0), toW(a0 - 9, b1)]);
+          edges.push(long ? [toW(a0, b1 + 9), toW(a1, b1 + 9)] : [toW(a1 + 9, b0), toW(a1 + 9, b1)]);
         };
         tryPart(u0, u1, v0, v1, 0);
       }
-      // Лесополоса по длинной границе полосы — не везде
-      if (rng.chance(0.38)) {
-        const bw = rng.float(12, 20);
-        let run = [];
-        const flush = () => { if (run.length >= 3) segsBelt(world, rng, run[0], run[run.length - 1], avoid, bw); run = []; };
-        for (let uu = -R; uu <= R; uu += 90) {
-          const p = toW(uu, v);
-          if (inside(p[0], p[1]) && !mask.has(p[0], p[1], avoid)) run.push(p); else flush();
-        }
-        flush();
-      }
-      v += sw;
     }
+  }
+  // Лесополосы — только по краям полей (в меже), часть краёв; общий край двух полей — одна полоса
+  const seen = new Set();
+  for (const e of edges) {
+    if (e[0] === 'road') {
+      // придорожная полоса: сажаем только там, где рядом поля (куски между пропусками)
+      const [, a, b] = e;
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let run = null;
+      for (let t = 0; t <= L; t += 50) {
+        const p = [a[0] + ((b[0] - a[0]) * t) / L, a[1] + ((b[1] - a[1]) * t) / L];
+        const ok = busy(p[0] + 0.001, p[1]) || busyNear(p);
+        if (ok && !run) run = [p, p]; else if (ok) run[1] = p;
+        if ((!ok || t + 50 > L) && run) { if (Math.hypot(run[1][0] - run[0][0], run[1][1] - run[0][1]) > 150) segsBelt(world, rng, run[0], run[1], avoid, rng.float(9, 13)); run = null; }
+      }
+      continue;
+    }
+    const [a, b] = e;
+    const k = `${Math.round((a[0] + b[0]) / 60)},${Math.round((a[1] + b[1]) / 60)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (!rng.chance(0.13)) continue;
+    segsBelt(world, rng, a, b, avoid, rng.float(10, 14));
   }
   // Степь: пятна залежи, выгоревшей травы и сырых понижений (мягкие края)
   for (let i = 0; i < Math.round((W * H) / 5.5e6); i++) {
@@ -1061,7 +1189,7 @@ function segsBelt(world, rng, a, b, avoid, bw) {
   const { mask } = world;
   const L = dist(a, b);
   const dx = (b[0] - a[0]) / L, dy = (b[1] - a[1]) / L;
-  const rows = Math.max(3, Math.floor((bw - 5) / 3.1));
+  const rows = bw < 12 ? 2 : Math.max(3, Math.floor((bw - 5) / 3.1));
   const rowGap = (bw - 5) / Math.max(1, rows - 1);
   const step = rng.float(3.4, 4.4);
   const kindShade = rng.int(0, 3);
@@ -1090,7 +1218,7 @@ function segsBelt(world, rng, a, b, avoid, bw) {
     }
     // Опушка: кустарник (тёрн, шиповник) по обоим краям
     for (const side of [-1, 1]) {
-      if (!rng.chance(0.75)) continue;
+      if (!rng.chance(bw < 12 ? 0.3 : 0.75)) continue;
       const off = side * (bw / 2 - 1.2 + rng.float(-0.8, 0.8));
       plant(a[0] + dx * (d + rng.float(-1.5, 1.5)) - dy * off, a[1] + dy * (d + rng.float(-1.5, 1.5)) + dx * off, rng.float(1.2, 2.2), 3);
     }
@@ -1393,6 +1521,261 @@ function buildCity(world, rng, C, rail, river, extraGrowth = [], sc = 1) {
   }
   buildStation(world, rng, rail, C);
   world.cityBlocks = blocks.length;
+}
+
+// ---------- Город («Война дронов»): реалистичная планировка ----------
+// Единая сетка магистралей (слегка изогнутая, как у реальных городов), кварталы примыкают друг
+// к другу без пустот. По удалению от центра: исторический центр (мелкие кварталы, периметральная
+// застройка, площадь со сквером) → микрорайоны (крупные кварталы с 9/5-этажками, башнями, школой,
+// дворами и внутриквартальными проездами) → частный сектор (длинные параллельные улицы с участками,
+// рваный край города). Вдоль железной дороги — промзона.
+function buildCityDW(world, rng, C, rail, river, extraGrowth = [], sc = 1) {
+  const { mask } = world;
+  const R = 1650 * sc;
+  const phi = rng.float(-0.35, 0.35);
+  const c = Math.cos(phi), s = Math.sin(phi);
+  const ws = rng.int(0, 1e6);
+  const warp = (u, v) => [(fbm(u / 1500, v / 1500, ws, 2) - 0.5) * 70, (fbm(u / 1500 + 7.3, v / 1500 + 2.1, ws, 2) - 0.5) * 70];
+  const toW = (u, v) => { const [du, dv] = warp(u, v); const uu = u + du, vv = v + dv; return [C[0] + uu * c - vv * s, C[1] + uu * s + vv * c]; };
+  const ph = [rng.float(0, 6.28), rng.float(0, 6.28), rng.float(0, 6.28)];
+  const rad = (a) => R * (0.86 + 0.12 * Math.sin(2 * a + ph[0]) + 0.09 * Math.sin(3 * a + ph[1]) + 0.06 * Math.sin(5 * a + ph[2]));
+  const inside = (u, v, k = 1) => Math.hypot(u, v) < rad(Math.atan2(v, u)) * k;
+  const wet = (u, v) => { const [x, y] = toW(u, v); return mask.has(x, y, M.WATER); };
+  // Магистральная сетка
+  const lines = (step0, step1) => { const a = [0]; for (let x = 0; x < R * 1.25;) { x += rng.float(step0, step1); a.push(x); } for (let x = 0; x > -R * 1.25;) { x -= rng.float(step0, step1); a.unshift(x); } return a; };
+  const us = lines(380, 520), vs = lines(340, 470);
+  const railL = (u, v) => { const [x, y] = toW(u, v); return distToLine(x, y, rail); };
+  // Загородные дороги, проходящие через город, обрезаем у края: внутри города их продолжают улицы
+  const toL = (x, y) => [(x - C[0]) * c + (y - C[1]) * s, -(x - C[0]) * s + (y - C[1]) * c];
+  const stubs = [];
+  for (const r of [...world.roadList]) {
+    if (!['highway', 'local', 'village', 'dirt'].includes(r.type)) continue;
+    const inn = r.line.map(([x, y]) => { const [uu, vv] = toL(x, y); return inside(uu, vv, 1.02); });
+    if (!inn.some(Boolean)) continue;
+    const runs = [];
+    let cur = [];
+    r.line.forEach((p, k) => {
+      if (!inn[k]) cur.push(p);
+      else { if (cur.length) { runs.push(cur); if (cur.length > 1 || k > 0) stubs.push(cur[cur.length - 1]); } cur = []; }
+      if (inn[k] && k + 1 < r.line.length && !inn[k + 1]) stubs.push(r.line[k + 1]);
+    });
+    if (cur.length) runs.push(cur);
+    const keep = runs.filter((q) => q.length > 1);
+    r.line = keep[0] || [r.line[0], r.line[0]];
+    r._bridges = null;
+    for (const q of keep.slice(1)) addRoad(world, q, r.type);
+  }
+  if (stubs.length || true) {
+    // пересчитать маску дорог в районе города (вырезанные куски больше не «дороги»)
+    const bb = { x0: C[0] - R * 1.4, y0: C[1] - R * 1.4, x1: C[0] + R * 1.4, y1: C[1] + R * 1.4 };
+    mask.clearRect(bb, M.ROAD);
+    for (const r of world.roadList) if (r.line.some(([x, y]) => x > bb.x0 - 40 && x < bb.x1 + 40 && y > bb.y0 - 40 && y < bb.y1 + 40)) mask.stampLine(r.line, ROAD_STYLE[r.type].stamp, M.ROAD);
+  }
+  const cells = [];
+  for (let i = 0; i + 1 < us.length; i++)
+    for (let j = 0; j + 1 < vs.length; j++) {
+      const cu = (us[i] + us[i + 1]) / 2, cv = (vs[j] + vs[j + 1]) / 2;
+      if (!inside(cu, cv, 1.08) || wet(cu, cv)) continue;
+      const dn = Math.hypot(cu, cv) / R;
+      const [x, y] = toW(cu, cv);
+      if (mask.has(x, y, M.BUILD | M.RAIL)) continue;
+      let type;
+      const microP = sc >= 0.9 ? 1.15 - 1.3 * dn : 0.8 - 1.4 * dn;
+      if (dn < 0.2) type = 'center';
+      else if (railL(cu, cv) < 260 && rng.chance(0.75)) type = 'industry';
+      else if (rng.chance(microP)) type = 'micro';
+      else type = 'private';
+      cells.push({ i, j, u0: us[i], u1: us[i + 1], v0: vs[j], v1: vs[j + 1], cu, cv, dn, type });
+    }
+  const has = new Set(cells.map((q) => `${q.i},${q.j}`));
+  const cellAt = (i, j) => has.has(`${i},${j}`);
+  // Улицы по линиям сетки: непрерывные куски там, где рядом есть кварталы
+  const road = (pts, type) => {
+    // через реку идут только проспекты (мост), улицы обрываются у берега
+    if (type === 'avenue') {
+      let wetRun = 0, maxRun = 0;
+      for (const p of pts) { if (mask.has(p[0], p[1], M.WATER)) { wetRun++; maxRun = Math.max(maxRun, wetRun); } else wetRun = 0; }
+      if (maxRun * 12 < 240) { addRoad(world, pts, type); return; }
+    }
+    let run = [];
+    for (const p of pts) {
+      if (mask.has(p[0], p[1], M.WATER)) { if (run.length > 2) addRoad(world, run, type); run = []; } else run.push(p);
+    }
+    if (run.length > 2) addRoad(world, run, type);
+  };
+  const seg = (u0, v0, u1, v1, step = 12) => { const L = Math.hypot(u1 - u0, v1 - v0), n = Math.max(2, Math.ceil(L / step)); const out = []; for (let k = 0; k <= n; k++) out.push(toW(u0 + ((u1 - u0) * k) / n, v0 + ((v1 - v0) * k) / n)); return out; };
+  for (let i = 0; i < us.length; i++) {
+    let start = null;
+    for (let j = 0; j <= vs.length - 1; j++) {
+      const on = j < vs.length - 1 && (cellAt(i - 1, j) || cellAt(i, j));
+      if (on && start === null) start = j;
+      if (!on && start !== null) { const main = us[i] === 0 || Math.abs(us[i]) < R * 0.3; road(seg(us[i], vs[start], us[i], vs[j]), main ? 'avenue' : 'street'); start = null; }
+    }
+  }
+  for (let j = 0; j < vs.length; j++) {
+    let start = null;
+    for (let i = 0; i <= us.length - 1; i++) {
+      const on = i < us.length - 1 && (cellAt(i, j - 1) || cellAt(i, j));
+      if (on && start === null) start = i;
+      if (!on && start !== null) { const main = vs[j] === 0 || Math.abs(vs[j]) < R * 0.3; road(seg(us[start], vs[j], us[i], vs[j]), main ? 'avenue' : 'street'); start = null; }
+    }
+  }
+  const mkBlk = (u0, u1, v0, v1, d, core) => {
+    const corners = [toW(u0, v0), toW(u1, v0), toW(u1, v1), toW(u0, v1)];
+    const center = toW((u0 + u1) / 2, (v0 + v1) / 2);
+    return { u0, u1, v0, v1, toW, phi, center, d, core, corners };
+  };
+  const E = 9; // отступ застройки от оси улицы
+  const blocks = [];
+  const panelRoof = curStyle ? curStyle.panel : ['#a3a19b', '#96948e', '#8a8984', '#b0ada6', '#9d9a92'];
+  const privRoofs = curStyle ? curStyle.roofs : [['#8b4a38', 3], ['#7e7e79', 3], ['#6c7f86', 1.5], ['#9a9890', 1.5], ['#5f7a5a', 1]];
+  let squareDone = false, stadiumDone = false, elevatorDone = false;
+  cells.sort((a, b) => a.dn - b.dn);
+  for (const q of cells) {
+    const { u0, u1, v0, v1 } = q;
+    // застолбить квартал (поля и посадки сюда не заходят)
+    mask.stampPoly([toW(u0, v0), toW(u1, v0), toW(u1, v1), toW(u0, v1)], M.CITY);
+    mask.stampPoly([toW(u0 - 80, v0 - 80), toW(u1 + 80, v0 - 80), toW(u1 + 80, v1 + 80), toW(u0 - 80, v1 + 80)], M.CITYZONE);
+    if (q.type === 'center') {
+      // мелкие кварталы 3×3 со своими улицами; в центральном — площадь со сквером
+      const nu = 3, nv = 3;
+      const du = (u1 - u0) / nu, dv = (v1 - v0) / nv;
+      for (let k = 1; k < nu; k++) road(seg(u0 + du * k, v0, u0 + du * k, v1), 'street');
+      for (let k = 1; k < nv; k++) road(seg(u0, v0 + dv * k, u1, v0 + dv * k), 'street');
+      for (let a = 0; a < nu; a++) for (let b = 0; b < nv; b++) {
+        const blk = mkBlk(u0 + du * a + E, u0 + du * (a + 1) - E, v0 + dv * b + E, v0 + dv * (b + 1) - E, q.dn * 0.5, true);
+        addItem(world.areas, { kind: 'urban', poly: blk.corners });
+        if (!squareDone && a === 1 && b === 1 && q.dn < 0.12) {
+          squareDone = true;
+          addItem(world.areas, { kind: 'square', poly: blk.corners });
+          const inner = mkBlk(blk.u0 + 18, blk.u1 - 18, blk.v0 + 18, blk.v1 - 18, 0, true);
+          buildPark(world, rng, inner);
+          blockBuild(world, blk, (blk.u0 + blk.u1) / 2, blk.v0 + 9, (blk.u1 - blk.u0) * 0.6, 16, { roof: '#9a958a', style: 'flat', height: 18 }); // администрация
+          continue;
+        }
+        buildPanelBlock(world, rng, blk, panelRoof, q.dn * 0.5);
+      }
+    } else if (q.type === 'micro') {
+      const blk = mkBlk(u0 + E, u1 - E, v0 + E, v1 - E, q.dn, false);
+      addItem(world.areas, { kind: 'yard', poly: blk.corners });
+      buildMicro(world, rng, blk, panelRoof, q.dn);
+      if (!stadiumDone && q.dn > 0.3 && rng.chance(0.3)) stadiumDone = true;
+    } else if (q.type === 'industry') {
+      // промзона: участки ~120 м с проездами, на каждом — цех, склад, гаражи или элеватор
+      const nu = Math.max(2, Math.round((u1 - u0) / 125)), nv = Math.max(2, Math.round((v1 - v0) / 110));
+      const du = (u1 - u0) / nu, dv = (v1 - v0) / nv;
+      addItem(world.areas, { kind: 'industrial', poly: mkBlk(u0 + E, u1 - E, v0 + E, v1 - E, q.dn, false).corners });
+      for (let k = 1; k < nu; k++) addItem(world.areas, { kind: 'drive', line: [toW(u0 + du * k, v0 + E), toW(u0 + du * k, v1 - E)], width: 8 }, 5);
+      for (let k = 1; k < nv; k++) addItem(world.areas, { kind: 'drive', line: [toW(u0 + E, v0 + dv * k), toW(u1 - E, v0 + dv * k)], width: 8 }, 5);
+      for (let a = 0; a < nu; a++) for (let b = 0; b < nv; b++) {
+        const blk = mkBlk(u0 + du * a + (a ? 6 : E), u0 + du * (a + 1) - (a < nu - 1 ? 6 : E), v0 + dv * b + (b ? 6 : E), v0 + dv * (b + 1) - (b < nv - 1 ? 6 : E), q.dn, false);
+        if (!elevatorDone && railL(q.cu, q.cv) < 200 && rng.chance(0.3)) { elevatorDone = buildElevator(world, rng, blk); if (elevatorDone) continue; }
+        if (rng.chance(0.2)) buildGarages(world, rng, blk); else buildIndustrial(world, rng, blk);
+      }
+    } else {
+      // частный сектор: параллельные улицы вдоль длинной стороны, по обе стороны — участки
+      const alongU = u1 - u0 >= v1 - v0;
+      const [a0, a1, b0, b1] = alongU ? [u0, u1, v0, v1] : [v0, v1, u0, u1];
+      const P = (a, b) => (alongU ? [a, b] : [b, a]);
+      const nL = Math.max(1, Math.round((b1 - b0) / 70));
+      const step = (b1 - b0) / (nL + 1);
+      const lanes = [];
+      for (let k = 1; k <= nL; k++) lanes.push(b0 + step * k);
+      const bounds = [b0, ...lanes, b1];
+      // улица только в пределах города (рваный край)
+      const span = (b) => { let lo = null, hi = null; for (let a = a0; a <= a1; a += 10) { const [uu, vv] = P(a, b); if (inside(uu, vv) && !wet(uu, vv)) { if (lo === null) lo = a; hi = a; } } return lo === null ? null : [lo, hi]; };
+      for (const b of lanes) { const sp = span(b); if (sp && sp[1] - sp[0] > 60) road(seg(...P(sp[0], b), ...P(sp[1], b)), 'village'); }
+      for (let k = 0; k + 1 < bounds.length; k++) {
+        const bm = (bounds[k] + bounds[k + 1]) / 2;
+        const sp = span(bm);
+        if (!sp || sp[1] - sp[0] < 50) continue;
+        const lo = Math.max(a0 + E, sp[0]), hi = Math.min(a1 - E, sp[1]);
+        const [pu0, pv0] = P(lo, bounds[k] + (k === 0 ? E : 5)), [pu1, pv1] = P(hi, bounds[k + 1] - (k + 1 === bounds.length - 1 ? E : 5));
+        const blk = mkBlk(Math.min(pu0, pu1), Math.max(pu0, pu1), Math.min(pv0, pv1), Math.max(pv0, pv1), q.dn, false);
+        if (!alongU) { blk.phi = phi + Math.PI / 2; blk.toW = (uu, vv) => toW(vv, uu); [blk.u0, blk.u1, blk.v0, blk.v1] = [pv0 < pv1 ? pv0 : pv1, pv0 < pv1 ? pv1 : pv0, pu0 < pu1 ? pu0 : pu1, pu0 < pu1 ? pu1 : pu0]; }
+        buildPrivateBlock(world, rng, blk, privRoofs);
+      }
+    }
+    blocks.push(q);
+  }
+  // обрезанные загородные дороги примыкают к ближайшей городской улице
+  const streetPts = [];
+  for (const r of world.roadList) if ((r.type === 'street' || r.type === 'avenue' || r.type === 'village') && r.line.some(([x, y]) => Math.hypot(x - C[0], y - C[1]) < R * 1.4)) for (const p of r.line) streetPts.push(p);
+  for (const e of stubs) {
+    let best = null, bd = 320;
+    for (const p of streetPts) { const d = Math.hypot(p[0] - e[0], p[1] - e[1]); if (d < bd && d > 1) { bd = d; best = p; } }
+    if (best) addRoad(world, resample([e, best.slice()], 8), 'local');
+  }
+  buildStation(world, rng, rail, C);
+  world.cityBlocks = (world.cityBlocks || 0) + blocks.length;
+}
+
+// Микрорайон: 9-этажки по периметру, внутри — ряды 5-этажек, пара башен, школа и детсад,
+// внутриквартальные проезды, деревья во дворах
+function buildMicro(world, rng, blk, roofs, d) {
+  const { u0, u1, v0, v1 } = blk;
+  const W = u1 - u0, H = v1 - v0;
+  const roof = () => rng.pick(roofs);
+  const drive = (a, b) => addItem(world.areas, { kind: 'drive', line: [blk.toW(...a), blk.toW(...b)], width: 5 }, 4);
+  // кольцевой проезд
+  const m = 24;
+  drive([u0 + m, v0 + m], [u1 - m, v0 + m]); drive([u1 - m, v0 + m], [u1 - m, v1 - m]); drive([u1 - m, v1 - m], [u0 + m, v1 - m]); drive([u0 + m, v1 - m], [u0 + m, v0 + m]);
+  const tall = d < 0.55 ? 9 : 5;
+  // периметр: секции с разрывами-проездами
+  const edgeRow = (along, fixed, len, vertical) => {
+    let a = along[0] + 12;
+    while (a < along[1] - 40) {
+      const L = Math.min(rng.float(55, 120), along[1] - 12 - a);
+      if (L < 35) break;
+      const cu = a + L / 2;
+      if (vertical) blockBuild(world, blk, fixed, cu, 13, L, { roof: roof(), style: 'flat', height: tall * 3 });
+      else blockBuild(world, blk, cu, fixed, L, 13, { roof: roof(), style: 'flat', height: tall * 3 });
+      a += L + rng.float(18, 30);
+    }
+    void len;
+  };
+  edgeRow([u0, u1], v0 + 10, W, false);
+  edgeRow([u0, u1], v1 - 10, W, false);
+  edgeRow([v0 + 30, v1 - 30], u0 + 10, H, true);
+  edgeRow([v0 + 30, v1 - 30], u1 - 10, H, true);
+  // внутренние ряды: вдоль или «гребёнкой» поперёк, между ними дворы с деревьями и парковками
+  const comb = rng.chance(0.4);
+  if (!comb) {
+    for (let v = v0 + 62; v < v1 - 60; v += rng.float(46, 56)) {
+      let a = u0 + 44;
+      while (a < u1 - 80) {
+        const L = rng.float(60, 110);
+        if (a + L > u1 - 44) break;
+        if (rng.chance(0.92)) blockBuild(world, blk, a + L / 2, v, L, 12, { roof: roof(), style: 'flat', height: tall === 9 && rng.chance(0.5) ? 27 : 15 });
+        a += L + rng.float(18, 32);
+      }
+      const [px, py] = blk.toW((u0 + u1) / 2, v + 22);
+      addItem(world.areas, { kind: 'drive', line: [blk.toW(u0 + 40, v + 22), blk.toW(u1 - 40, v + 22)], width: 7 }, 4); void px; void py;
+      for (let k = 0; k < 16; k++) { const [tx, ty] = blk.toW(rng.float(u0 + 30, u1 - 30), v + 12 + rng.float(-4, 4)); if (!world.mask.has(tx, ty, M.BUILD | M.ROAD)) world.trees.add(tx, ty, rng.float(2.5, 4.5), rng.int(0, 3)); }
+    }
+  } else {
+    for (let u = u0 + 60; u < u1 - 60; u += rng.float(44, 54)) {
+      let b = v0 + 44;
+      while (b < v1 - 80) {
+        const L = rng.float(60, 100);
+        if (b + L > v1 - 44) break;
+        if (rng.chance(0.92)) blockBuild(world, blk, u, b + L / 2, 12, L, { roof: roof(), style: 'flat', height: tall * 3 });
+        b += L + rng.float(18, 30);
+      }
+      for (let k = 0; k < 14; k++) { const [tx, ty] = blk.toW(u + 20 + rng.float(-4, 4), rng.float(v0 + 30, v1 - 30)); if (!world.mask.has(tx, ty, M.BUILD | M.ROAD)) world.trees.add(tx, ty, rng.float(2.5, 4.5), rng.int(0, 3)); }
+    }
+  }
+  // башни 16 этажей
+  for (let k = 0; k < (d < 0.4 ? 2 : 1); k++) blockBuild(world, blk, rng.float(u0 + 60, u1 - 60), rng.float(v0 + 60, v1 - 60), 24, 24, { roof: roof(), style: 'flat', height: 48 });
+  // школа (буквой П) и детсад у восточного края
+  const su = u1 - 70, sv = (v0 + v1) / 2;
+  if (blockBuild(world, blk, su, sv, 70, 16, { roof: '#8a8a84', style: 'flat', height: 10 })) {
+    blockBuild(world, blk, su - 28, sv + 24, 14, 30, { roof: '#8a8a84', style: 'flat', height: 10 });
+    blockBuild(world, blk, su + 28, sv + 24, 14, 30, { roof: '#8a8a84', style: 'flat', height: 10 });
+    const [px, py] = blk.toW(su, sv - 45);
+    addItem(world.areas, { kind: 'pitch', poly: rectCorners(px, py, 60, 34, blk.phi) });
+  }
+  blockBuild(world, blk, u0 + 70, (v0 + v1) / 2, 36, 22, { roof: '#9a7a62', style: 'flat', height: 6 });
 }
 
 function buildGarages(world, rng, blk) {

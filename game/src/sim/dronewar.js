@@ -133,7 +133,8 @@ export class DroneWar {
     this.startAt = this.prepEnd;
     this.ready = { blue: false, red: false };
     for (const s of cfg.aiSides || []) this.ready[s] = true; // ИИ готов сразу — «К бою» начинает без ожидания
-    this.endAt = this.prepEnd + (cfg.duration || 2400);
+    this.endless = cfg.duration === 0; // без ограничения по времени: партия идёт, пока не рухнет чей-то тыл
+    this.endAt = this.endless ? 0 : this.prepEnd + (cfg.duration || 2400);
     this.frontX = this.world.frontX || this.world.W / 2;
     this.drones = [];
     this.missiles = [];
@@ -411,7 +412,7 @@ export class DroneWar {
     if (this.prep && (sim.time >= this.prepEnd || (this.ready.blue && this.ready.red))) {
       this.prep = false;
       this.startAt = sim.time;
-      this.endAt = sim.time + (this.cfg.duration || 2400);
+      this.endAt = this.endless ? 0 : sim.time + (this.cfg.duration || 2400);
       this.nextDirective = sim.time + 120;
       sim.msg('Развёртывание окончено — стороны могут наносить удары');
     }
@@ -674,7 +675,7 @@ export class DroneWar {
       this.reason = `Тыл стороны «${side === 'blue' ? 'Велнария' : 'Кардагор'}» не выдержал: отключения, разрушения и пожары обрушили устойчивость до нуля`;
       sim.msg(this.reason);
     }
-    if (!this.winner && !this.prep && sim.time >= this.endAt) {
+    if (!this.winner && !this.prep && !this.endless && sim.time >= this.endAt) {
       const b = this.sides.blue.morale + Math.min(5, this.sides.blue.points / 400), r = this.sides.red.morale + Math.min(5, this.sides.red.points / 400);
       this.winner = Math.abs(b - r) < 3 ? 'draw' : b > r ? 'blue' : 'red';
       this.reason = `Время вышло. Устойчивость тыла: Велнария ${this.sides.blue.morale.toFixed(0)}, Кардагор ${this.sides.red.morale.toFixed(0)}`;
@@ -683,13 +684,15 @@ export class DroneWar {
   // ---------- Кампания: фазы эскалации и директивы штаба ----------
   phase() { return this.phaseNo; }
   incomeK() { return PHASES[this.phaseNo].inc; }
+  drainK() { return this.endless ? [0.2, 0.32, 0.6][this.phaseNo] : PHASES[this.phaseNo].drain; }
   updateCampaign() {
     const sim = this.sim, t = sim.time;
-    const dur = this.endAt - this.startAt;
-    const ph = Math.min(2, Math.floor(((t - this.startAt) / dur) * 3));
+    // Без ограничения — фазы по прошедшему времени (20 мин, час); иначе — трети партии
+    const el = t - this.startAt;
+    const ph = this.endless ? (el < 5400 ? 0 : el < 10800 ? 1 : 2) : Math.min(2, Math.floor((el / (this.endAt - this.startAt)) * 3));
     if (ph !== this.phaseNo) {
       this.phaseNo = ph;
-      sim.msg(`${PHASES[ph].name}: доход ×${PHASES[ph].inc}, удары по тылу болезненнее (×${PHASES[ph].drain})`);
+      sim.msg(`${PHASES[ph].name}: доход ×${PHASES[ph].inc}, удары по тылу болезненнее${this.endless ? '' : ` (×${this.drainK()})`}`);
     }
     for (const side of ['blue', 'red']) {
       const D = this.directive[side];
@@ -719,7 +722,7 @@ export class DroneWar {
   // Устойчивость тыла: отключения, мосты, пустые магазины, пожары, погранпереход
   moraleTick(side, dt) {
     const S = this.sides[side], L = this.logi.side[side];
-    const k = PHASES[this.phaseNo].drain;
+    const k = this.drainK();
     let burning = 0;
     for (const o of this.objs(side)) for (const c of o.comps) if (c.fire > 0) burning++;
     const br = this.objs(side, 'bridge').filter((b) => b.btype !== 'village' && b.btype !== 'dirt');
@@ -727,16 +730,20 @@ export class DroneWar {
     const shops = [...L.markets, ...L.fuels];
     const empty = shops.length ? shops.filter((m) => m.stock < 1 || !m.comps.some((c) => c.state !== 'destroyed')).length / shops.length : 0;
     const borderDown = !L.border.comps.some((c) => c.state !== 'destroyed');
-    const parts = { power: (S.powerLoss ?? 1 - S.supply) * 6, bridges: brDown * 2, shops: Math.max(0, empty - 0.5) * 4, fires: Math.min(2, burning * 0.25), border: borderDown ? 1 : 0 };
+    const parts = { power: Math.max(0, (S.powerLoss ?? 1 - S.supply) - (this.endless ? 0.1 : 0)) * 6, bridges: brDown * 2, shops: Math.max(0, empty - 0.5) * 4, fires: Math.min(2, burning * 0.25), border: borderDown ? 1 : 0 };
     let drain = 0;
     for (const key in parts) { parts[key] *= k; drain += parts[key]; }
-    const regen = S.supply > 0.93 && burning === 0 ? 1.5 : S.supply > 0.8 ? 0.6 : 0;
+    // восстановление: когда свет есть и пожаров мало — тем быстрее, чем сильнее тыл просел
+    // (в долгой партии тыл «отходит» между волнами ударов)
+    const lack = (100 - S.morale) / 100;
+    let regen = S.supply > 0.93 && burning === 0 ? 1.5 : S.supply > 0.8 ? 0.6 : 0;
+    if (this.endless && S.supply > 0.85) regen += 2.5 * lack / (1 + burning * 0.15);
     S.moraleParts = { ...parts, regen };
     S.morale = Math.max(0, Math.min(100, S.morale + ((regen - drain) * dt) / 60));
   }
   shock(side, v, why) {
     const S = this.sides[side];
-    S.morale = Math.max(0, S.morale - v * PHASES[this.phaseNo].drain);
+    S.morale = Math.max(0, S.morale - v * this.drainK());
     void why;
   }
   integrity(side) {
@@ -1337,7 +1344,7 @@ export class DroneWar {
       if (D && !D.done && D.oid === c.oid && c.state !== 'ok') {
         D.done = 'ok';
         this.sides[d.side].points += D.bonus;
-        this.shock(side, 6 / PHASES[this.phaseNo].drain, 'директива');
+        this.shock(side, (this.endless ? 4 : 6) / this.drainK(), 'директива');
         sim.msg(`Директива выполнена: «${c.obj.name}» поражён — премия ${D.bonus} оч.`, d.side);
         sim.msg(`Противник поразил приоритетный объект «${c.obj.name}» — устойчивость −6`, side);
       }
@@ -1418,7 +1425,7 @@ DroneWar.prototype.snapshot = function () {
     pw: this.objects.map((o) => (o.kind === 'ps110' ? [o.shed || 0, o.unstable ? 1 : 0, Math.round(o.overT || 0), Math.round(o.avail || 0), Math.round(o.demand || 0), Math.round(o.trCap || 0)] : o.gen !== undefined ? Math.round(o.gen) : 0)),
     en: [R1(this.wind ?? 0.6), ['blue', 'red'].map((sd) => { const S = this.sides[sd]; return [S.autoShed ? 1 : 0, R1(S.powerLoss ?? 0), S.genBy || {}]; })],
     s: { blue: sideSnap(this.sides.blue), red: sideSnap(this.sides.red) },
-    g: [this.prep ? 1 : 0, R1(this.prepEnd), R1(this.endAt), this.winner, this.reason, this.ready.blue ? 1 : 0, this.ready.red ? 1 : 0],
+    g: [this.prep ? 1 : 0, R1(this.prepEnd), R1(this.endAt), this.winner, this.reason, this.ready.blue ? 1 : 0, this.ready.red ? 1 : 0, this.endless ? 1 : 0, R1(this.startAt ?? 0)],
     v: this.logi.vehicles.map((v) => [v.id, v.side, v.kind, R1(v.x), R1(v.y), R1(v.heading), v.state, v.dead ? 1 : 0, v.wreck ? 1 : 0, (v.spotted.blue && t - v.spotted.blue < 90 ? 1 : 0) | (v.spotted.red && t - v.spotted.red < 90 ? 2 : 0), v.task.type, R1(v.deadAt ?? 0)]),
     st: this.objects.map((o) => (o.stock === undefined ? -1 : o.stock)),
     ls: ['blue', 'red'].map((sd) => { const L = this.logi.side[sd]; return [L.stats.imports, L.stats.deliveries, L.stats.sold, L.stats.lostTrucks, L.stats.trade]; }),
@@ -1472,6 +1479,7 @@ DroneWar.prototype.applySnapshot = function (s) {
     if (q[19]) { const [power, bridges, shops, fires, border, regen] = q[19]; S.moraleParts = { power, bridges, shops, fires, border, regen }; }
   }
   [this.prep, this.prepEnd, this.endAt, this.winner, this.reason] = [!!s.g[0], s.g[1], s.g[2], s.g[3], s.g[4]];
+  this.endless = !!s.g[7]; if (s.g[8]) this.startAt = s.g[8];
   const oldV = new Map(this.logi.vehicles.map((v) => [v.id, v]));
   this.logi.vehicles = (s.v || []).map((q) => {
     const v = oldV.get(q[0]) || { id: q[0], x: q[3], y: q[4], spotted: {}, task: {} };
