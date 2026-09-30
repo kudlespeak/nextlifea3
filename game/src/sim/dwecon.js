@@ -30,8 +30,8 @@ const FUEL_HA = 90; // га обработки на единицу топлив�
 const FARM_CAP = 6000; // т на току агрофирмы
 const ELEV_CAP = 40000; // т на элеваторе (1-й уровень)
 const TAX = 0.075; // оч/мин с 1000 жителей при полном довольстве
-export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, radar: 0.5, ew: 0.4, icpt: 0.35, acoustic: 0.04 };
-const CREW_SIZE = { mog: 4, spaag: 4, sam: 12, radar: 6, ew: 3, icpt: 5, acoustic: 2 };
+export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04 };
+const CREW_SIZE = { mog: 4, spaag: 4, sam: 12, radar: 6, ew: 3, ewd: 5, icpt: 5, acoustic: 2 };
 const LAUNCH_UPKEEP = 0.8;
 export const LAUNCH_PER = 6; // пусков на исправную пусковую за 5 минут
 export const BUILD = {
@@ -43,6 +43,7 @@ export const BUILD = {
   elevator: { name: 'Элеватор', cost: 260, time: 300, desc: 'хранилище зерна (40 тыс. т): агрофирмы возят урожай ближе, экспорт не простаивает' },
   agro: { name: 'Мехдвор', cost: 100, time: 150, desc: '+1 трактор и +1 комбайн ближайшей агрофирме (за уровень)' },
   launch: { name: 'Стартовая позиция', cost: 240, time: 300, mil: true, desc: `+${LAUNCH_PER * 4} пусков за 5 мин; содержание ${LAUNCH_UPKEEP} оч/мин` },
+  decoy: { name: 'Макет подстанции', cost: 70, time: 120, mil: true, desc: 'ложная цель: противник видит обычную ПС 110 кВ и тратит на неё дроны; удар по макету не бьёт по тылу' },
   // ----- развитие страны -----
   housing: { name: 'Жилой квартал', cost: 150, time: 360, near: 'city', desc: '+30 тыс. жителей ближайшему городу (налоги, рабочие руки); у города, не дальше 4 км' },
   hospital: { name: 'Больница', cost: 190, time: 300, near: 'city', desc: 'довольство +6% в радиусе 8 км, страх после ударов проходит вдвое быстрее' },
@@ -55,7 +56,7 @@ export const BUILD = {
   autopark: { name: 'Автобаза', cost: 160, time: 200, desc: '+3 грузовика снабжения ПВО, +6 зерновозов, +1 бензовоз за раз' },
   reserve: { name: 'Госрезерв', cost: 200, time: 240, desc: '+2 резервных автотрансформатора; запас топлива, если нефтебаза разрушена' },
 };
-export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy']], ['Люди', ['housing', 'hospital', 'school']], ['Энергетика и резервы', ['solar', 'bess', 'reserve', 'pontoon']], ['Военное', ['launch']]];
+export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy']], ['Люди', ['housing', 'hospital', 'school']], ['Энергетика и резервы', ['solar', 'bess', 'reserve', 'pontoon']], ['Военное', ['launch', 'decoy']]];
 const UPG = new Set(['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark']);
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
@@ -95,6 +96,14 @@ export class DWEconomy {
     return best;
   }
   onImpact(x, y, wh = 50) {
+    // удар по полю, где идёт работа: техника выбита на 10 минут (экономическая война)
+    for (const f of this.farms) {
+      if (!f.work || Math.hypot(f.x - x, f.y - y) > 4000) continue;
+      const fl = this.world.fields.items[f.fields[f.work.fi]?.i];
+      if (!fl || !pointInPoly(x, y, fl.poly) || !this.sim.rng.chance(wh >= 15 ? 0.6 : 0.35)) continue;
+      (f.lost = f.lost || []).push({ kind: f.work.kind, until: this.sim.time + 600 });
+      this.sim.msg(`${f.name}: ${f.work.kind === 'combine' ? 'комбайн' : 'трактор'} уничтожен ударом дрона — работы встали до замены техники`, f.side);
+    }
     for (const s of this.world.settlements) {
       const d = Math.hypot(s.x - x, s.y - y), R = s.type === 'city' ? 4000 : 2500;
       if (d < R) s.fear = Math.min(1, s.fear + (0.12 + wh / 600) * (1 - d / R));
@@ -112,7 +121,7 @@ export class DWEconomy {
     const pop = this.settlementsOf(side).reduce((a, s) => a + s.pop, 0);
     const schools = this.g.objs(side, 'school').filter((o) => this.ready(o)).length;
     const share = this.mobilized(side) / Math.max(1, pop * 0.005 * (1 + 0.15 * Math.min(4, schools)));
-    return Math.max(0.6, 1 - 0.27 * Math.min(1.5, share));
+    return Math.max(0.5, (1 - 0.27 * Math.min(1.5, share)) * (this.g.state?.k(side, 'labor') ?? 1));
   }
   upkeep(side) {
     let u = 0;
@@ -127,7 +136,7 @@ export class DWEconomy {
     const morale = (this.g.sides[side].morale ?? 100) / 100;
     let sum = 0;
     for (const s of this.settlementsOf(side)) {
-      s.fear *= Math.exp(-dt / 300);
+      s.fear *= Math.exp((-dt / 300) * (this.g.state?.k(side, 'fearDecay') ?? 1));
       const ps = s._ps || (s._ps = this.nearestPS(side, s.x, s.y));
       const power = ps ? ps.supply ?? 1 : 1;
       let goods = 0.4;
@@ -139,7 +148,7 @@ export class DWEconomy {
         if (o.kind === 'hospital' && d < 8000) { bonus += 0.06; s.fear *= Math.exp(-dt / 300); }
         if (o.kind === 'school' && d < 6000) bonus += 0.03;
       }
-      s.happy = Math.max(0, Math.min(1, (0.2 + 0.5 * power + 0.3 * goods) * (1 - 0.45 * s.fear) * (0.6 + 0.4 * morale) + Math.min(0.12, bonus)));
+      s.happy = Math.max(0, Math.min(1, (0.2 + 0.5 * power + 0.3 * goods) * (1 - 0.45 * s.fear) * (0.6 + 0.4 * morale) + Math.min(0.12, bonus) + (this.g.state?.happyAdd(side) ?? 0)));
       sum += (s.pop / 1000) * TAX * s.happy;
     }
     return sum;
@@ -192,7 +201,10 @@ export class DWEconomy {
   machines(f) {
     let k = 0;
     for (const o of this.g.objects) if (o.kind === 'agro' && o.side === f.side && !o.build && o.farm === f.id && o.comps.some((c) => c.state !== 'destroyed')) k += o.level || 1;
-    return { tractors: f.tractors + k, combines: f.combines + k };
+    const t = this.sim.time;
+    f.lost = (f.lost || []).filter((q) => q.until > t);
+    const lost = (kind) => f.lost.filter((q) => q.kind === kind).length;
+    return { tractors: Math.max(0, f.tractors + k - lost('tractor')), combines: Math.max(0, f.combines + k - lost('combine')) };
   }
   updateFarms(dt) {
     const t = this.sim.time;
@@ -231,6 +243,8 @@ export class DWEconomy {
       const fd = f.fields[f.work.fi];
       const mc = this.machines(f);
       const n = harvest ? mc.combines : mc.tractors;
+      if (n <= 0) { f.noMachines = true; continue; }
+      f.noMachines = false;
       const ha = RATE[f.work.kind] * n * dt;
       if (f.fuel < ha && !this.takeFuel(f)) { f.noFuel = true; continue; }
       f.noFuel = false;
@@ -239,7 +253,7 @@ export class DWEconomy {
       if (f.work.prog >= 1) {
         if (harvest) {
           fd.done = true;
-          const tons = fd.ha * YIELD[fd.type];
+          const tons = fd.ha * YIELD[fd.type] * (this.g.state?.k(f.side, 'yield') ?? 1);
           f.grain += tons; f.harvested += tons; this.side[f.side].harvested += tons;
           if (f.grain > FARM_CAP) { this.side[f.side].lostGrain += f.grain - FARM_CAP; f.grain = FARM_CAP; }
           this.look(f, fd, 'stubble');
@@ -285,7 +299,7 @@ export class DWEconomy {
         const needF = this.farms.filter((f) => f.side === side && !f.tanker && f.tank < 10).sort((a, b) => a.tank - b.tank);
         let n = 0;
         for (const f of needF) {
-          if (n >= 3 + this.count(side, 'autopark')) break;
+          if (n >= (3 + this.count(side, 'autopark')) * (this.g.state?.k(side, 'farmFuel') ?? 1)) break;
           const v = logi.spawn(side, 'tanker', logi.gate(depot), f.gate, { type: 'farmfuel', farm: f.id, load: 10, home: depot.id });
           if (v) { f.tanker = v.id; n++; }
         }
@@ -323,7 +337,7 @@ export class DWEconomy {
       if (v.state === 'back') { logi.home(v); return true; }
       const L = logi.side[v.side];
       if (L.border.comps.some((c) => c.state !== 'destroyed')) {
-        logi.earn(v.side, T.load * PRICE * this.g.incomeK(v.side), v.x, v.y, 'agro');
+        logi.earn(v.side, T.load * PRICE * (this.g.state?.grainPrice ?? 1), v.x, v.y, 'agro'); // фаза учитывается в earn
         this.side[v.side].exported += T.load;
       }
       const e = this.g.obj(T.from);
@@ -343,7 +357,7 @@ export class DWEconomy {
   partsK(side) { return this.side[side].parts >= 10 ? 1 : 1.5; }
   useParts(side, cost) {
     const E = this.side[side];
-    E.parts = Math.max(0, E.parts - cost / 12);
+    E.parts = Math.max(0, E.parts - (cost / 12) * (this.g.state?.k(side, 'parts') ?? 1));
     if (E.parts < 10 && this.sim.time - E.partsWarn > 120) { E.partsWarn = this.sim.time; this.sim.msg('Дефицит комплектующих для дронов: импорт не успевает — дроны в полтора раза дороже', side); }
   }
 
@@ -351,7 +365,7 @@ export class DWEconomy {
   launchCap(side) {
     let cap = 0;
     for (const o of this.g.objs(side, 'launch')) if (!o.build) cap += o.comps.filter((c) => c.k === 'launcher' && this.g.compOk(c)).length * LAUNCH_PER * levelK(o);
-    return Math.round(cap);
+    return Math.round(cap * (this.g.state?.k(side, 'launch') ?? 1));
   }
   launchUsed(side) {
     const E = this.side[side], t = this.sim.time;
@@ -420,6 +434,7 @@ export class DWEconomy {
     }
     return { x, y, angle: ang, gate, gateQ: gq, drive, lay };
   }
+  cost(side, kind) { return Math.round(BUILD[kind].cost * (this.g.state?.k(side, 'build') ?? 1)); }
   nearName(x, y, side) {
     let best = null, bd = Infinity;
     for (const s of this.world.settlements) { if (s.side !== side) continue; const d = Math.hypot(s.x - x, s.y - y); if (d < bd) { bd = d; best = s; } }
@@ -430,12 +445,13 @@ export class DWEconomy {
     if (g.winner) return 'Партия окончена';
     const site = this.siteFor(side, kind, x, y);
     if (site.err) return site.err;
-    if (S.points < B.cost) return `Не хватает очков: нужно ${B.cost}`;
-    S.points -= B.cost; S.stats.spent += B.cost;
+    const cost = this.cost(side, kind);
+    if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
+    S.points -= cost; S.stats.spent += cost;
     const nm = this.nearName(site.x, site.y, side);
-    const name = kind === 'store' ? `Магазин, ${nm}` : kind === 'fuel' ? `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${nm}` : kind === 'pontoon' ? `Понтонная переправа у моста «${this.g.obj(site.bridge)?.name.replace(/^Мост через /, '')}»` : `${B.name} «${nm}»`;
-    const o = this.addObject({ id: this.nextBuilt++, side, kind, name, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, L: site.L, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time, total: B.time }, built: true });
-    this.sim.msg(`Стройка: ${name} — готово через ${Math.round(B.time / 60)} мин (−${B.cost} оч.)`, side);
+    const name = kind === 'decoy' ? `ПС 110 кВ «${nm}-${2 + (this.nextBuilt % 3)}»` : kind === 'store' ? `Магазин, ${nm}` : kind === 'fuel' ? `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${nm}` : kind === 'pontoon' ? `Понтонная переправа у моста «${this.g.obj(site.bridge)?.name.replace(/^Мост через /, '')}»` : `${B.name} «${nm}»`;
+    const o = this.addObject({ id: this.nextBuilt++, side, kind, name, mimic: kind === 'decoy' ? 'ps110' : undefined, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, L: site.L, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time, total: B.time }, built: true });
+    this.sim.msg(`Стройка: ${name} — готово через ${Math.round(B.time / 60)} мин (−${cost} оч.)`, side);
     return o ? null : 'Не удалось';
   }
   // Объект по описанию (стройка у хоста, воссоздание у гостя по снимку)
@@ -472,7 +488,7 @@ export class DWEconomy {
     if (o.build) return 'Идут работы';
     if ((o.level || 1) >= 3) return 'Уже максимальный уровень';
     if (o.comps.some((c) => c.state === 'destroyed')) return 'Сначала восстановите объект';
-    const cost = upgradeCost(o);
+    const cost = Math.round(upgradeCost(o) * (this.g.state?.k(side, 'build') ?? 1));
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     S.points -= cost; S.stats.spent += cost;
     o.build = { until: this.sim.time + 150, total: 150, up: true };
@@ -526,12 +542,12 @@ export class DWEconomy {
         el.grain -= 200 * lv;
         const hub = g.objs(o.side, 'hub').filter((h) => this.ready(h)).sort((a, b) => Math.hypot(a.x - o.x, a.y - o.y) - Math.hypot(b.x - o.x, b.y - o.y))[0];
         if (hub) hub.stock = Math.min(logi.hubCap(hub), hub.stock + lv);
-        logi.earn(o.side, 0.8 * lv * g.incomeK(o.side), o.x, o.y, 'trade');
+        logi.earn(o.side, 0.8 * lv, o.x, o.y, 'trade');
       } else {
         o.idle = null;
         const shop = L.markets.filter((m) => this.ready(m) && Math.hypot(m.x - o.x, m.y - o.y) < 6000 && m.stock < logi.sale(m).cap).sort((a, b) => a.stock - b.stock)[0];
         if (shop) shop.stock += 1;
-        logi.earn(o.side, 0.4 * lv * g.incomeK(o.side), o.x, o.y, 'trade');
+        logi.earn(o.side, 0.4 * lv, o.x, o.y, 'trade');
       }
     }
   }
@@ -621,7 +637,7 @@ export class DWEconomy {
   snap() {
     const R1 = (v) => Math.round(v * 10) / 10;
     return {
-      bo: this.g.objects.filter((o) => o.built).map((o) => [o.id, o.side, o.kind, o.name, R1(o.x), R1(o.y), o.angle, o.gate, o.gateQ, o.drive, o.farm ?? -1, o.L || 0, o.bridge ?? 0]),
+      bo: this.g.objects.filter((o) => o.built).map((o) => [o.id, o.side, o.kind, o.name, R1(o.x), R1(o.y), o.angle, o.gate, o.gateQ, o.drive, o.farm ?? -1, o.L || 0, o.bridge ?? 0, o.mimic || 0]),
       lv: this.g.objects.map((o) => [o.level || 1, o.build ? [R1(o.build.until), o.build.total, o.build.up ? 1 : 0] : 0, o.grain === undefined ? -1 : Math.round(o.grain)]),
       fm: this.farms.map((f) => [Math.round(f.grain), STAGES.findIndex((q) => q[0] === f.stage), f.work ? [f.work.fi, Math.round(f.work.prog * 100) / 100, f.work.kind === 'combine' ? 1 : 0, R1(f.work.t0)] : 0, f.noFuel ? 1 : 0, Math.round(f.tank)]),
       sd: ['blue', 'red'].map((sd) => { const E = this.side[sd]; return [Math.round(E.parts), Math.round(E.lostGrain), Math.round(E.harvested), Math.round(E.exported), this.launchCap(sd), this.launchFree(sd)]; }),
@@ -629,7 +645,7 @@ export class DWEconomy {
     };
   }
   applySnap(e) {
-    for (const q of e.bo) if (!this.g.byId.has(q[0])) this.addObject({ id: q[0], side: q[1], kind: q[2], name: q[3], x: q[4], y: q[5], angle: q[6], gate: q[7], gateQ: q[8], drive: q[9], farm: q[10], L: q[11] || undefined, bridge: q[12] || undefined, level: 1, built: true, build: null }, true);
+    for (const q of e.bo) if (!this.g.byId.has(q[0])) this.addObject({ id: q[0], side: q[1], kind: q[2], name: q[3], x: q[4], y: q[5], angle: q[6], gate: q[7], gateQ: q[8], drive: q[9], farm: q[10], L: q[11] || undefined, bridge: q[12] || undefined, mimic: q[13] || undefined, level: 1, built: true, build: null }, true);
     this.g.objects.forEach((o, i) => { const q = e.lv[i]; if (!q) return; o.level = q[0]; o.build = q[1] ? { until: q[1][0], total: q[1][1], up: !!q[1][2] } : null; if (q[2] >= 0) o.grain = q[2]; });
     e.fm.forEach((q, i) => { const f = this.farms[i]; if (!f) return; f.grain = q[0]; f.stage = STAGES[q[1]]?.[0] ?? f.stage; f.work = q[2] ? { fi: q[2][0], prog: q[2][1], kind: q[2][2] ? 'combine' : 'tractor', t0: q[2][3] } : null; f.noFuel = !!q[3]; f.tank = q[4]; });
     this.remote = {};

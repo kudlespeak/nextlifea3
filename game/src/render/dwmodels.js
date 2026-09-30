@@ -171,6 +171,13 @@ function oilTank(M, w, st) {
   // Обвалование (земляной вал) — общее для площадки, у каждого — кольцо
   M.cylZ(0, 0, r + 4, r + 3.4, 0, 1.2, EARTH, 20, EARTH);
 }
+// Купол РЭБ: мачта с антенными решётками на бетонном основании
+function ewDome(M) {
+  M.box(-4, 4, -4, 4, 0, 0.6, CONCRETE);
+  M.seg([0, 0, 0.6], [0, 0, 18], 0.5, 0.35, STEEL);
+  for (let k = 0; k < 4; k++) { const a = (k * Math.PI) / 2, x = Math.cos(a) * 1.4, y = Math.sin(a) * 1.4; M.box(x - 0.6, x + 0.6, y - 0.6, y + 0.6, 12, 16, mat('#8d9aa3')); }
+  M.box(2.5, 5.5, -1.5, 1.5, 0.6, 3, mat('#5d6650'));
+}
 // Коровник: длинное здание с двускатной крышей
 function barn(M, w, h, st) {
   if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 2, SOOT); return; }
@@ -707,6 +714,7 @@ export function buildAD(type, side, part) {
   if (type === 'mog') pickup(M, side);
   else if (type === 'spaag') (side === 'blue' ? gepard : pantsirHull)(M);
   else if (type === 'ew') ewTruck(M, side);
+  else if (type === 'ewd') ewDome(M);
   else if (type === 'radar') pickupBig(M, side);
   else if (type === 'acoustic') acousticPost(M);
   else if (type === 'icpt') icptTeam(M, side);

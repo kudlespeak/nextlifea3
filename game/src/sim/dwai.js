@@ -5,10 +5,19 @@
 import { DW_AD, DW_DRONES, COMP, GTU } from './dronewar.js';
 import { BUILD, upgradeCost } from './dwecon.js';
 import { SALE } from './dwlogi.js';
+import { PROJECTS, TECH } from './dwstate.js';
 
-const VALUE = { elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
+// Доктрины штаба: экономист копит и строит, ястреб бьёт, черепаха закапывается в оборону
+const DOCTRINES = {
+  economist: { name: 'экономист', roi: 0.5, off: 0.45, cover: 1, projects: ['agroholding', 'highway', 'powerbridge', 'technopark', 'airshield'], tech: ['economy', 'energy', 'military'] },
+  hawk: { name: 'ястреб', roi: 1.0, off: 0.7, cover: 0.85, projects: ['technopark', 'airshield', 'highway', 'agroholding', 'powerbridge'], tech: ['military', 'economy', 'energy'] },
+  turtle: { name: 'черепаха', roi: 0.7, off: 0.45, cover: 1.3, projects: ['airshield', 'powerbridge', 'agroholding', 'highway', 'technopark'], tech: ['energy', 'military', 'economy'] },
+  balanced: { name: 'взвешенный', roi: 0.7, off: 0.55, cover: 1, projects: ['highway', 'airshield', 'agroholding', 'technopark', 'powerbridge'], tech: ['economy', 'military', 'energy'] },
+};
+
+const VALUE = { decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
 const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
-const TARGET_COMPS = { elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const TARGET_COMPS = { decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 const D_RANGE = (D) => D.range || 99999;
 
@@ -26,6 +35,9 @@ export class DroneWarAI {
     // Экономика: цель накопления (стройка или реконструкция с лучшей окупаемостью)
     this.goal = null;
     this.intent = '';
+    const dk = Object.keys(DOCTRINES);
+    this.doctrine = DOCTRINES[dk[sim.rng.int(0, dk.length - 1)]];
+    this.sent = {}; // сколько дронов отправлено по каждой цели
     this.launchShort = 0;
     this.next.plan = t + 60;
   }
@@ -45,14 +57,14 @@ export class DroneWarAI {
     const S = this.S;
     if (this.lastPts !== null) {
       const inc = S.points - this.lastPts;
-      if (inc > 0) { this.fund.def += inc * 0.45; this.fund.off += inc * 0.55; }
+      if (inc > 0) { const o = this.doctrine.off; this.fund.def += inc * (1 - o); this.fund.off += inc * o; }
     }
     const pend = g.pendingCost(this.side);
     // Резерв на ремонт: не тратить последнее, пока энергосистема повреждена
     this.reserve = Math.min(300, 30 + pend.sum * 0.6); // на оборудование взамен уничтоженного
     // Копим на выгодную стройку: удары и новые позиции — только из того, что сверх цели
     if (this.goal && !this.finishing()) this.reserve += this.goal.cost * 0.8;
-    if (t > this.next.plan) { this.next.plan = t + 30; this.plan(); }
+    if (t > this.next.plan) { this.next.plan = t + 30; this.plan(); this.govern(); }
     this.doGoal();
     this.defense();
     if (t > this.next.shelter) { this.next.shelter = t + 90; this.shelters(); }
@@ -95,7 +107,7 @@ export class DroneWarAI {
   defense() {
     const g = this.g, S = this.S, rng = this.sim.rng;
     const spend = () => Math.min(this.fund.def, S.points - this.reserve);
-    const put = (type, x, y) => { if (!g.canPlace(this.side, type, x, y) && !g.placeAD(this.side, type, x, y)) this.pay('def', DW_AD[type].cost); };
+    const put = (type, x, y) => { const c = g.adCost(this.side, type); if (!g.canPlace(this.side, type, x, y) && !g.placeAD(this.side, type, x, y)) this.pay('def', c); };
     const dir = this.side === 'blue' ? 1 : -1; // к фронту
     // Сеть акустических постов перед тылом
     const posts = g.ad.filter((a) => !a.dead && a.side === this.side && a.type === 'acoustic').length;
@@ -109,6 +121,7 @@ export class DroneWarAI {
     for (const o of g.objs(this.side)) {
       let want = WANT_COVER[o.kind];
       if (!want) continue;
+      want *= this.doctrine.cover;
       if (o.kind === 'bridge' && o.btype !== 'rail' && o.btype !== 'highway') continue;
       if (threat && !threat.done && threat.oid === o.id) want += 4; // разведка предупредила об ударе
       const s = this.cover(o) / want;
@@ -125,7 +138,8 @@ export class DroneWarAI {
     else if (have('spaag') < 4 && spend() > DW_AD.spaag.cost + 60 && ['tpp', 'ps330', 'factory'].includes(worst.kind)) type = 'spaag';
     else if (['tpp', 'ps330', 'ps110'].includes(worst.kind) && !g.ad.some((a) => !a.dead && a.side === this.side && a.type === 'ew' && Math.hypot(a.x - worst.x, a.y - worst.y) < 2000) && spend() > DW_AD.ew.cost) type = 'ew';
     else if (have('icpt') < 4 && spend() > DW_AD.icpt.cost && rng.chance(0.6)) type = 'icpt';
-    if (spend() < DW_AD[type].cost) return;
+    else if (S.points > 1200 && ['tpp', 'ps330', 'factory'].includes(worst.kind) && !g.ad.some((a) => !a.dead && a.side === this.side && a.type === 'ewd' && Math.hypot(a.x - worst.x, a.y - worst.y) < 3000)) type = 'ewd';
+    if (spend() < g.adCost(this.side, type)) return;
     // Со стороны фронта, откуда идут дроны
     const r = type === 'ew' ? rng.float(200, 700) : type === 'sam' ? rng.float(1500, 3500) : rng.float(500, 1600);
     const a = rng.float(-1.2, 1.2);
@@ -225,7 +239,10 @@ export class DroneWarAI {
       if (!ok.length) continue;
       if (o.kind === 'bridge' && o.btype !== 'rail' && o.btype !== 'highway') continue;
       const def = knownAD.filter((a) => Math.hypot(a.x - o.x, a.y - o.y) < (a.type === 'sam' ? 9000 : 3000)).length;
-      const s = (v * (ok.length / o.comps.length + 0.5)) / (1 + def * 0.35) * rng.float(0.7, 1.3);
+      // память о потерях: по цели, где дроны массово сбивают, бьём реже
+      const sent = this.sent[o.id] || 0, lost = g.lossLog?.[this.side]?.[o.id] || 0;
+      const lossRate = sent >= 6 ? lost / sent : 0;
+      const s = (v * (ok.length / o.comps.length + 0.5)) / (1 + def * 0.35) / (1 + lossRate * 1.5) * rng.float(0.7, 1.3);
       if (s > bs) { bs = s; best = o; }
     }
     if (!best) return;
@@ -246,6 +263,7 @@ export class DroneWarAI {
     if (n < 2) return;
     let slots = free - n;
     const route = this.route(best, knownAD);
+    this.sent[best.id] = (this.sent[best.id] || 0) + n;
     // Ложные цели идут первыми, чтобы вскрыть и отвлечь ПВО (у Велнарии — рой дешёвых «Бобров»)
     if (!T.decoy.length && main.k !== 'bober') {
       const bob = T.strike.find((d) => d.k === 'bober');
@@ -359,6 +377,8 @@ export class DroneWarAI {
     { const br = g.objs(side, 'bridge').find((b) => b.btype !== 'rail' && g.bridgeCap(b) === 0 && !g.objects.some((o) => o.kind === 'pontoon' && o.bridge === b.id)); if (br) { const s0 = E.siteFor(side, 'pontoon', br.x, br.y); if (!s0.err) out.push({ act: 'build', kind: 'pontoon', x: br.x, y: br.y, cost: BUILD.pontoon.cost, gain: 5, name: `понтонная переправа у моста «${br.name.replace(/^Мост через /, '')}»` }); } }
     if ((sum.farmGrain > 12000 || this.S.stats.lostAD > 6) && have('autopark') < 3) { const c = cities[0]; if (c) add('autopark', c.x, c.y, 1500, 4000, 2, 'автобаза'); }
     if (S.spare === 0 && have('reserve') < 2) { const c = cities[rng.int(0, cities.length - 1)]; if (c) add('reserve', c.x, c.y, 2000, 5000, 3, 'склад госрезерва'); }
+    // Макеты подстанций — когда противник бьёт по нашим ПС 110
+    if (have('decoy') < 3 && g.objs(side, 'ps110').some((q) => q.comps.some((c) => c.state !== 'ok'))) { const ps = g.objs(side, 'ps110')[rng.int(0, g.objs(side, 'ps110').length - 1)]; add('decoy', ps.x, ps.y, 1500, 4000, 2.2, 'макет подстанции'); }
     // Стартовая позиция, если пусковые не успевают
     if ((this.launchShort >= 3 || S.points > 1500) && g.objs(side, 'launch').length < 8) {
       const x = g.frontX + (side === 'blue' ? -1 : 1) * rng.float(9000, 14000), y = rng.float(3000, g.world.H - 3000);
@@ -375,9 +395,43 @@ export class DroneWarAI {
     const H = this.horizon();
     let best = null, br = 0;
     for (const c of this.econCands()) { const roi = (c.gain * H) / c.cost; if (roi > br) { br = roi; best = c; } }
-    if (best && br >= 0.7) { this.goal = { ...best, roi: br, t0: this.sim.time }; this.intent = `копит на: ${best.name} (${best.cost} оч., окупится за ~${Math.round(best.cost / best.gain)} мин)`; }
+    if (best && br >= this.doctrine.roi) { this.goal = { ...best, roi: br, t0: this.sim.time }; this.intent = `копит на: ${best.name} (${best.cost} оч., окупится за ~${Math.round(best.cost / best.gain)} мин)`; }
     else this.intent = 'вкладывает в удары и оборону';
   }
+  // Законы, мобилизация, нацпроекты, НИОКР, контракты и кредиты
+  govern() {
+    const g = this.g, S = this.S, side = this.side, St = g.state, T = St.side[side], D = this.doctrine;
+    const mor = S.morale ?? 100, sum = g.econ.summary(side);
+    const law = (id, on) => { if (!!T.laws[id] !== on && !St.cooldown(T)) St.setLaw(side, id, on); };
+    law('martial', mor < 45);
+    law('fund', g.pendingCost(side).sum > 300 || T.laws.fund && g.pendingCost(side).sum > 120);
+    law('curfew', this.settlementsFear() > 0.35);
+    if (!St.cooldown(T)) {
+      const tax = S.points < 150 && mor > 70 ? 2 : sum.happy < 0.7 ? 0 : 1;
+      if (tax !== T.tax) St.setTax(side, tax);
+      else {
+        const mob = mor < 40 ? 2 : (this.launchShort >= 3 || D === DOCTRINES.hawk) && mor < 80 ? 1 : 0;
+        if (mob !== T.mobil) St.setMobil(side, mob);
+      }
+    }
+    if (!T.project && !this.goal) for (const id of D.projects) {
+      if (T.projects.includes(id)) continue;
+      const cost = PROJECTS[id].cost * St.k(side, 'build');
+      if (id === 'powerbridge' && S.supply > 0.95 && D !== DOCTRINES.turtle) continue;
+      if (S.points > cost * 1.3 + this.reserve) St.startProject(side, id);
+      break;
+    }
+    if (!T.research && S.points > 800 + this.reserve) for (const b of D.tech) { const L = TECH[b].levels[T.tech[b]]; if (!L) continue; if (S.points > L.cost + 500) St.startResearch(side, b); break; }
+    for (const c of T.contracts) {
+      if (c.state !== 'offer') continue;
+      if (c.kind === 'grain' && sum.elevGrain + sum.farmGrain >= c.need * 0.7) St.acceptContract(side, c.id);
+      if (c.kind === 'power' && S.gen > S.demand * 1.1) St.acceptContract(side, c.id);
+      if (c.kind === 'arms' && S.points > c.price * 2.5 && g.ad.filter((a) => !a.dead && a.side === side && a.type === 'sam').length < 3) St.acceptContract(side, c.id);
+    }
+    if (mor < 40 && S.points < 100 && !T.debts.some((d) => d.kind === 'credit')) St.takeCredit(side, 'credit');
+    if (mor > 80 && this.goal && S.points < this.goal.cost * 0.5 && this.goal.roi > 1.2 && !T.debts.some((d) => d.kind === 'bonds')) St.takeCredit(side, 'bonds');
+  }
+  settlementsFear() { const ss = this.g.world.settlements.filter((q) => q.side === this.side && q.type === 'city'); return ss.reduce((a, q) => a + q.fear, 0) / Math.max(1, ss.length); }
   doGoal() {
     const G = this.goal, g = this.g, S = this.S;
     if (!G) return;

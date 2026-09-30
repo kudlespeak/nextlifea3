@@ -369,7 +369,7 @@ export class DWLogistics {
         if (m.saleT <= 0) {
           m.saleT += SALE[m.kind].every * this.crowd(m);
           if (m.stock >= 1) {
-            const val = this.sale(m).value * this.g.incomeK(side);
+            const val = this.sale(m).value * this.g.incomeK(side) * (this.g.state?.k(side, m.kind === 'fuel' ? 'fuel' : 'trade') ?? 1);
             m.stock--; S.points += val; L.stats.sold++;
             if (m.kind === 'fuel') L.stats.fuel += val; else L.stats.trade += val;
           }
@@ -420,6 +420,7 @@ export class DWLogistics {
   }
   // Начисление с отметкой «+N» на карте
   earn(side, v, x, y, kind) {
+    v *= this.g.state?.k(side, kind) ?? 1; // законы, курс, проекты
     const val = v * this.g.incomeK(side);
     this.g.sides[side].points += val;
     this.side[side].stats[kind] += val;

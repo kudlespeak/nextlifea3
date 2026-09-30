@@ -4,6 +4,7 @@
 import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef, GTU, PACE } from './sim/dronewar.js';
 import { VEH } from './sim/dwlogi.js';
 import { BUILD, BUILD_GROUPS, STAGE_NAME, upgradeCost, UPKEEP, LAUNCH_PER } from './sim/dwecon.js';
+import { LAWS, TAXES, MOBIL, PROJECTS, TECH } from './sim/dwstate.js';
 const CREW_ST = { travel: 'едет к объекту', waitfire: 'ждёт, пока потушат', work: 'ремонтирует' };
 
 const $ = (id) => document.getElementById(id);
@@ -38,7 +39,7 @@ export class DWUI {
     } else if (this.state.tab === 'ad') {
       h += `<div class="dw-note">Выберите средство и кликните по карте на своей территории. ПКМ — отмена. Выбранную мобильную группу ПКМ перемещают.</div>`;
       for (const [k, T] of Object.entries(DW_AD)) {
-        h += `<div class="dw-row${this.state.mode === 'ad:' + k ? ' sel' : ''}" data-ad="${k}" title="${esc(T.desc)}"><div><b>${esc(T.name[side])}</b><small>${esc(T.sub[side])}</small></div><span class="cost">${T.cost}</span></div>`;
+        h += `<div class="dw-row${this.state.mode === 'ad:' + k ? ' sel' : ''}" data-ad="${k}" title="${esc(T.desc)}"><div><b>${esc(T.name[side])}</b><small>${esc(T.sub[side])}</small></div><span class="cost">${g.adCost(side, k)}</span></div>`;
       }
       h += `<label class="dw-check"><input type="checkbox" data-act="ranges" ${this.state.showRanges ? 'checked' : ''}> Показывать зоны поражения</label>`;
       h += `<div class="dw-sub">Ваши позиции</div><div id="dw-adlist"></div>`;
@@ -65,6 +66,8 @@ export class DWUI {
         for (const k of kinds) { const B = BUILD[k]; h += `<div class="dw-row${this.state.mode === 'build:' + k ? ' sel' : ''}" data-build="${k}" title="${esc(B.desc)}"><div><b>${esc(B.name)}</b><small>${esc(B.desc)} · ${Math.round(B.time / 60)} мин</small></div><span class="cost">${B.cost}</span></div>`; }
       }
       h += `<div id="dw-econ"></div>`;
+    } else if (this.state.tab === 'state') {
+      h += `<div id="dw-state"></div>`;
     }
     $('dw-body').innerHTML = h;
     this.update(true);
@@ -138,7 +141,7 @@ export class DWUI {
       const veh = g.logi.vehicles.filter((v) => !v.dead && v.side === side);
       const cnt = (k) => veh.filter((v) => v.kind === k).length;
       h += `<div class="dw-sub">Торговля и логистика</div><div class="dw-income">Торговля <b>+${(S.tradeAvg ?? 0).toFixed(1)}</b> оч/мин · на складе РЦ <b>${L.hub.stock}</b> · магазинов с товаром ${withGoods}/${L.markets.length} · АЗС с топливом ${withFuel}/${L.fuels.length}${cut ? ` · <span class="bad">отрезано ${cut}</span>` : ''}<br>На дорогах: фур ${cnt('fura')}, развозных ${cnt('van')}, бензовозов ${cnt('tanker')}, снабжение ПВО ${cnt('supply')}, ремонтники ${cnt('crew')}, пожарные ${cnt('fire')} · фур пришло ${L.stats.imports}, ушло на экспорт ${L.stats.exports || 0}, доставок ${L.stats.deliveries}${L.stats.lostTrucks ? ` · <span class="bad">потеряно машин ${L.stats.lostTrucks}</span>` : ''}</div>`;
-      const groups = ['tpp', 'hpp', 'chp', 'wpp', 'spp', 'ps330', 'ps110', 'bridge', 'oil', 'ammo', 'factory', 'launch', 'hub', 'border', 'rembase', 'firest', 'fuel'];
+      const groups = ['tpp', 'hpp', 'chp', 'wpp', 'spp', 'solar', 'bess', 'ps330', 'ps110', 'decoy', 'bridge', 'pontoon', 'elevator', 'reserve', 'oil', 'ammo', 'factory', 'launch', 'hub', 'border', 'rembase', 'firest', 'fuel'];
       h += `<div class="dw-sub">Ваши объекты</div>`;
       for (const k of groups) for (const o of g.objs(side, k)) h += this.objRow(o);
       const E = g.sides[this.enemy];
@@ -180,14 +183,44 @@ export class DWUI {
       }).join('') || '<div class="dw-note">всё исправно</div>';
     }
     else if (this.state.tab === 'econ') this.econ();
+    else if (this.state.tab === 'state') this.govt();
     if (force || this.state.selObj || this.state.selAD) this.card();
+  }
+
+  govt() {
+    const g = this.g, side = this.side, T = g.state.side[side], t = this.sim.time;
+    const bar = (k) => `<div class="bar"><i style="width:${(100 * Math.max(0, Math.min(1, k))).toFixed(0)}%"></i></div>`;
+    const cd = t < T.lawT ? ` <small class="muted">(менять можно через ${Math.ceil(T.lawT - t)} с)</small>` : '';
+    let h = `<div class="dw-sub">Законы${cd}</div>`;
+    for (const [id, L] of Object.entries(LAWS)) h += `<label class="dw-check dw-law" title="${esc(L.desc)}"><input type="checkbox" data-law="${id}" ${T.laws[id] ? 'checked' : ''}> <b>${esc(L.name)}</b><small>${esc(L.desc)}</small></label>`;
+    h += `<div class="dw-btns"><span class="muted">налоги:</span>${TAXES.map((q, i) => `<button data-tax="${i}" class="${T.tax === i ? 'sel' : ''}" title="налоги ×${q.k}, довольство ${q.happy >= 0 ? '+' : ''}${Math.round(q.happy * 100)}%">${q.name}</button>`).join('')}</div>`;
+    h += `<div class="dw-btns"><span class="muted">мобилизация:</span>${MOBIL.map((q, i) => `<button data-mobil="${i}" class="${T.mobil === i ? 'sel' : ''}" title="${esc(q.desc)}">${q.name}</button>`).join('')}</div><div class="dw-note">${esc(MOBIL[T.mobil].desc)}</div>`;
+    h += `<div class="dw-sub">Финансы и мир</div><div class="dw-income">Инфляция <b class="${T.infl > 0.1 ? 'bad' : ''}">${Math.round(T.infl * 100)}%</b> (дроны, ПВО и стройка дороже, люди недовольны; растёт, когда военные траты обгоняют доход) · курс <b>${T.rate.toFixed(2)}</b> (экспорт и пошлины ×курс) · цена зерна <b>×${g.state.grainPrice.toFixed(2)}</b><br>Репутация в мире <b class="${T.rep < 35 ? 'bad' : ''}">${Math.round(T.rep)}</b>/100: удары рядом с жильём противника снижают её, выполненные контракты повышают. ${T.rep < 35 ? '<span class="bad">Санкции: комплектующие дороже, зерно дешевле.</span>' : T.aid ? '<span style="color:var(--ok)">Союзники помогают: +4 оч/мин и резервные трансформаторы.</span>' : 'От 55 и при слабом тыле — помощь союзников.'}</div>`;
+    const debt = (kind) => T.debts.find((d) => d.kind === kind);
+    h += `<div class="dw-btns"><button data-credit="credit" ${debt('credit') ? 'disabled' : ''} title="+600 сейчас, возврат 780 за 30 мин">Кредит +600</button><button data-credit="bonds" ${debt('bonds') ? 'disabled' : ''} title="+400 сейчас, погашение 480 за 40 мин; только при устойчивости от 70">Военные облигации +400</button>${T.debts.map((d) => `<span class="muted">${d.kind === 'bonds' ? 'облигации' : 'кредит'}: осталось ${d.left} (${d.perMin.toFixed(0)}/мин)</span>`).join(' ')}</div>`;
+    const offers = T.contracts.filter((c) => c.state !== 'expired');
+    h += `<div class="dw-sub">Иностранные заказы</div>` + (offers.map((c) => `<div class="dw-row small"><div><b>${esc(c.title)}</b><small>${c.state === 'offer' ? `предложение ещё ${Math.ceil(c.expires - t)} с` : c.state === 'active' ? `выполнено ${Math.round((100 * c.progress) / c.need)}% · осталось ${Math.ceil((c.until - t) / 60)} мин` : c.state === 'done' ? 'выполнен' : 'сорван'}${c.reward ? ` · премия ${c.reward}` : ''}</small>${c.state === 'active' ? bar(c.progress / c.need) : ''}</div>${c.state === 'offer' ? `<button data-contract="${c.id}">${c.price ? `Купить ${c.price}` : 'Принять'}</button>` : ''}</div>`).join('') || '<div class="dw-note">нет предложений — заказы приходят раз в 12–20 минут</div>');
+    if (T.armsCredit) h += `<div class="dw-note">Оплачено ЗРК по контракту: ${T.armsCredit} — ставьте на вкладке «ПВО» бесплатно.</div>`;
+    h += `<div class="dw-sub">Национальные проекты</div>`;
+    if (T.project) { const P = PROJECTS[T.project.id]; h += `<div class="dw-crew">${esc(P.name)} — строится ${Math.ceil((T.project.until - t) / 60)} мин${bar(1 - (T.project.until - t) / T.project.total)}</div>`; }
+    for (const [id, P] of Object.entries(PROJECTS)) { const done = T.projects.includes(id); h += `<div class="dw-row small"><div><b class="${done ? 'ok' : ''}">${esc(P.name)}${done ? ' ✔' : ''}</b><small>${esc(P.desc)} · ${Math.round(P.time / 60)} мин</small></div>${done || T.project ? '' : `<button data-project="${id}">${Math.round(P.cost * g.state.k(side, 'build'))}</button>`}</div>`; }
+    h += `<div class="dw-sub">НИОКР</div>`;
+    if (T.research) { const L = TECH[T.research.branch].levels[T.tech[T.research.branch]]; h += `<div class="dw-crew">${esc(L.name)} — ${Math.ceil((T.research.until - t) / 60)} мин${bar(1 - (T.research.until - t) / T.research.total)}</div>`; }
+    for (const [b, B] of Object.entries(TECH)) {
+      const lv = T.tech[b], nx = B.levels[lv];
+      h += `<div class="dw-row small"><div><b>${esc(B.name)}</b> <small>${B.levels.map((q, i) => `<span class="${i < lv ? 'ok' : 'muted'}" title="${esc(q.desc)}">${i < lv ? '✔' : '○'} ${esc(q.name)}</span>`).join(' · ')}</small>${nx ? `<small>дальше: ${esc(nx.desc)}</small>` : ''}</div>${nx && !T.research ? `<button data-tech="${b}">${nx.cost}</button>` : ''}</div>`;
+    }
+    if (T.temp.length || T.log.length) h += `<div class="dw-sub">События</div>` + T.temp.map((e) => `<div class="dw-note">⏳ ${esc(e.text)} — ещё ${Math.ceil((e.until - t) / 60)} мин</div>`).join('') + T.log.slice(-4).reverse().map(([, txt]) => `<div class="dw-note muted">${esc(txt)}</div>`).join('');
+    const E = g.state.side[this.enemy];
+    h += `<div class="dw-sub">Рейтинг страны</div><div class="dw-income">Вы <b>${g.state.rating(side)}</b> · противник ≈ <b>${g.state.rating(this.enemy)}</b> (экономика, люди, стройка, НИОКР, репутация)${T.ecoWin > 0 ? `<br><span style="color:var(--ok)">Экономическая победа близко: ${Math.round((100 * T.ecoWin) / 900)}%</span>` : ''}${E.ecoWin > 0 ? `<br><span class="bad">Противник близок к экономической победе: ${Math.round((100 * E.ecoWin) / 900)}%</span>` : ''}<br><small>Экономическая победа: экономика вдвое сильнее противника 15 минут подряд (после 1,5 ч боёв), а его тыл ниже 60.</small></div>`;
+    $('dw-state').innerHTML = h;
   }
 
   econ() {
     const g = this.g, side = this.side, S = this.S, I = S.inc || {}, E = g.econ.summary(side);
     const k = (v) => (v >= 10000 ? `${(v / 1000).toFixed(0)} тыс.` : Math.round(v).toLocaleString('ru-RU'));
     const plus = [['промышленность', I.industry], ['налоги', I.tax], ['магазины и производство', I.trade], ['АЗС', I.fuel], ['фуры (пошлины)', I.transit], ['экспорт зерна', I.agro], ['инвестиции и сборы', I.other]];
-    const minus = [['зарплата бригад', -(I.wages || 0)], ['содержание армии', -(I.upkeep || 0)]];
+    const minus = [['зарплата бригад', -(I.wages || 0)], ['содержание армии', -(I.upkeep || 0)], ['законы, кредиты, помощь', -(I.state || 0)]];
     const civ = plus.reduce((a, [, v]) => a + (v || 0), 0), mil = minus.reduce((a, [, v]) => a + (v || 0), 0);
     let h = `<div class="dw-sub">Бюджет, оч/мин</div><div class="dw-income"><b style="color:var(--ok)">+${civ.toFixed(1)}</b> гражданская экономика: ${plus.map(([n, v]) => `${n} ${(v || 0).toFixed(1)}`).join(' · ')}<br><b class="bad">−${mil.toFixed(1)}</b> ${minus.map(([n, v]) => `${n} ${v.toFixed(1)}`).join(' · ')}<br>Расходы на удары и ПВО — разовые (пуски, позиции, ракеты).</div>`;
     h += `<div class="dw-sub">Население</div><div class="dw-income">Жителей <b>${k(E.pop)}</b> · довольство <b>${(E.happy * 100).toFixed(0)}%</b> (свет, товары, страх после ударов) · мобилизовано ${k(E.mobilized)} — рабочие руки <b class="${E.labor < 0.9 ? 'bad' : ''}">${(E.labor * 100).toFixed(0)}%</b>. Налоги и промышленность падают, когда людей забирают в расчёты ПВО, бригады и на пусковые.</div>`;
@@ -200,16 +233,25 @@ export class DWUI {
     const bld = g.objects.filter((o) => o.side === side && o.build);
     if (bld.length) h += `<div class="dw-sub">Стройка и реконструкция</div>` + bld.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — ${o.build.up ? `реконструкция до ${(o.level || 1) + 1}-го ур.` : 'строится'}<div class="bar"><i style="width:${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%"></i></div></div>`).join('');
     const ai = this.sim.ais?.find((a) => a.side === this.enemy);
-    if (ai?.intent) h += `<div class="dw-sub">Разведка</div><div class="dw-income">Штаб противника ${esc(ai.intent)}</div>`;
+    if (ai?.intent) h += `<div class="dw-sub">Разведка</div><div class="dw-income">Штаб противника ${esc(ai.intent)}${ai.doctrine ? ` · доктрина: ${esc(ai.doctrine.name)}` : ''}</div>`;
+    // История показателей (каждые 30 с, до 2 часов)
+    const H = g.state.side[side].hist;
+    if (H.length > 2) {
+      const spark = (i, label, col) => { const v = H.map((q) => q[i]), lo = Math.min(...v), hi = Math.max(...v, lo + 1); const pts = v.map((y, k) => `${((k / (v.length - 1)) * 100).toFixed(1)},${(24 - ((y - lo) / (hi - lo)) * 22).toFixed(1)}`).join(' '); return `<div>${label}: <b>${v[v.length - 1]}</b><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg></div>`; };
+      h += `<div class="dw-sub">История за ${Math.round(H.length / 2)} мин</div><div class="dw-spark">${spark(0, 'доход, оч/мин', '#7ddc6a')}${spark(1, 'устойчивость тыла', '#f0c34a')}${spark(2, 'свет, %', '#ffe27a')}${spark(3, 'жителей, тыс.', '#9cc8ff')}</div>`;
+    }
+    h += `<label class="dw-check"><input type="checkbox" data-act="flows" ${this.state.showFlows ? 'checked' : ''}> Слой потоков на карте: зерно, топливо, товары</label>`;
     $('dw-econ').innerHTML = h;
   }
 
+  // Название типа объекта; макет противник видит как настоящую подстанцию
+  kindName(o) { return o.mimic ? (o.side === this.side ? `${KIND_NAME[o.kind]}` : KIND_NAME[o.mimic]) : KIND_NAME[o.kind]; }
   objRow(o) {
     const bad = o.comps.filter((c) => c.state !== 'ok').length;
     const fire = o.comps.some((c) => c.fire > 0);
     const st = o.kind === 'bridge' ? (this.g.bridgeCap(o) === 0 ? 'destroyed' : bad ? 'damaged' : 'ok') : bad === 0 ? 'ok' : o.comps.filter((c) => c.state === 'destroyed').length > o.comps.length / 2 ? 'destroyed' : 'damaged';
     const extra = o.kind === 'ps110' && o.side === this.side ? ` · ${((o.supply ?? 1) * 100).toFixed(0)}%` : '';
-    return `<div class="dw-row small${this.state.selObj === o.id ? ' sel' : ''}" data-obj="${o.id}"><div><b class="${ST_CLS[st]}">${esc(o.kind === 'bridge' ? o.name.replace(/^Мост через /, 'Мост ') : o.name)}</b><small>${KIND_NAME[o.kind]}${bad ? ` · неисправно ${bad}/${o.comps.length}` : ''}${extra}${fire ? ' · 🔥' : ''}</small></div></div>`;
+    return `<div class="dw-row small${this.state.selObj === o.id ? ' sel' : ''}" data-obj="${o.id}"><div><b class="${ST_CLS[st]}">${esc(o.kind === 'bridge' ? o.name.replace(/^Мост через /, 'Мост ') : o.name)}</b><small>${this.kindName(o)}${bad ? ` · неисправно ${bad}/${o.comps.length}` : ''}${extra}${fire ? ' · 🔥' : ''}</small></div></div>`;
   }
 
   // ------------------------------------------------ Карточка
@@ -231,7 +273,7 @@ export class DWUI {
     if (o) {
       const own = o.side === side;
       const stockInfo = o.stock !== undefined && own ? ` · товара ${o.stock}${o.cut ? ' · <span class="bad">отрезан: нет проезда</span>' : ''}` : o.engines !== undefined && own ? ` · свободных машин ${o.engines}` : '';
-      h += `<div class="dw-title">${esc(o.name)}</div><div class="dw-subt">${KIND_NAME[o.kind]}${stockInfo} · ${own ? 'ваш объект' : CIVIL.has(o.kind) ? 'гражданский объект противника — удары запрещены' : 'объект противника'}${o.kind === 'ps110' && own ? ` · питание района ${((o.supply ?? 1) * 100).toFixed(0)}%` : ''}${o.kind === 'bridge' ? ` · пропускная способность ${(g.bridgeCap(o) * 100).toFixed(0)}%` : ''}</div>`;
+      h += `<div class="dw-title">${esc(o.name)}</div><div class="dw-subt">${this.kindName(o)}${stockInfo} · ${own ? 'ваш объект' : CIVIL.has(o.kind) ? 'гражданский объект противника — удары запрещены' : 'объект противника'}${o.kind === 'ps110' && own ? ` · питание района ${((o.supply ?? 1) * 100).toFixed(0)}%` : ''}${o.kind === 'bridge' ? ` · пропускная способность ${(g.bridgeCap(o) * 100).toFixed(0)}%` : ''}</div>`;
       if (own && (o.build || BUILD[o.kind] || o.grain !== undefined)) {
         const lv = o.level || 1;
         let e = `<div class="dw-income">Уровень <b>${lv}</b>${o.grain !== undefined ? ` · зерна ${Math.round(o.grain)} т из ${Math.round(g.econ.elevCap(o))}` : ''}${o.kind === 'hub' ? ` · на складе ${o.stock}` : ''}`;
@@ -271,7 +313,7 @@ export class DWUI {
   }
 
   onPanel(e) {
-    const t = e.target.closest('[data-ad],[data-drone],[data-wave],[data-count],[data-obj],[data-selad],[data-repair],[data-shelter],[data-roe],[data-act],[data-target],[data-shed],[data-gtu],[data-build],[data-upg]');
+    const t = e.target.closest('[data-ad],[data-drone],[data-wave],[data-count],[data-obj],[data-selad],[data-repair],[data-shelter],[data-roe],[data-act],[data-target],[data-shed],[data-gtu],[data-build],[data-upg],[data-law],[data-tax],[data-mobil],[data-project],[data-tech],[data-credit],[data-contract]');
     if (!t) return;
     const g = this.g, side = this.side;
     const d = t.dataset;
@@ -290,6 +332,7 @@ export class DWUI {
       this.fire(c.x, c.y, c.obj, c);
     } else if (d.act === 'close') this.select(null, null);
     else if (d.act === 'ranges') this.state.showRanges = t.checked;
+    else if (d.act === 'flows') this.state.showFlows = t.checked;
     else if (d.act === 'auto') this.issue('dw', 'setAuto', side, t.checked);
     else if (d.act === 'crew') this.issue('dw', 'buyCrew', side);
     else if (d.act === 'spare') this.issue('dw', 'buySpare', side);
@@ -299,6 +342,13 @@ export class DWUI {
     else if (d.act === 'net') { this.state.mode = this.state.mode === 'net' ? null : 'net'; this.build(); }
     else if (d.build) { this.state.mode = this.state.mode === 'build:' + d.build ? null : 'build:' + d.build; this.build(); }
     else if (d.upg) this.issue('dw', 'upgrade', side, Number(d.upg));
+    else if (d.law) this.issue('dw', 'setLaw', side, d.law, t.checked);
+    else if (d.tax) this.issue('dw', 'setTax', side, Number(d.tax));
+    else if (d.mobil) this.issue('dw', 'setMobil', side, Number(d.mobil));
+    else if (d.project) this.issue('dw', 'startProject', side, d.project);
+    else if (d.tech) this.issue('dw', 'startResearch', side, d.tech);
+    else if (d.credit) this.issue('dw', 'takeCredit', side, d.credit);
+    else if (d.contract) this.issue('dw', 'acceptContract', side, Number(d.contract));
     setTimeout(() => this.update(true), 50);
   }
 

@@ -12,12 +12,38 @@ import { CivTraffic } from './dwtraffic.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
-const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
+const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
 export const dispH = (alt) => (alt <= 0 ? 0 : 12 + Math.min(alt, 3000) / 3000 * 110);
+
+// Потоки экономики своей стороны: зерно (ток → элеватор → граница), солярка (нефтебаза → мехдворы),
+// товары (склады → магазины). Толщина — объём.
+function drawFlows(ctx, g, side, toS, z, dpr) {
+  const E = g.econ, L = g.logi.side[side];
+  const arrow = (a, b, w, col, dash) => {
+    const [x0, y0] = toS(a[0], a[1]), [x1, y1] = toS(b[0], b[1]);
+    ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, w) * dpr; ctx.setLineDash(dash ? [6 * dpr, 5 * dpr] : []);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    const an = Math.atan2(y1 - y0, x1 - x0), mx = (x0 + x1) / 2, my = (y0 + y1) / 2, s = 6 * dpr;
+    ctx.setLineDash([]); ctx.beginPath(); ctx.moveTo(mx + Math.cos(an) * s, my + Math.sin(an) * s); ctx.lineTo(mx + Math.cos(an + 2.5) * s, my + Math.sin(an + 2.5) * s); ctx.lineTo(mx + Math.cos(an - 2.5) * s, my + Math.sin(an - 2.5) * s); ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+  };
+  const els = E.elevators(side);
+  ctx.save(); ctx.globalAlpha = 0.8;
+  for (const f of E.farms) {
+    if (f.side !== side || f.grain < 300) continue;
+    const e = els.slice().sort((a, b) => Math.hypot(a.x - f.x, a.y - f.y) - Math.hypot(b.x - f.x, b.y - f.y))[0];
+    if (e) arrow([f.x, f.y], [e.x, e.y], 1 + f.grain / 2500, 'rgba(230,190,70,0.85)');
+  }
+  for (const e of els) if ((e.grain || 0) > 1000) arrow([e.x, e.y], [L.border.x, L.border.y], 1.5 + e.grain / 8000, 'rgba(255,215,90,0.9)');
+  if (L.oilDepot) for (const f of E.farms) if (f.side === side && f.tank < 6) arrow([L.oilDepot.x, L.oilDepot.y], [f.x, f.y], 1, 'rgba(240,120,60,0.7)', true);
+  const hubs = g.objs(side, 'hub');
+  for (const m of L.markets) if (m.stock < 2) { const h = hubs.slice().sort((a, b) => Math.hypot(a.x - m.x, a.y - m.y) - Math.hypot(b.x - m.x, b.y - m.y))[0]; if (h) arrow([h.x, h.y], [m.x, m.y], 1, 'rgba(140,200,255,0.7)', true); }
+  ctx.restore();
+  void z;
+}
 
 // Стройка: бетонные основания узлов, башенный кран, кольцо готовности
 function construction(ctx, o, toS, z, dpr, k) {
@@ -165,6 +191,9 @@ export function drawDW(ctx, sim, view, side, ui) {
       fire(ctx, toS, c.x, c.y, size, z, now, c.k === 'tank' || c.k === 'coal', hash(c.x + c.y));
     }
   }
+
+  // ---------- Слой экономических потоков ----------
+  if (ui?.showFlows && g.econ) drawFlows(ctx, g, side, toS, z, dpr);
 
   // ---------- Сельхозтехника на полях ----------
   if (g.econ && z >= 0.12) drawFarmWork(ctx, g, sim.world, toS, inView, z, now, dpr);
@@ -543,7 +572,7 @@ export function drawDW(ctx, sim, view, side, ui) {
       ctx.fillStyle = ST_COL[st];
       ctx.font = `700 ${9.5 * dpr}px "PT Sans Narrow", sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(GLYPH[o.kind] || '?', sx, sy + 0.5 * dpr);
+      ctx.fillText(GLYPH[o.mimic && o.side !== side ? o.mimic : o.kind] || '?', sx, sy + 0.5 * dpr); // макет противник видит как настоящий объект
       if (fire) { ctx.fillStyle = '#ff8a3a'; ctx.beginPath(); ctx.arc(sx + w / 2, sy - 8 * dpr, 3.5 * dpr, 0, Math.PI * 2); ctx.fill(); }
       if (o.kind === 'ps110' && o.supply !== undefined && o.side === side) {
         ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - w / 2, sy + 9 * dpr, w, 3 * dpr);
