@@ -38,7 +38,8 @@ export function drawDW(ctx, sim, view, side, ui) {
   // ---------- Объекты ----------
   for (const o of g.objects) {
     if (o.kind === 'import' || !inView(o.x, o.y, Math.max(o.w, o.h))) continue;
-    if (detail) {
+    // крупные объекты (ТЭС, ГЭС, подстанции) видны в объёме и издали — пока на экране больше ~60 px
+    if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
       // Сначала дальние узлы (по y экрана), чтобы высокие не перекрывались неверно
       const comps = [...o.comps].sort((a, b) => a.y - b.y);
       for (const c of comps) {

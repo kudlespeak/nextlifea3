@@ -2,7 +2,7 @@
 // Всё рисуется в мировых координатах (метрах), масштаб ppm = пикселей на метр.
 
 import { fbm, hash2 } from '../rng.js';
-import { offsetLine, resample } from '../geom.js';
+import { offsetLine, resample, distToLine } from '../geom.js';
 import { CROPS } from '../mapgen.js';
 import { M } from '../spatial.js';
 
@@ -399,6 +399,24 @@ function drawArea(ctx, a, b, ppm) {
           ctx.fillStyle = 'rgba(70,70,66,0.55)';
           ctx.fillRect(-hw, -4, a.w, 8); // внутренний проезд
         }
+        // проезд от ворот к центру площадки
+        if (a.gateQ !== undefined) {
+          const gq = a.gateQ, along = Math.abs(Math.cos(gq)) > 0.5;
+          ctx.fillStyle = paved ? 'rgba(55,56,54,0.9)' : 'rgba(78,76,70,0.8)';
+          if (along) { const s0 = Math.cos(gq) > 0 ? 0 : -hw; ctx.fillRect(s0, -3.5, hw, 7); }
+          else { const s0 = Math.sin(gq) > 0 ? 0 : -hh; ctx.fillRect(-3.5, s0, 7, hh); }
+        }
+        ctx.restore();
+      }
+      if (ppm < 0.5 && a.fp) {
+        // издали — силуэты сооружений (на ближнем масштабе их рисует 3D-слой)
+        ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.angle);
+        for (const [u, v, w, h, k] of a.fp) {
+          const round = k === 'tank' || k === 'tower' || k === 'chimney' || k === 'wt';
+          ctx.fillStyle = k === 'coal' ? '#2a2826' : k === 'tank' || k === 'tower' ? '#c9c7bf' : k === 'oru' ? 'rgba(120,120,112,0.9)' : k === 'pv' ? '#2c3b52' : '#76786f';
+          if (round) { ctx.beginPath(); ctx.arc(u, v, Math.max(w, h) / 2, 0, Math.PI * 2); ctx.fill(); }
+          else ctx.fillRect(u - w / 2, v - h / 2, w, h);
+        }
         ctx.restore();
       }
       if (a.site !== 'bridge') {
@@ -755,24 +773,71 @@ function drawRoads(ctx, world, b, q, ppm) {
   for (const { r } of parts)
     for (const run of bridgeRuns(world, r)) drawParapets(ctx, run, r.width / 2 + 0.8);
 
-  // 3) разметка
+  // 3) разметка: у примыканий разметка второстепенной дороги обрывается стоп-линией, а краевая
+  // линия главной — разрывается (второстепенная дорога не «прорезает» трассу и разделительный газон)
   if (ppm >= 0.9) {
     const white = 'rgba(225,222,210,0.85)';
-    for (const { r, parts: ps } of parts)
-      for (const p of ps) {
+    const J = junctions(world);
+    const near = (r) => J.filter((j) => (j.sub === r || j.main === r) && inQ(q, j.x, j.y, 60));
+    const cut = (line, js, pad) => {
+      if (!js.length) return [line];
+      const out = [];
+      let cur = [];
+      for (const pt of line) {
+        const hit = js.some((j) => Math.hypot(pt[0] - j.x, pt[1] - j.y) < j.r + pad(j));
+        if (hit) { if (cur.length > 1) out.push(cur); cur = []; } else cur.push(pt);
+      }
+      if (cur.length > 1) out.push(cur);
+      return out;
+    };
+    for (const { r, parts: ps } of parts) {
+      const js = near(r);
+      const asSub = js.filter((j) => j.sub === r), asMain = js.filter((j) => j.main === r);
+      for (const p0 of ps) {
+        const fine = resample(p0, 4);
         if (r.type === 'highway') {
+          for (const p of cut(fine, asMain, (j) => j.sub.width / 2 + 2)) for (const s of [-1, 1]) strokeLine(ctx, offsetLine(p, s * 11.6), 0.18, white);
           for (const s of [-1, 1]) {
-            strokeLine(ctx, offsetLine(p, s * 6.8), 0.15, white, [3, 9]);
-            strokeLine(ctx, offsetLine(p, s * 11.6), 0.18, white);
-            strokeLine(ctx, offsetLine(p, s * 2), 0.18, white);
+            strokeLine(ctx, offsetLine(p0, s * 6.8), 0.15, white, [3, 9]);
+            strokeLine(ctx, offsetLine(p0, s * 2), 0.18, white);
           }
         } else if (r.type === 'local' || r.type === 'avenue') {
-          strokeLine(ctx, p, 0.15, white, [3, 6]);
+          for (const p of cut(fine, asSub, () => 3)) strokeLine(ctx, p, 0.15, white, [3, 6]);
         }
+        // стоп-линия на второстепенной дороге перед главной
+        if (r.type !== 'dirt' && r.type !== 'street')
+          for (const j of asSub) {
+            const L = Math.hypot(j.dx, j.dy) || 1, ux = j.dx / L, uy = j.dy / L; // направление от главной дороги вдоль второстепенной
+            const cx = j.x + ux * (j.r + 1.5), cy = j.y + uy * (j.r + 1.5);
+            const hw = r.width / 2 - 0.3;
+            ctx.beginPath(); ctx.moveTo(cx - uy * hw, cy + ux * hw); ctx.lineTo(cx + uy * hw, cy - ux * hw);
+            ctx.lineWidth = 0.4; ctx.strokeStyle = white; ctx.stroke();
+          }
       }
+    }
   }
 }
 
+// Примыкания: конец второстепенной дороги у главной (у каждой — направление вдоль второстепенной)
+function junctions(world) {
+  if (world._junc) return world._junc;
+  const out = [];
+  const list = world.roadList || world.roads.items;
+  for (const r of list) {
+    for (const end of [0, r.line.length - 1]) {
+      const e = r.line[end], nb = r.line[end === 0 ? Math.min(1, r.line.length - 1) : Math.max(0, end - 1)];
+      let best = null, bd = Infinity;
+      for (const m of world.roads.query({ x0: e[0] - 40, y0: e[1] - 40, x1: e[0] + 40, y1: e[1] + 40 })) {
+        if (m === r || ROAD_RANK[m.type] < ROAD_RANK[r.type]) continue;
+        const d = distToLine(e[0], e[1], m.line);
+        if (d < m.width / 2 + 6 && d < bd) { bd = d; best = m; }
+      }
+      if (best) out.push({ x: e[0], y: e[1], r: best.width / 2 + (best.type === 'highway' ? 1 : 0.5), main: best, sub: r, dx: nb[0] - e[0], dy: nb[1] - e[1] });
+    }
+  }
+  world._junc = out;
+  return out;
+}
 // ---------- Здания ----------
 function drawBuildings(ctx, world, q, ppm) {
   const list = world.buildings.query(q);

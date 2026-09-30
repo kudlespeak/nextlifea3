@@ -6,23 +6,26 @@ import { Model, mat, hex, fbm, vnoise, mix } from './mesh3d.js';
 
 const set = (o, c) => { o[0] = c[0]; o[1] = c[1]; o[2] = c[2]; };
 const rect = (x0, x1, y0, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+// Дробная часть без «отрицательного» остатка JS (−0.3 % 1 = −0.3 давало заливку всей половины модели)
+const fr = (v) => v - Math.floor(v);
+const fm = (v, m) => v - Math.floor(v / m) * m;
 // Материалы
 const STEEL = mat('#6c7068');
 const GALV = mat('#9ea39f', { spec: 0.2 }); // оцинковка порталов ОРУ
 const TRGREY = mat('#6f7a74', { fn(o, x, y, z) { mix(o, [40, 45, 42], vnoise(x * 2, y * 2, z * 2) * 0.2); } });
-const PORC = mat('#b58a64', { fn(o, x, y, z) { if ((z * 6) % 1 < 0.35) mix(o, [60, 40, 25], 0.35); } }); // фарфоровые изоляторы
+const PORC = mat('#b58a64', { fn(o, x, y, z) { if (fr(z * 6) < 0.35) mix(o, [60, 40, 25], 0.35); } }); // фарфоровые изоляторы
 const CONCRETE = mat('#9a978d', { fn(o, x, y, z) { mix(o, [70, 68, 62], vnoise(x * 0.8, y * 0.8, z * 0.8) * 0.3); } });
 const CONC_DK = mat('#7b7870', { fn(o, x, y, z) { mix(o, [50, 48, 44], vnoise(x * 0.8, y * 0.8, z * 0.8) * 0.35); } });
-const BRICK = mat('#8d5b44', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && ((z * 3.4) % 1 < 0.12)) mix(o, [200, 190, 170], 0.3); } });
+const BRICK = mat('#8d5b44', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && (fr(z * 3.4) < 0.12)) mix(o, [200, 190, 170], 0.3); } });
 const SOOT = mat('#262320', { fn(o, x, y, z) { mix(o, [80, 60, 40], vnoise(x * 1.5, y * 1.5, z * 1.5) * 0.3); } });
 const RUST = mat('#5b4637');
-const GABION = mat('#8a8575', { fn(o, x, y, z) { const v = vnoise(x * 5, y * 5, z * 5); mix(o, v > 0.5 ? [120, 115, 100] : [60, 58, 50], 0.5); if (((x + y) * 4) % 1 < 0.08 || (z * 4) % 1 < 0.08) mix(o, [40, 40, 38], 0.6); } });
+const GABION = mat('#8a8575', { fn(o, x, y, z) { const v = vnoise(x * 5, y * 5, z * 5); mix(o, v > 0.5 ? [120, 115, 100] : [60, 58, 50], 0.5); if (fr((x + y) * 4) < 0.08 || fr(z * 4) < 0.08) mix(o, [40, 40, 38], 0.6); } });
 const EARTH = mat('#6d6a45', { fn(o, x, y, z) { mix(o, [90, 80, 50], vnoise(x * 0.5, y * 0.5, z) * 0.4); } });
 const COAL = mat('#232220', { fn(o, x, y, z) { mix(o, [60, 58, 55], vnoise(x * 3, y * 3, z * 3) * 0.3); } });
 const WHITE = mat('#d8d6cc', { fn(o, x, y, z) { mix(o, [150, 148, 140], vnoise(x * 0.3, y * 0.3, z * 0.3) * 0.25); } });
-const TANKW = mat('#c9c8bf', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && ((Math.atan2(y, x) * 8) % 1 < 0.05)) mix(o, [90, 90, 85], 0.4); } });
+const TANKW = mat('#c9c8bf', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && (fr(Math.atan2(y, x) * 8) < 0.05)) mix(o, [90, 90, 85], 0.4); } });
 const GLASS = mat('#2a3842', { spec: 0.7, ao: false });
-const ROOF = mat('#6a6d6b', { fn(o, x, y) { if ((x * 0.5) % 1 < 0.06) mix(o, [40, 40, 40], 0.3); } });
+const ROOF = mat('#6a6d6b', { fn(o, x, y) { if (fr(x * 0.5) < 0.06) mix(o, [40, 40, 40], 0.3); } });
 const BLACK = mat('#141414');
 
 // ------------------------------------------------------------ Трансформатор
@@ -38,7 +41,7 @@ function transformer(M, w, h, st, big) {
   const tank = st === 'damaged' ? SOOT : TRGREY;
   M.box(-w / 2 + 0.6, w / 2 - 0.6, -h / 2 + 1.1, h / 2 - 1.1, 0.3, H, tank);
   // Радиаторы по бокам (рёбра)
-  const fins = mat('#5f6964', { fn(o, x) { if ((x * 3) % 1 < 0.4) mix(o, [25, 28, 26], 0.5); } });
+  const fins = mat('#5f6964', { fn(o, x) { if (fr(x * 3) < 0.4) mix(o, [25, 28, 26], 0.5); } });
   for (const sg of [1, -1]) M.box(-w / 2 + 1, w / 2 - 1, sg > 0 ? h / 2 - 1.1 : -h / 2, sg > 0 ? h / 2 : -h / 2 + 1.1, 0.6, H - 0.4, st === 'damaged' ? SOOT : fins);
   // Расширитель (консерватор) сверху и вводы с изоляторами
   M.cylX(0, H + 0.7, 0.45, 0.45, -w / 2 + 0.8, -w / 2 + 3, STEEL, 10);
@@ -62,7 +65,7 @@ function shelter(M, w, h, level, big) {
       M.box(x0, x1, y0, y1, 0, H * 0.75, GABION);
   } else if (level >= 2) {
     // Бетонный «саркофаг» с перекрытием: сверху видно плиту, вводы выведены вбок
-    M.box(-w / 2 - 2.2, w / 2 + 2.2, -h / 2 - 2.2, h / 2 + 2.2, 0, H + 0.6, CONCRETE, mat('#8d8a80', { fn(o, x, y) { if (((x + 20) * 0.5) % 1 < 0.05 || ((y + 20) * 0.5) % 1 < 0.05) mix(o, [50, 50, 45], 0.4); } }));
+    M.box(-w / 2 - 2.2, w / 2 + 2.2, -h / 2 - 2.2, h / 2 + 2.2, 0, H + 0.6, CONCRETE, mat('#8d8a80', { fn(o, x, y) { if (fr((x + 20) * 0.5) < 0.05 || fr((y + 20) * 0.5) < 0.05) mix(o, [50, 50, 45], 0.4); } }));
     for (let i = 0; i < 3; i++) M.cylZ(-w / 2 + 2 + i * 2, h / 2 + 2.6, 0.18, 0.12, 0, H + 2.5, PORC, 8);
   }
 }
@@ -106,7 +109,7 @@ function building(M, w, h, H, st, wall = BRICK, roof = ROOF) {
   }
   const win = mat(wall.c, { fn(o, x, y, z, n) {
     wall.fn?.(o, x, y, z, n);
-    if (Math.abs(n[2]) < 0.5 && ((z - 1) % 3.3) > 1 && ((z - 1) % 3.3) < 2.4 && (((Math.abs(n[0]) > 0.5 ? y : x) * 0.4) % 1) < 0.5 && z < H - 1) set(o, st === 'damaged' ? [20, 18, 16] : [52, 66, 78]);
+    if (Math.abs(n[2]) < 0.5 && (fm(z - 1, 3.3)) > 1 && (fm(z - 1, 3.3)) < 2.4 && (fr((Math.abs(n[0]) > 0.5 ? y : x) * 0.4)) < 0.5 && z < H - 1) set(o, st === 'damaged' ? [20, 18, 16] : [52, 66, 78]);
   } });
   M.box(-w / 2, w / 2, -h / 2, h / 2, 0, H, win, st === 'damaged' ? SOOT : roof);
 }
@@ -121,7 +124,7 @@ function tppUnit(M, w, h, st) {
   }
   const wall = mat('#a8a497', { fn(o, x, y, z, n) {
     mix(o, [120, 118, 110], vnoise(x * 0.2, y * 0.2, z * 0.2) * 0.2);
-    if (Math.abs(n[2]) < 0.5 && z > 8 && z < H - 3 && ((Math.abs(n[0]) > 0.5 ? y : x) * 0.25) % 1 < 0.55) set(o, st === 'damaged' ? [25, 22, 20] : [70, 88, 100]);
+    if (Math.abs(n[2]) < 0.5 && z > 8 && z < H - 3 && fr((Math.abs(n[0]) > 0.5 ? y : x) * 0.25) < 0.55) set(o, st === 'damaged' ? [25, 22, 20] : [70, 88, 100]);
   } });
   M.box(-w / 2, w / 2, -h / 2, h / 2 - 22, 0, H, wall, st === 'damaged' ? SOOT : ROOF); // машинный зал
   M.box(-w / 2 + 4, w / 2 - 4, h / 2 - 22, h / 2, 0, H + 14, mat('#8f8b80'), st === 'damaged' ? SOOT : mat('#767470')); // котельная (выше)
@@ -162,7 +165,7 @@ function oilTank(M, w, st) {
     M.seg([-r, 0, 5], [r * 0.3, r * 0.4, 1], 0.6, 0.3, RUST);
     return;
   }
-  M.cylZ(0, 0, r, r, 0, H, st === 'damaged' ? SOOT : TANKW, 20, mat('#a9a8a0', { fn(o, x, y) { if ((Math.atan2(y, x) * 4 + 8) % 1 < 0.04) mix(o, [60, 60, 55], 0.5); } }));
+  M.cylZ(0, 0, r, r, 0, H, st === 'damaged' ? SOOT : TANKW, 20, mat('#a9a8a0', { fn(o, x, y) { if (fr(Math.atan2(y, x) * 4 + 8) < 0.04) mix(o, [60, 60, 55], 0.5); } }));
   M.dome(0, 0, H, r, r, 1.5, mat('#b4b3aa'), 2, 20);
   M.seg([r * 0.7, -r * 0.7, 0], [r * 0.95, -r * 0.3, H], 0.4, 0.4, STEEL); // лестница
   // Обвалование (земляной вал) — общее для площадки, у каждого — кольцо
@@ -190,7 +193,7 @@ function hangar(M, w, h, st) {
   for (let i = 0; i < n; i++) {
     const a0 = Math.PI * (i / n), a1 = Math.PI * ((i + 1) / n);
     const y0 = -Math.cos(a0) * h / 2, y1 = -Math.cos(a1) * h / 2;
-    M.plate([[-w / 2, y0, Math.sin(a0) * h * 0.45], [w / 2, y0, Math.sin(a0) * h * 0.45], [w / 2, y1, Math.sin(a1) * h * 0.45], [-w / 2, y1, Math.sin(a1) * h * 0.45]], st === 'damaged' ? SOOT : mat('#7d8577', { fn(o, x) { if ((x * 0.8) % 1 < 0.08) mix(o, [40, 44, 40], 0.4); } }), [0, -Math.cos((a0 + a1) / 2) * 0.9, Math.sin((a0 + a1) / 2)]);
+    M.plate([[-w / 2, y0, Math.sin(a0) * h * 0.45], [w / 2, y0, Math.sin(a0) * h * 0.45], [w / 2, y1, Math.sin(a1) * h * 0.45], [-w / 2, y1, Math.sin(a1) * h * 0.45]], st === 'damaged' ? SOOT : mat('#7d8577', { fn(o, x) { if (fr(x * 0.8) < 0.08) mix(o, [40, 44, 40], 0.4); } }), [0, -Math.cos((a0 + a1) / 2) * 0.9, Math.sin((a0 + a1) / 2)]);
   }
   void rings;
 }
@@ -228,8 +231,8 @@ function launcherTruck(M, side, st) {
 // ------------------------------------------------------------ Гражданские здания логистики и торговли
 function warehouse(M, w, h, st) {
   // Складской корпус класса А: светлые сэндвич-панели, доки для фур вдоль длинной стороны
-  const wall = mat('#c9ccc8', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && ((Math.abs(n[0]) > 0.5 ? y : x) * 0.9) % 1 < 0.05) mix(o, [120, 125, 125], 0.4); if (z < 1.2) mix(o, [90, 95, 95], 0.4); } });
-  building(M, w, h, 11, st, wall, mat('#8f9496', { fn(o, x, y) { if ((y * 0.35) % 1 < 0.08) mix(o, [70, 72, 72], 0.4); } }));
+  const wall = mat('#c9ccc8', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && fr((Math.abs(n[0]) > 0.5 ? y : x) * 0.9) < 0.05) mix(o, [120, 125, 125], 0.4); if (z < 1.2) mix(o, [90, 95, 95], 0.4); } });
+  building(M, w, h, 11, st, wall, mat('#8f9496', { fn(o, x, y) { if (fr(y * 0.35) < 0.08) mix(o, [70, 72, 72], 0.4); } }));
   if (st === 'destroyed') return;
   const n = Math.max(3, Math.floor(w / 9));
   for (let i = 0; i < n; i++) {
@@ -241,7 +244,7 @@ function warehouse(M, w, h, st) {
 function canopy(M, w, h, st) {
   if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 1, SOOT); return; }
   for (const x of [-w / 2 + 2, 0, w / 2 - 2]) for (const y of [-h / 2 + 2, h / 2 - 2]) M.seg([x, y, 0], [x, y, 6.5], 0.5, 0.5, mat('#9aa0a2'));
-  M.box(-w / 2, w / 2, -h / 2, h / 2, 6.5, 7.4, mat('#e0e2de'), mat('#d8dcd6', { fn(o, x) { if ((x * 0.2) % 1 < 0.1) mix(o, [40, 90, 160], 0.6); } }));
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 6.5, 7.4, mat('#e0e2de'), mat('#d8dcd6', { fn(o, x) { if (fr(x * 0.2) < 0.1) mix(o, [40, 90, 160], 0.6); } }));
   for (const y of [-h / 4, h / 4]) M.box(-w / 2 + 4, w / 2 - 4, y - 0.6, y + 0.6, 0, 0.9, CONC_DK); // островки
 }
 // Навес АЗС: плоская кровля с фирменным фризом, колонки на островках
@@ -269,10 +272,10 @@ function mall(M, w, h, st) {
 }
 function kiosk(M, w, h, st) {
   building(M, w, h, 3.6, st, mat('#d5cbb2', { fn(o, x, y, z, n) { if (n[1] > 0.5 && z > 1 && z < 2.6 && Math.abs(x) < w * 0.3) set(o, [70, 95, 110]); } }), mat('#7a5a44'));
-  if (st !== 'destroyed') M.loft([[2.8, rect(-w / 2, w / 2, h / 2, h / 2 + 1.8)], [3.2, rect(-w / 2, w / 2, h / 2, h / 2 + 0.3)]], mat('#3f7d4a', { fn(o, x) { if ((x * 1.2) % 1 < 0.5) set(o, [225, 225, 215]); } }));
+  if (st !== 'destroyed') M.loft([[2.8, rect(-w / 2, w / 2, h / 2, h / 2 + 1.8)], [3.2, rect(-w / 2, w / 2, h / 2, h / 2 + 0.3)]], mat('#3f7d4a', { fn(o, x) { if (fr(x * 1.2) < 0.5) set(o, [225, 225, 215]); } }));
 }
 function garage(M, w, h, st) {
-  building(M, w, h, 7, st, mat('#b7ac9a', { fn(o, x, y, z, n) { if (n[1] > 0.5 && z < 5 && ((x + w / 2) / (w / 4)) % 1 > 0.12) set(o, st === 'ok' ? [165, 40, 36] : [25, 22, 20]); } }), mat('#6d6f6c'));
+  building(M, w, h, 7, st, mat('#b7ac9a', { fn(o, x, y, z, n) { if (n[1] > 0.5 && z < 5 && fr((x + w / 2) / (w / 4)) > 0.12) set(o, st === 'ok' ? [165, 40, 36] : [25, 22, 20]); } }), mat('#6d6f6c'));
   if (st !== 'destroyed') M.seg([w / 2 - 3, -h / 2 + 3, 7], [w / 2 - 3, -h / 2 + 3, 16], 0.8, 0.8, mat('#b7ac9a')); // башня для рукавов
 }
 
@@ -294,7 +297,7 @@ export function buildVehicle(kind, side, variant = 0) {
     wheelsRow(M, [5.0, 3.3, -4.2, -5.5, -6.8], 1.25, 0.52);
     M.box(1.8, 6.5, -0.5, 0.5, 0.6, 1.1, mat('#2b2b2b'));
     cab(M, 4.4, 6.7, 1.25, ['#e8e8e4', '#1f4f8f', '#a83a2a', '#3a3a3a'][variant % 4], 3.6);
-    M.box(-8.2, 5.0, -1.28, 1.28, 1.2, 4.0, mat(TRAILER[variant % TRAILER.length], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && (x * 0.6) % 1 < 0.04) mix(o, [0, 0, 0], 0.15); } }));
+    M.box(-8.2, 5.0, -1.28, 1.28, 1.2, 4.0, mat(TRAILER[variant % TRAILER.length], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && fr(x * 0.6) < 0.04) mix(o, [0, 0, 0], 0.15); } }));
   } else if (kind === 'van') {
     wheelsRow(M, [2.2, -1.8], 1.1, 0.45);
     cab(M, 1.6, 3.4, 1.1, ['#e8e8e4', '#2f5d9e', '#d9d5c7'][variant % 3], 2.8);
@@ -331,7 +334,7 @@ export function buildVehicle(kind, side, variant = 0) {
     M.loft([[1.0, rect(1.4, 3.8, -1.2, 1.2)], [3.0, rect(1.5, 3.55, -1.15, 1.15)]], red);
     M.plate([[3.81, -1.0, 1.9], [3.81, 1.0, 1.9], [3.6, 1.0, 2.8], [3.6, -1.0, 2.8]], GLASS, [1, 0, 0.3]);
     M.box(-3.8, 1.4, -1.25, 1.25, 0.9, 3.0, red);
-    M.box(-3.6, 1.2, -0.45, 0.45, 3.0, 3.35, mat('#c9ccc8', { fn(o, x) { if ((x * 2.5) % 1 < 0.2) mix(o, [60, 60, 60], 0.5); } })); // лестница
+    M.box(-3.6, 1.2, -0.45, 0.45, 3.0, 3.35, mat('#c9ccc8', { fn(o, x) { if (fr(x * 2.5) < 0.2) mix(o, [60, 60, 60], 0.5); } })); // лестница
     M.box(2.0, 3.0, -0.8, 0.8, 3.0, 3.2, mat('#3a6fd8', { ao: false, glow: 30 })); // мигалки
   }
   return M;
@@ -526,7 +529,7 @@ function pickupBig(M, side) {
 function radarTurret(M) {
   // Вращающаяся антенна: решётка на мачте
   M.seg([0, 0, 2.6], [0, 0, 5], 0.35, 0.35, mat('#6f736b'));
-  M.box(-0.3, 0.3, -2.6, 2.6, 4.6, 7.2, mat('#5c6356', { fn(o, x, y, z) { if (((y + 3) * 3) % 1 < 0.15 || ((z * 3) % 1) < 0.15) mix(o, [25, 28, 24], 0.45); } }));
+  M.box(-0.3, 0.3, -2.6, 2.6, 4.6, 7.2, mat('#5c6356', { fn(o, x, y, z) { if (fr((y + 3) * 3) < 0.15 || (fr(z * 3)) < 0.15) mix(o, [25, 28, 24], 0.45); } }));
 }
 function acousticPost(M) {
   M.seg([0, 0, 0], [0, 0, 6], 0.12, 0.12, mat('#8a8d88'));

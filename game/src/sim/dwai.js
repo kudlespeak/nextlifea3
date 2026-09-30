@@ -2,11 +2,11 @@
 // разведывает позиции ПВО противника, выбивает их барражирующими боеприпасами и наносит
 // массированные удары волнами (ложные цели + ударные), обходя известные зоны ПВО.
 
-import { DW_AD, DW_DRONES, COMP } from './dronewar.js';
+import { DW_AD, DW_DRONES, COMP, GTU } from './dronewar.js';
 
-const VALUE = { tpp: 14, ps330: 12, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5 };
-const WANT_COVER = { tpp: 7, ps330: 6, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2 };
-const TARGET_COMPS = { tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const VALUE = { tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
+const WANT_COVER = { tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
+const TARGET_COMPS = { hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 export class DroneWarAI {
   constructor(sim, side, difficulty = 'normal') {
@@ -40,7 +40,7 @@ export class DroneWarAI {
     }
     const pend = g.pendingCost(this.side);
     // Резерв на ремонт: не тратить последнее, пока энергосистема повреждена
-    this.reserve = Math.min(260, 25 + pend.n * 25);
+    this.reserve = Math.min(300, 30 + pend.sum * 0.6); // на оборудование взамен уничтоженного
     this.defense();
     if (t > this.next.shelter) { this.next.shelter = t + 90; this.shelters(); }
     if (t > this.next.recon) { this.next.recon = t + 200 / this.k + this.sim.rng.float(0, 80); this.recon(); }
@@ -52,7 +52,11 @@ export class DroneWarAI {
       this.strike();
     }
     this.nets();
-    if (S.points > 700 && S.crews.length < 5 && this.can('def', 60) && !this.g.buyCrew(this.side)) this.pay('def', 60);
+    // Дефицит на подстанции держится — везём мобильную ГТУ
+    for (const ps of g.objs(this.side, 'ps110')) {
+      if ((ps.shed || 0) >= 1 && (ps.demand || 0) - (ps.avail || 0) > 20 && this.can('def', GTU.cost) && !g.buyGTU(this.side, ps.id)) { this.pay('def', GTU.cost); break; }
+    }
+    if (S.queue.length > S.crews.length && S.crews.length < 20 && this.can('def', 60) && !this.g.buyCrew(this.side)) this.pay('def', 60);
     if (S.spare === 0 && this.can('def', 150) && !this.g.buySpare(this.side)) this.pay('def', 150);
     this.lastPts = S.points;
   }
