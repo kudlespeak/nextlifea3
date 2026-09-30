@@ -261,6 +261,35 @@ function fuelCanopy(M, w, h, st, side) {
   }
   if (st === 'damaged') M.box(-w / 2, -w / 2 + w * 0.4, -h / 2, h / 2, 5.4, 6.4, SOOT);
 }
+// Секция машзала ГЭС: бетонный корпус, на крыше — люки над гидроагрегатами, подкрановые пути
+function hydroUnit(M, w, h, st) {
+  if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 8, SOOT); M.box(-w / 2, -w / 2 + 3, -h / 2, h / 2, 0, 16, CONC_DK); return; }
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 16, CONCRETE, mat('#8e8b82', { fn(o, x, y) { const r = Math.hypot(x, y + 2); if (r > 5 && r < 6.2) mix(o, [60, 60, 56], 0.5); if (Math.abs(y - h / 2 + 3) < 0.4) mix(o, [50, 50, 48], 0.5); } }));
+  M.cylZ(0, -2, 5.5, 5.5, 16, 16.6, st === 'damaged' ? SOOT : mat('#6f746f'), 16); // люк над агрегатом
+  M.box(-w / 2, w / 2, h / 2, h / 2 + 5, 0, 5, CONC_DK); // водоотводящий тракт (нижний бьеф)
+}
+// Ветроустановка: башня 90 м и гондола (лопасти рисуются отдельно, вращаются)
+function windTurbine(M, st) {
+  const H = st === 'destroyed' ? 30 : 90;
+  M.cylZ(0, 0, 2.2, 1.4, 0, H, st === 'destroyed' ? SOOT : WHITE, 12);
+  M.cylZ(0, 0, 5, 5, 0, 1, CONCRETE, 12);
+  if (st !== 'destroyed') M.box(-3, 7, -1.6, 1.6, H - 1, H + 2.4, st === 'damaged' ? SOOT : WHITE);
+  else M.seg([0, 0, H], [18, 6, 1], 1.2, 0.8, SOOT); // сломанная башня
+}
+// Поле солнечных панелей: ряды наклонных столов
+function pvField(M, w, h, st) {
+  const rows = Math.floor(h / 6);
+  const panel = mat('#1d2a44', { spec: 0.6, fn(o, x) { if (fr(x * 0.5) < 0.04) mix(o, [180, 190, 200], 0.4); } });
+  for (let i = 0; i < rows; i++) {
+    const y = -h / 2 + 3 + i * 6;
+    const broken = (st === 'destroyed' && i % 3 !== 2) || (st === 'damaged' && i % 4 === 1);
+    if (broken) { M.box(-w / 2, w / 2, y - 1.2, y + 1.2, 0, 0.4, SOOT); continue; }
+    M.plate([[-w / 2, y - 1.6, 0.8], [w / 2, y - 1.6, 0.8], [w / 2, y + 1.6, 2.4], [-w / 2, y + 1.6, 2.4]], panel, [0, -0.45, 0.9]);
+  }
+}
+function inverter(M, w, h, st) {
+  building(M, w, h, 2.8, st, mat('#d9dbd6', { fn(o, x, y, z, n) { if (Math.abs(n[1]) > 0.5 && z > 0.6 && z < 2.2 && fr(x * 1.5) < 0.3) mix(o, [90, 95, 95], 0.5); } }), mat('#c9ccc8'));
+}
 function mall(M, w, h, st) {
   const wall = mat('#b9b2a4', { fn(o, x, y, z, n) {
     if (Math.abs(n[2]) < 0.5 && z > 7 && z < 9) set(o, [170, 40, 40]); // вывеска
@@ -324,6 +353,13 @@ export function buildVehicle(kind, side, variant = 0) {
     for (const x of [1.35, -1.35]) for (const sg of [1, -1]) M.cylY(x, 0.33, 0.33, sg > 0 ? 0.62 : -0.85, sg > 0 ? 0.85 : -0.62, mat('#161616'), 8);
     M.box(-2.2, 2.2, -0.86, 0.86, 0.3, suv ? 1.05 : 0.85, cm);
     M.loft([[suv ? 1.05 : 0.85, rect(-1.5, 1.0, -0.82, 0.82)], [suv ? 1.7 : 1.42, rect(-1.2, 0.55, -0.72, 0.72)]], mat('#2a3440', { spec: 0.6 }), cm);
+  } else if (kind === 'gtu') {
+    // Мобильная газотурбинная установка: полуприцеп с кожухом турбины, выхлопная труба, модуль управления
+    wheelsRow(M, [6.2, 4.6, -4.5, -5.8, -7.1], 1.25, 0.52);
+    M.box(-8.5, 7.5, -1.3, 1.3, 1.1, 1.5, mat('#3b3d3a'));
+    M.box(-8, 3, -1.25, 1.25, 1.5, 4.2, mat(side === 'red' ? '#c9c2b0' : '#d6d8d2', { fn(o, x, y, z, n) { if (Math.abs(n[1]) > 0.5 && fr(x * 0.8) < 0.08) mix(o, [80, 80, 78], 0.4); } }));
+    M.cylZ(-6.5, 0, 0.9, 0.8, 4.2, 7.4, mat('#6d6f6c'), 10); // выхлоп
+    M.box(3.2, 7.4, -1.25, 1.25, 1.5, 3.6, mat('#4d6a8a'));
   } else if (kind === 'bus') {
     const cm = mat(['#e3c23a', '#d9d9d4', '#3a6fb0'][variant % 3], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && z > 1.5 && z < 2.5) set(o, [40, 52, 62]); } });
     wheelsRow(M, [3.2, -3.0], 1.2, 0.5);
@@ -354,8 +390,8 @@ function droneGeran3(M) {
   droneShahed(M, 1, '#2b2d2c');
   M.cylX(0, 0.62, 0.18, 0.2, -1.8, -0.4, mat('#555855'), 10); // ТРД сверху
 }
-function droneFP1(M, k = 1) {
-  const body = mat('#b0b4ad', { fn(o, x, y, z) { mix(o, [80, 84, 80], vnoise(x * 3, y * 3, z * 3) * 0.2); } });
+function droneFP1(M, k = 1, color = '#b0b4ad') {
+  const body = mat(color, { fn(o, x, y, z) { mix(o, [80, 84, 80], vnoise(x * 3, y * 3, z * 3) * 0.2); } });
   M.cylX(0, 0.35 * k, 0.2 * k, 0.16 * k, -1.8 * k, 1.5 * k, body, 10);
   M.dome(1.5 * k, 0, 0.35 * k - 0.16 * k, 0.3 * k, 0.16 * k, 0.16 * k, body, 2, 8);
   M.box(0.1 * k, 0.6 * k, -2.2 * k, 2.2 * k, 0.48 * k, 0.55 * k, body); // прямое крыло
@@ -363,8 +399,8 @@ function droneFP1(M, k = 1) {
   M.loft([[0.4 * k, rect(-1.8 * k, -1.4 * k, -0.03, 0.03)], [0.9 * k, rect(-1.8 * k, -1.65 * k, -0.03, 0.03)]], body);
   M.plate([[-1.85 * k, -0.02, 0.0], [-1.85 * k, 0.02, 0.0], [-1.85 * k, 0.02, 0.7 * k], [-1.85 * k, -0.02, 0.7 * k]], BLACK, [-1, 0, 0]);
 }
-function droneLyutyi(M) {
-  const body = mat('#c7c9c2');
+function droneLyutyi(M, color = '#c7c9c2') {
+  const body = mat(color);
   M.cylX(0, 0.45, 0.28, 0.2, -2.0, 1.4, body, 10);
   M.box(-0.2, 0.5, -3.3, 3.3, 0.72, 0.8, body); // верхнеплан
   M.seg([-0.2, 0, 0.55], [-0.2, 0, 0.75], 0.15, 0.3, body);
@@ -372,8 +408,8 @@ function droneLyutyi(M) {
   M.loft([[0.45, rect(-2.3, -1.7, -0.03, 0.03)], [0.95, rect(-2.3, -2.05, -0.03, 0.03)]], body);
   M.plate([[-2.05, -0.02, 0.1], [-2.05, 0.02, 0.1], [-2.05, 0.02, 0.8], [-2.05, -0.02, 0.8]], BLACK, [-1, 0, 0]);
 }
-function droneFP2(M) {
-  const body = mat('#8e9489');
+function droneFP2(M, color = '#8e9489') {
+  const body = mat(color);
   M.cylX(0, 0.5, 0.32, 0.26, -2.0, 1.8, body, 12);
   M.dome(1.8, 0, 0.24, 0.45, 0.26, 0.26, body, 2, 10);
   M.box(-0.2, 0.55, -2.6, 2.6, 0.55, 0.62, body);
@@ -381,8 +417,8 @@ function droneFP2(M) {
   M.box(-2.0, -1.6, -0.5, 0.5, 0.5, 0.55, body);
   M.plate([[-2.05, -0.02, 0.05], [-2.05, 0.02, 0.05], [-2.05, 0.02, 0.95], [-2.05, -0.02, 0.95]], BLACK, [-1, 0, 0]);
 }
-function droneBober(M) {
-  const body = mat('#9aa08f');
+function droneBober(M, color = '#9aa08f') {
+  const body = mat(color);
   // Утка с треугольным крылом
   M.cylX(0, 0.3, 0.16, 0.14, -1.3, 1.3, body, 8);
   M.loft([[0.28, [[0.2, 0], [-1.2, 1.3], [-1.3, 1.3], [-1.3, -1.3], [-1.2, -1.3]]], [0.33, [[0.15, 0], [-1.15, 1.25], [-1.25, 1.25], [-1.25, -1.25], [-1.15, -1.25]]]], body);
@@ -425,11 +461,44 @@ function droneInterceptor(M, side) {
   M.dome(0.45, 0, 0.18, 0.12, 0.07, 0.07, body, 2, 8);
   for (const [x, y] of [[0.2, 0.22], [0.2, -0.22], [-0.25, 0.22], [-0.25, -0.22]]) { M.seg([x * 0.3, y * 0.3, 0.25], [x, y, 0.27], 0.03, 0.02, BLACK); M.cylZ(x, y, 0.12, 0.12, 0.27, 0.28, mat('#1a1a1a'), 10); }
 }
+// «Охотник»: «Герань» с гиростабилизированной камерой под носом
+function droneHunter(M, color) {
+  droneShahed(M, 1, color);
+  M.dome(0.9, 0, 0.02, 0.22, 0.22, 0.2, mat('#1b1d20', { spec: 0.6 }), 2, 10);
+}
+// «Молния-2»: простое крыло с двумя балками, толкающий винт
+function droneMolniya(M) {
+  const body = mat('#7a7f6c');
+  M.box(-0.2, 0.25, -1.1, 1.1, 0.25, 0.3, body);
+  M.cylX(0, 0.2, 0.1, 0.08, -0.4, 0.5, body, 8);
+  for (const sg of [1, -1]) M.box(-1.2, -0.1, sg * 0.35 - 0.03, sg * 0.35 + 0.03, 0.22, 0.26, body);
+  M.box(-1.25, -1.05, -0.4, 0.4, 0.3, 0.33, body);
+  M.plate([[-0.45, -0.02, 0.05], [-0.45, 0.02, 0.05], [-0.45, 0.02, 0.4], [-0.45, -0.02, 0.4]], BLACK, [-1, 0, 0]);
+}
+// «Сакер»: небольшой самолёт с V-образным хвостом и камерой
+function droneSaker(M) {
+  const body = mat('#5d6557');
+  M.cylX(0, 0.3, 0.14, 0.11, -0.9, 0.9, body, 8);
+  M.box(-0.1, 0.25, -1.3, 1.3, 0.4, 0.44, body);
+  for (const sg of [1, -1]) M.plate([[-0.9, 0, 0.35], [-0.65, 0, 0.35], [-0.8, sg * 0.45, 0.7], [-0.95, sg * 0.45, 0.7]], body, [0, -sg * 0.7, 0.7]);
+  M.dome(0.7, 0, 0.12, 0.12, 0.12, 0.1, mat('#15171a', { spec: 0.6 }), 2, 8);
+}
+// Цветовые варианты: серые, ночные чёрные, светлые; у западных — серо-зелёные и тёмные
+const PAL = {
+  shahed: ['#8a8f8a', '#26282a', '#b9b7ad'], geran_h: ['#5c6154', '#26282a', '#8a8f8a'], gerbera: ['#d9d6c8', '#c7c3b4', '#e2e0d4'],
+  fp1: ['#b0b4ad', '#6f7a5f', '#3d4148'], lyutyi: ['#c7c9c2', '#8d9486', '#e0e0da'], fp2: ['#8e9489', '#5f6a55', '#40443e'], bober: ['#9aa08f', '#6c7560', '#3e423c'], grif: ['#cfd2cc', '#b8bcb4', '#dcdcd4'],
+};
 const DRONE_BUILD = {
-  shahed: (M) => droneShahed(M), geran3: droneGeran3, gerbera: droneGerbera, fp1: (M) => droneFP1(M), fp2: droneFP2, lyutyi: droneLyutyi, bober: droneBober,
+  shahed: (M, c) => droneShahed(M, 1, c), geran3: droneGeran3, gerbera: (M, c) => droneShahed(M, 0.72, c), fp1: (M, c) => droneFP1(M, 1, c), fp2: droneFP2, lyutyi: droneLyutyi, bober: droneBober,
+  geran_h: droneHunter, molniya: droneMolniya, saker: droneSaker, grif: (M, c) => droneFP1(M, 0.85, c),
   lancet: (M) => droneLancet(M), warmate: (M) => droneLancet(M, 0.8), orlan: droneOrlan, leleka: droneLeleka, sting: (M) => droneInterceptor(M, 'blue'), elka: (M) => droneInterceptor(M, 'red'),
 };
-export function buildDrone(type) { const M = new Model(); (DRONE_BUILD[type] || droneShahed)(M); return M; }
+export function buildDrone(type, variant = 0) {
+  const M = new Model();
+  const pal = PAL[type];
+  (DRONE_BUILD[type] || droneShahed)(M, pal ? pal[variant % pal.length] : undefined);
+  return M;
+}
 
 // ------------------------------------------------------------ Узлы по типу
 export function buildComp(k, w, h, st, shelterLevel, side) {
@@ -452,6 +521,10 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'hall': warehouse(M, w, h, st); break;
     case 'canopy': canopy(M, w, h, st); break;
     case 'fcanopy': fuelCanopy(M, w, h, st, side); break;
+    case 'hgen': hydroUnit(M, w, h, st); break;
+    case 'wt': windTurbine(M, st); break;
+    case 'pv': pvField(M, w, h, st); break;
+    case 'inv': inverter(M, w, h, st); break;
     case 'mall': mall(M, w, h, st); break;
     case 'kiosk': kiosk(M, w, h, st); break;
     case 'garage': garage(M, w, h, st); break;

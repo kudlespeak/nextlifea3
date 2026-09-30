@@ -13,7 +13,7 @@
 import { M } from '../spatial.js';
 import { resample } from '../geom.js';
 
-const PACE_V = 1.5; // тот же темп, что у дронов (см. PACE в dronewar.js)
+const PACE_V = 1.8; // тот же темп, что у дронов (см. PACE в dronewar.js)
 
 const STEP = 60;
 export const VEH = {

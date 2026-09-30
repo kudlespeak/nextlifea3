@@ -1,7 +1,7 @@
 // Интерфейс режима «Война дронов»: левая панель (энергосистема, ПВО, удары, ремонт),
 // карточка выбранного объекта / позиции ПВО, клики по карте, подсказки.
 
-import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef } from './sim/dronewar.js';
+import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef, GTU, PACE } from './sim/dronewar.js';
 import { VEH } from './sim/dwlogi.js';
 const CREW_ST = { travel: 'едет к объекту', waitfire: 'ждёт, пока потушат', work: 'ремонтирует' };
 
@@ -47,7 +47,7 @@ export class DWUI {
       for (const k of dronesOf(side)) {
         const D = DW_DRONES[k];
         const cost = g.droneCost(side, k);
-        h += `<div class="dw-row${this.state.mode === 'strike:' + k ? ' sel' : ''}" data-drone="${k}" title="${esc(D.desc)}"><div><b>${esc(D.name)}</b><small>${kmh(D.speed)} км/ч${D.wh ? ` · БЧ ${D.wh} кг` : ''}${D.cls === 'decoy' ? ' · ложная цель' : D.cls === 'recon' ? ' · разведка' : D.cls === 'loiter' ? ' · по ПВО' : ''}</small></div><span class="cost">${cost.toFixed(0)}</span></div>`;
+        h += `<div class="dw-row${this.state.mode === 'strike:' + k ? ' sel' : ''}" data-drone="${k}" title="${esc(D.desc)}"><div><b>${esc(D.name)}</b><small>${kmh(D.speed)} км/ч${D.wh ? ` · БЧ ${D.wh} кг` : ''}${D.cls === 'decoy' ? ' · ложная цель' : D.cls === 'recon' ? ' · разведка' : D.cls === 'loiter' ? ' · по ПВО и машинам' : D.cls === 'hunter' ? ' · охотник с ИИ: клик по району дорог' : ''}</small></div><span class="cost">${cost.toFixed(0)}</span></div>`;
       }
       const wave = side === 'red' ? { a: 'gerbera', b: 'shahed', label: 'Волна: ложные цели + «Герани»' } : { a: 'bober', b: 'lyutyi', label: 'Рой: «Бобры» + «Лютые»' };
       h += `<div class="dw-row${this.state.mode === 'wave' ? ' sel' : ''}" data-wave="1"><div><b>${wave.label}</b><small>по ${this.state.count} каждого типа, одним кликом</small></div><span class="cost">${Math.round((g.droneCost(side, wave.a) + g.droneCost(side, wave.b)) * this.state.count)}</span></div>`;
@@ -106,14 +106,30 @@ export class DWUI {
         const parts = [['свет', P.power], ['мосты', P.bridges], ['пустые магазины и АЗС', P.shops], ['пожары', P.fires], ['погранпереход', P.border]].filter(([, v]) => v > 0.05);
         h += `<div class="dw-income">Устойчивость тыла в минуту: ${parts.length ? parts.map(([n, v]) => `<span class="bad">${n} −${v.toFixed(1)}</span>`).join(' · ') : 'потерь нет'}${P.regen ? ` · <span style="color:var(--ok)">восстановление +${P.regen.toFixed(1)}</span>` : ''}. Разрушения узлов и удары по директиве снимают устойчивость сразу.</div>`;
       }
-      h += cities.map((c, i) => cityRow(i)).join('');
+      // Генерация по источникам
+      const G = S.genBy || {};
+      const src = [['tpp', 'ТЭС'], ['hpp', 'ГЭС'], ['chp', 'ТЭЦ'], ['wpp', `ВЭС (ветер ${Math.round((g.wind ?? 0.6) * 100)}%)`], ['spp', 'СЭС (солнце)'], ['import', 'импорт'], ['gtu', 'мобильные ГТУ']];
+      h += `<div class="dw-sub">Генерация</div><div class="dw-gen">${src.filter(([k]) => G[k] !== undefined).map(([k, n]) => `<span><small>${n}</small><b>${Math.round(G[k] || 0)}</b></span>`).join('')}</div>`;
+      h += `<div class="dw-sub">Подстанции 110 кВ — районы</div>`;
+      h += `<label class="dw-check"><input type="checkbox" data-act="autoshed" ${S.autoShed ? 'checked' : ''}> Автоматический диспетчер (сам вводит веерные отключения, с задержкой)</label>`;
+      for (const ps of p110) {
+        const v = ps.supply ?? 1, L = ps.shed || 0;
+        const status = ps.unstable ? `<span class="bad">⚠ перегрузка: сеть даёт ${Math.round(ps.avail || 0)} из ${Math.round(ps.demand || 0)} МВт — защита отключит трансформатор через ${Math.max(0, 60 - (ps.overT || 0))} с</span>` : L ? `<span class="warn">веерные отключения: ${L} очеред${L === 1 ? 'ь' : 'и'} из 5 без света по графику</span>` : 'стабильно';
+        const btn = [0, 1, 2, 3, 4].map((k) => `<button data-shed="${ps.id}:${k}" class="${L === k ? 'sel' : ''}" title="${k ? `отключить ${k} очеред${k === 1 ? 'ь' : 'и'} из 5 (−${k * 20}% нагрузки)` : 'все районы под напряжением'}">${k}</button>`).join('');
+        const gtus = (g.gens || []).filter((q) => q.ps === ps.id && !q.dead);
+        h += `<div class="dw-ps"><div class="dw-city"><span>${esc(ps.name.replace(/^ПС 110 кВ /, ''))}</span><div class="bar"><i style="width:${(v * 100).toFixed(0)}%;background:${v > 0.8 ? '#ffe27a' : v > 0.4 ? '#f0a040' : '#ef5a4a'}"></i></div><b>${(v * 100).toFixed(0)}%</b></div>
+          <small>${status} · трансформаторы ${Math.round(ps.trCap || 0)} МВт${gtus.length ? ` · ГТУ: ${gtus.map((q) => (q.state === 'ready' ? 'в работе' : 'подключается')).join(', ')}` : ''}</small>
+          <div class="dw-btns"><span class="muted">очереди:</span>${btn}<button data-gtu="${ps.id}" title="${GTU.name}: подключается к шинам 10 кВ, работает на топливе с нефтебазы">+ГТУ ${GTU.cost}</button></div></div>`;
+      }
+      h += `<div class="dw-note">Если сеть не может дать подстанции всю мощность, без веерных отключений режим неустойчив: аварийные отключения и перегрев — через минуту защита выведет трансформатор. Плановые очереди снимают нагрузку, остальные районы стабильно со светом, а люди переносят графики легче (устойчивость тыла падает медленнее).</div>`;
+      void cityRow;
       const L = g.logi.side[side];
       const withGoods = L.markets.filter((m) => m.stock > 0).length, cut = L.markets.filter((m) => m.cut).length + L.fuels.filter((m) => m.cut).length;
       const withFuel = L.fuels.filter((m) => m.stock > 0).length;
       const veh = g.logi.vehicles.filter((v) => !v.dead && v.side === side);
       const cnt = (k) => veh.filter((v) => v.kind === k).length;
       h += `<div class="dw-sub">Торговля и логистика</div><div class="dw-income">Торговля <b>+${(S.tradeAvg ?? 0).toFixed(1)}</b> оч/мин · на складе РЦ <b>${L.hub.stock}</b> · магазинов с товаром ${withGoods}/${L.markets.length} · АЗС с топливом ${withFuel}/${L.fuels.length}${cut ? ` · <span class="bad">отрезано ${cut}</span>` : ''}<br>На дорогах: фур ${cnt('fura')}, развозных ${cnt('van')}, бензовозов ${cnt('tanker')}, снабжение ПВО ${cnt('supply')}, ремонтники ${cnt('crew')}, пожарные ${cnt('fire')} · фур пришло ${L.stats.imports}, ушло на экспорт ${L.stats.exports || 0}, доставок ${L.stats.deliveries}${L.stats.lostTrucks ? ` · <span class="bad">потеряно машин ${L.stats.lostTrucks}</span>` : ''}</div>`;
-      const groups = ['tpp', 'ps330', 'ps110', 'bridge', 'oil', 'ammo', 'factory', 'launch', 'hub', 'border', 'rembase', 'firest', 'fuel'];
+      const groups = ['tpp', 'hpp', 'chp', 'wpp', 'spp', 'ps330', 'ps110', 'bridge', 'oil', 'ammo', 'factory', 'launch', 'hub', 'border', 'rembase', 'firest', 'fuel'];
       h += `<div class="dw-sub">Ваши объекты</div>`;
       for (const k of groups) for (const o of g.objs(side, k)) h += this.objRow(o);
       const E = g.sides[this.enemy];
@@ -213,7 +229,7 @@ export class DWUI {
   }
 
   onPanel(e) {
-    const t = e.target.closest('[data-ad],[data-drone],[data-wave],[data-count],[data-obj],[data-selad],[data-repair],[data-shelter],[data-roe],[data-act],[data-target]');
+    const t = e.target.closest('[data-ad],[data-drone],[data-wave],[data-count],[data-obj],[data-selad],[data-repair],[data-shelter],[data-roe],[data-act],[data-target],[data-shed],[data-gtu]');
     if (!t) return;
     const g = this.g, side = this.side;
     const d = t.dataset;
@@ -235,6 +251,9 @@ export class DWUI {
     else if (d.act === 'auto') this.issue('dw', 'setAuto', side, t.checked);
     else if (d.act === 'crew') this.issue('dw', 'buyCrew', side);
     else if (d.act === 'spare') this.issue('dw', 'buySpare', side);
+    else if (d.act === 'autoshed') this.issue('dw', 'setAutoShed', side, t.checked);
+    else if (d.shed) { const [id, lv] = d.shed.split(':').map(Number); this.issue('dw', 'setShed', side, id, lv); }
+    else if (d.gtu) this.issue('dw', 'buyGTU', side, Number(d.gtu));
     else if (d.act === 'net') { this.state.mode = this.state.mode === 'net' ? null : 'net'; this.build(); }
     setTimeout(() => this.update(true), 50);
   }
@@ -332,6 +351,11 @@ export class DWUI {
     }
     const type = this.state.mode.slice(7);
     const D = DW_DRONES[type];
+    if (D.cls === 'hunter') {
+      if (D.front) { const from = g.launchPoints(side, D)[0]; if (Math.abs(x - from.x) > D.range) { this.log(`${D.short}: район дальше ${D.range / 1000} км от передовой`); return; } }
+      this.issue('dw', 'launch', side, type, Math.min(this.state.count, 4), x, y, { route });
+      return;
+    }
     if (D.cls === 'loiter') {
       const veh = this.vehAt(x, y);
       if (veh && veh.side !== side) {
@@ -375,7 +399,7 @@ export class DWUI {
       for (const w of [...this.state.route, { x, y }]) { L += Math.hypot(w.x - p.x, w.y - p.y); p = w; }
       const o = this.objAt(x, y);
       const c = o && o.side !== side ? this.compAt(o, x, y) : null;
-      const eta = L / (D.speed * 1.5); // темп полёта (PACE)
+      const eta = L / (D.speed * PACE); // темп полёта
       const tgt = c ? `${o.name} → ${c.name}` : o && o.side !== side ? o.name : D.cls === 'recon' ? 'район разведки' : 'точка';
       return `Цель: <b>${esc(tgt)}</b> · подлёт ~${Math.floor(eta / 60)}:${String(Math.floor(eta % 60)).padStart(2, '0')}${this.state.route.length ? ` · через ${this.state.route.length} точ.` : ''}<br><small>ЛКМ — пуск, Shift+ЛКМ — точка маршрута, ПКМ — отмена</small>`;
     }

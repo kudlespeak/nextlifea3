@@ -27,6 +27,8 @@ export const DW_DRONES = {
   gerbera: { side: 'red', cls: 'decoy', name: 'Гербера (ложная цель)', short: 'Гербера', speed: 45, alt: [200, 1400], wh: 0, cep: 30, ew: 0.5, rcs: 0.5, noise: 0.8, cost: 5, desc: 'Дешёвая ложная цель: на радаре не отличить от «Герани», отвлекает ПВО и расходует ракеты' },
   lancet: { side: 'red', cls: 'loiter', name: 'Ланцет-3', short: 'Ланцет', speed: 30, alt: [300, 800], wh: 3, cep: 1.5, ew: 0.35, rcs: 0.15, noise: 0.3, cost: 10, range: 22000, desc: 'Барражирующий боеприпас по разведанной цели (ПВО, РЛС, РЭБ). Нужна разведка' },
   orlan: { side: 'red', cls: 'recon', name: 'Орлан-10', short: 'Орлан', speed: 28, alt: [800, 1500], wh: 0, ew: 0.45, rcs: 0.3, noise: 0.7, cost: 8, endurance: 1000, spot: 1600, desc: 'Разведчик: находит позиции ПВО противника (день — камера, ночью — тепловизор)' },
+  geran_h: { side: 'red', cls: 'hunter', name: 'Герань-2 «Охотник» (камера и ИИ)', short: 'Герань-охотник', speed: 51, alt: [150, 600], wh: 50, cep: 3, ew: 0.85, rcs: 0.5, noise: 1, cost: 26, endurance: 2400, spot: 900, desc: 'Сам патрулирует дороги в заданном районе и по камере с ИИ находит фуры, бензовозы, грузовики снабжения — бьёт без оператора. РЭБ почти не мешает' },
+  molniya: { side: 'red', cls: 'hunter', front: true, name: 'Молния-2 (охотник)', short: 'Молния', speed: 33, alt: [100, 400], wh: 6, cep: 2, ew: 0.6, rcs: 0.12, noise: 0.5, cost: 8, endurance: 1400, spot: 600, range: 22000, desc: 'Дешёвое самолётное «крыло» с передовых позиций: охотится на машины на дорогах ближе к фронту' },
   elka: { side: 'red', cls: 'interceptor', name: 'Перехватчик «Ёлка»', short: 'Ёлка', speed: 80, alt: [0, 3000], wh: 0.5, ew: 0.6, rcs: 0.1, noise: 0.2, cost: 3, desc: 'Дрон-перехватчик' },
   // Велнария
   fp1: { side: 'blue', cls: 'strike', name: 'FP-1', short: 'FP-1', speed: 45, alt: [200, 1500], wh: 60, cep: 10, ew: 0.65, rcs: 0.45, noise: 1, cost: 15, desc: 'Дальнобойный ударный БПЛА, 60 кг' },
@@ -35,6 +37,8 @@ export const DW_DRONES = {
   bober: { side: 'blue', cls: 'strike', name: 'Бобёр', short: 'Бобёр', speed: 50, alt: [150, 600], wh: 20, cep: 5, ew: 0.7, rcs: 0.35, noise: 0.9, cost: 9, desc: 'Малый и дешёвый ударный БПЛА, 20 кг — по трансформаторам и пусковым' },
   warmate: { side: 'blue', cls: 'loiter', name: 'Warmate', short: 'Warmate', speed: 28, alt: [300, 800], wh: 1.4, cep: 1.5, ew: 0.35, rcs: 0.12, noise: 0.3, cost: 9, range: 20000, desc: 'Барражирующий боеприпас по разведанной цели (ПВО, РЛС, РЭБ)' },
   leleka: { side: 'blue', cls: 'recon', name: 'Лелека-100', short: 'Лелека', speed: 27, alt: [700, 1400], wh: 0, ew: 0.45, rcs: 0.25, noise: 0.6, cost: 7, endurance: 1000, spot: 1600, desc: 'Разведчик: находит позиции ПВО противника' },
+  saker: { side: 'blue', cls: 'hunter', name: 'Сакер-ИИ (охотник)', short: 'Сакер', speed: 45, alt: [150, 500], wh: 20, cep: 2.5, ew: 0.85, rcs: 0.3, noise: 0.8, cost: 20, endurance: 2400, spot: 850, desc: 'Автономный охотник с машинным зрением: патрулирует дороги в районе и сам атакует фуры, бензовозы и грузовики снабжения' },
+  grif: { side: 'blue', cls: 'decoy', name: 'Гриф-Д (ложная цель)', short: 'Гриф-Д', speed: 45, alt: [200, 1300], wh: 0, cep: 30, ew: 0.5, rcs: 0.45, noise: 0.8, cost: 5, desc: 'Дешёвая ложная цель: на радаре похожа на ударный БПЛА, отвлекает ПВО' },
   sting: { side: 'blue', cls: 'interceptor', name: 'Перехватчик «Стинг»', short: 'Стинг', speed: 88, alt: [0, 3000], wh: 0.5, ew: 0.6, rcs: 0.1, noise: 0.2, cost: 3, desc: 'Дрон-перехватчик' },
 };
 export const dronesOf = (side) => Object.entries(DW_DRONES).filter(([, d]) => d.side === side && d.cls !== 'interceptor').map(([k]) => k);
@@ -84,7 +88,7 @@ export const COMP = {
 const SHOCK = { hgen: 2, wt: 0.3, pv: 0.3, inv: 0.4, unit: 2, at: 2, gsu: 1.5, span: 1.5, tr: 1, oru: 1, shop: 1, tank: 0.6, bunker: 0.6, hall: 0.6, chimney: 0.6, tower: 0.6, coal: 0.5, launcher: 0.3, ctrl: 0.3, pump: 0.3, rack: 0.2, store: 0.3 };
 // Темп: полёт в 1,5 раза быстрее реального (карта 40 км, партия 25 мин); вероятности огня ПВО
 // в секунду умножены на тот же коэффициент — время в зоне поражения и шансы сбития те же
-export const PACE = 1.5;
+export const PACE = 2;
 const PHASES = [{ name: 'Фаза 1 — пробные удары', inc: 1, drain: 1 }, { name: 'Фаза 2 — массированные удары', inc: 1.25, drain: 1.25 }, { name: 'Фаза 3 — удар возмездия', inc: 1.5, drain: 1.6 }];
 const NET_ROAD = { cost: 40, time: 200, len: 600, name: 'Антидроновая сетка над дорогой' };
 // Ремонт дешевле номинала: часть покрывает государственный фонд восстановления
@@ -100,7 +104,7 @@ export const shelterDef = (c, level) => (COMP[c.k]?.net ? NET[level] : SHELTER[l
 export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
 
 // Западные образцы ПВО точнее, у Кардагора — массовость и ложные цели
-const AD_EFF = { blue: 1.3, red: 1.0 };
+const AD_EFF = { blue: 1.1, red: 1.0 };
 const DEMAND = { 0: 260, 1: 200, 2: 200 }; // МВт на одну ПС 110 кВ (столицу питают две)
 const TR_CAP = { 0: 170, 1: 130, 2: 130 }; // МВт на трансформатор 110/10 кВ
 // Генерация по типам: МВт на агрегат
@@ -129,7 +133,7 @@ export class DroneWar {
     this.startAt = this.prepEnd;
     this.ready = { blue: false, red: false };
     for (const s of cfg.aiSides || []) this.ready[s] = true; // ИИ готов сразу — «К бою» начинает без ожидания
-    this.endAt = this.prepEnd + (cfg.duration || 1500);
+    this.endAt = this.prepEnd + (cfg.duration || 2400);
     this.frontX = this.world.frontX || this.world.W / 2;
     this.drones = [];
     this.missiles = [];
@@ -290,6 +294,7 @@ export class DroneWar {
         route: own, tx, ty, oid: opts.oid ?? null, cid: opts.cid ?? null, adTarget: opts.adTarget ?? null, vehTarget: opts.vehTarget ?? null,
         cruise: D.alt[0] + this.sim.rng.float(0, 1) * (D.alt[1] - D.alt[0]), drift: [0, 0], dead: false, seen: {}, ew: 0, trail: [], hp: 1,
         until: this.sim.time + delay + (D.endurance || 4 * 3600), wave: opts.wave ?? null, spawnSite: site.oid,
+        variant: rng.int(0, 2), home: D.cls === 'hunter' ? [tx, ty] : null,
       };
       // Точка прицеливания: разброс (КВО) — задаётся заранее
       const g = this.sim.rng;
@@ -298,7 +303,7 @@ export class DroneWar {
       this.drones.push(d);
     }
     S.stats.launched += count;
-    const tgt = opts.oid ? this.obj(opts.oid)?.name : opts.adTarget ? 'позиция ПВО' : opts.vehTarget ? 'транспорт на дороге' : `точка ${Math.round(tx)}, ${Math.round(ty)}`;
+    const tgt = opts.oid ? this.obj(opts.oid)?.name : opts.adTarget ? 'позиция ПВО' : opts.vehTarget ? 'транспорт на дороге' : D.cls === 'hunter' ? `охота на дорогах у точки ${Math.round(tx)}, ${Math.round(ty)}` : `точка ${Math.round(tx)}, ${Math.round(ty)}`;
     this.sim.msg(`Пуск: ${D.short} ×${count} → ${tgt} (−${cost} оч.)`, side);
     return null;
   }
@@ -308,7 +313,7 @@ export class DroneWar {
     return DW_DRONES[type].cost * (1 - 0.3 * ok); // свой завод удешевляет дроны до 30%
   }
   launchPoints(side, D) {
-    if (D.cls === 'strike' || D.cls === 'decoy') {
+    if (D.cls === 'strike' || D.cls === 'decoy' || (D.cls === 'hunter' && !D.front)) {
       const out = [];
       for (const o of this.objs(side, 'launch')) {
         const ok = o.comps.filter((c) => c.k === 'launcher' && this.compOk(c));
@@ -406,7 +411,7 @@ export class DroneWar {
     if (this.prep && (sim.time >= this.prepEnd || (this.ready.blue && this.ready.red))) {
       this.prep = false;
       this.startAt = sim.time;
-      this.endAt = sim.time + (this.cfg.duration || 1500);
+      this.endAt = sim.time + (this.cfg.duration || 2400);
       this.nextDirective = sim.time + 120;
       sim.msg('Развёртывание окончено — стороны могут наносить удары');
     }
@@ -424,7 +429,10 @@ export class DroneWar {
     if (this.flowTimer <= 0) { this.flowTimer = 2; this.flow(); }
     this.econTimer -= dt;
     if (this.econTimer <= 0) { this.econTimer = 5; this.economy(5); }
-    if (this.fx.length > 400) this.fx.splice(0, this.fx.length - 400);
+    // эффекты живут столько, сколько рисуются (прилёты с дымом — дольше, трассеры — доли секунды)
+    const LIFE = { tracer: 0.5, airburst: 5, fall: 6, money: 3, impact: 30 };
+    if (this.fx.length > 60) this.fx = this.fx.filter((f) => sim.time - f.t0 < (LIFE[f.t] ?? 5));
+    if (this.fx.length > 600) this.fx.splice(0, this.fx.length - 600);
   }
 
   // ---------- Энергосистема ----------
@@ -1060,7 +1068,7 @@ export class DroneWar {
       if (d.dead) continue;
       const D = DW_DRONES[d.type];
       if (d.state === 'wait') { if (sim.time >= d.t0) { d.state = D.cls === 'recon' ? 'fly' : d.state === 'wait' ? 'fly' : d.state; } else continue; }
-      if (sim.time > d.until) { d.dead = true; if (D.cls === 'recon') sim.msg(`${D.short}: вернулся — батарея на исходе`, d.side); continue; }
+      if (sim.time > d.until) { d.dead = true; d.deadAt = sim.time; if (D.cls === 'recon') sim.msg(`${D.short}: вернулся — батарея на исходе`, d.side); else if (D.cls === 'hunter') { this.fx.push({ t: 'fall', x: d.x, y: d.y, alt: d.alt, t0: sim.time }); sim.msg(`${D.short}: топливо кончилось, целей не найдено`, d.side); } continue; }
       // РЭБ: сбой навигации (дрейф), потеря связи у барражирующих и разведчиков
       let jam = 0;
       for (const e of ews) if (e.side !== d.side && hyp(e.x - d.x, e.y - d.y) < DW_AD.ew.range) jam = Math.max(jam, 1 - hyp(e.x - d.x, e.y - d.y) / DW_AD.ew.range * 0.5);
@@ -1076,6 +1084,7 @@ export class DroneWar {
       }
       if (D.cls === 'interceptor') { this.flyInterceptor(d, D, dt); continue; }
       if (D.cls === 'recon') { this.flyRecon(d, D, dt); continue; }
+      if (D.cls === 'hunter' && !d.vehTarget) { this.flyHunter(d, D, dt); continue; }
       // Цель — позиция ПВО: следим за её последним известным местом
       if (d.adTarget) {
         const t = this.ad.find((q) => q.id === d.adTarget);
@@ -1085,6 +1094,7 @@ export class DroneWar {
         // Машина едет: оператор ведёт её, пока видно (своя разведка или камера самого боеприпаса)
         const v = this.logi.vehicles.find((q) => q.id === d.vehTarget);
         if (v && !v.dead && (hyp(v.x - d.x, v.y - d.y) < 2500 || sim.time - (v.spotted[d.side] || -999) < 60)) { d.tx = v.x; d.ty = v.y; d.aimX = v.x; d.aimY = v.y; d.route.length = 0; }
+        else if (D.cls === 'hunter') { d.vehTarget = null; d.tx = d.home?.[0] ?? d.x; d.ty = d.home?.[1] ?? d.y; d.wp = null; continue; } // цель уничтожена или потеряна — снова патруль
       }
       const wp = d.route.length ? d.route[0] : { x: d.aimX + d.drift[0], y: d.aimY + d.drift[1] };
       const dx = wp.x - d.x, dy = wp.y - d.y, dist = hyp(dx, dy);
@@ -1137,6 +1147,48 @@ export class DroneWar {
       d.dead = true; d.deadAt = sim.time;
       if (sim.rng.chance(p)) this.kill(t, { side: d.side, name: D.short, kills: 0 }, 'дроном-перехватчиком');
       else { this.fx.push({ t: 'airburst', x: d.x, y: d.y, alt: d.alt, t0: sim.time, small: true }); void TD; }
+    }
+  }
+
+  // Охотник с ИИ: долетает до района, патрулирует дороги (от узла к узлу), по камере находит машины
+  // противника (фуры, бензовозы, развозные и грузовики снабжения — не пожарных и не ремонтников)
+  // и переходит в атаку; цель потеряна — снова патруль
+  flyHunter(d, D, dt) {
+    const sim = this.sim, R = this.logi.roads;
+    const inArea = hyp(d.x - d.tx, d.y - d.ty) < 3500;
+    if (!d.wp || hyp(d.wp[0] - d.x, d.wp[1] - d.y) < 120) {
+      if (d.route.length && !inArea) { const p = d.route.shift(); d.wp = [p.x, p.y]; }
+      else if (!inArea) d.wp = [d.tx, d.ty];
+      else {
+        const ids = R.near(d.tx + sim.rng.float(-2500, 2500), d.ty + sim.rng.float(-2500, 2500), 900);
+        const id = ids.length ? ids[sim.rng.int(0, ids.length - 1)] : -1;
+        d.wp = id >= 0 ? [R.x[id], R.y[id]] : [d.tx + sim.rng.float(-1500, 1500), d.ty + sim.rng.float(-1500, 1500)];
+        d.state = 'loiter';
+      }
+    }
+    const want = Math.atan2(d.wp[1] - d.y, d.wp[0] - d.x);
+    const dh = Math.atan2(Math.sin(want - d.heading), Math.cos(want - d.heading));
+    d.heading += Math.max(-0.6 * dt, Math.min(0.6 * dt, dh));
+    const v = D.speed * PACE * (d.state === 'loiter' ? 0.8 : 1);
+    d.x += Math.cos(d.heading) * v * dt; d.y += Math.sin(d.heading) * v * dt; d.speed = v;
+    d.alt += Math.max(-20 * dt, Math.min(12 * dt, d.cruise - d.alt));
+    d.trail.push([d.x, d.y]); if (d.trail.length > 40) d.trail.shift();
+    // поиск целей: камера (ночью — тепловизор, дальность меньше)
+    d.scanT = (d.scanT || 0) - dt;
+    if (d.scanT > 0 || !inArea) return;
+    d.scanT = 1;
+    const night = 1 - daylight(sim.time);
+    const Rs = D.spot * (1 - night * 0.3);
+    let best = null, bd = Rs;
+    for (const q of this.logi.vehicles) {
+      if (q.dead || q.side === d.side || q.kind === 'crew' || q.kind === 'fire') continue;
+      const dd = hyp(q.x - d.x, q.y - d.y);
+      if (dd < bd) { bd = dd; best = q; }
+    }
+    if (best) {
+      d.vehTarget = best.id; d.aimX = best.x; d.aimY = best.y; d.tx = best.x; d.ty = best.y; d.route.length = 0; d.state = 'fly';
+      best.spotted[d.side] = sim.time;
+      sim.msg(`${D.short}: ИИ опознал цель — ${VEH[best.kind].name.toLowerCase()}, атакует`, d.side);
     }
   }
 
@@ -1352,7 +1404,7 @@ DroneWar.prototype.snapshot = function () {
     [S.stats.launched, S.stats.hits, S.stats.shot, S.stats.lostAD, S.stats.spent, S.stats.repairs], R1(S.logi ?? 1), R1(S.oil ?? 1), R1(S.ammo ?? 1),
     R1(S.morale), S.inc ? [R1(S.inc.industry), R1(S.inc.trade), R1(S.inc.fuel), R1(S.inc.transit), R1(S.inc.wages || 0)] : 0, S.moraleParts ? Object.values(S.moraleParts).map(R1) : 0];
   return {
-    d: this.drones.filter((d) => !d.dead && d.state !== 'wait').map((d) => [d.id, d.side, d.type, R1(d.x), R1(d.y), Math.round(d.alt), R1(d.heading), R1(d.aimX ?? d.x), R1(d.aimY ?? d.y), seenBits(d), d.state === 'loiter' ? 1 : 0, (d.route || []).map((p) => [Math.round(p.x), Math.round(p.y)])]),
+    d: this.drones.filter((d) => !d.dead && d.state !== 'wait').map((d) => [d.id, d.side, d.type, R1(d.x), R1(d.y), Math.round(d.alt), R1(d.heading), R1(d.aimX ?? d.x), R1(d.aimY ?? d.y), seenBits(d), d.state === 'loiter' ? 1 : 0, (d.route || []).map((p) => [Math.round(p.x), Math.round(p.y)]), d.variant || 0]),
     a: this.ad.map((a) => [a.id, a.side, a.type, R1(a.x), R1(a.y), R1(a.heading), AST.indexOf(a.state), a.dead ? 1 : 0, a.missiles, a.stock, Math.round(a.ammo), a.kills || 0, a.target ? 1 : 0, R1(a.aim), R1(a.spotted.blue || 0), R1(a.spotted.red || 0), a.roe, R1(a.until), R1(a.fireT), a.dest ? [Math.round(a.dest.x), Math.round(a.dest.y)] : 0]),
     c: this.objects.map((o) => o.comps.map((c) => [Math.round(c.hp * 100), STI.indexOf(c.state), Math.round(c.fire), c.shelter, c.burned ? 1 : 0])),
     ps: this.objects.map((o) => (o.supply === undefined ? -1 : Math.round(o.supply * 1000) / 1000)),
@@ -1378,7 +1430,7 @@ DroneWar.prototype.applySnapshot = function (s) {
   this.drones = s.d.map((q) => {
     const o = old.get(q[0]);
     const d = o || { id: q[0], trail: [], seen: {}, drift: [0, 0], dead: false };
-    Object.assign(d, { side: q[1], type: q[2], alt: q[5], heading: q[6], aimX: q[7], aimY: q[8], state: q[10] ? 'loiter' : 'fly', speed: DW_DRONES[q[2]].speed, route: q[11].map(([x, y]) => ({ x, y })) });
+    Object.assign(d, { side: q[1], type: q[2], alt: q[5], heading: q[6], aimX: q[7], aimY: q[8], state: q[10] ? 'loiter' : 'fly', speed: DW_DRONES[q[2]].speed, route: q[11].map(([x, y]) => ({ x, y })), variant: q[12] || 0 });
     d.tx = q[3]; d.ty = q[4];
     if (!o) { d.x = q[3]; d.y = q[4]; }
     d.seen = { blue: q[9] & 1 ? t : 0, red: q[9] & 2 ? t : 0 };
@@ -1408,7 +1460,7 @@ DroneWar.prototype.applySnapshot = function (s) {
     const f = q[0] === 'tracer' ? { t: 'tracer', x0: q[1], y0: q[2], x1: q[3], y1: q[4], alt: q[5], side: q[6], heavy: !!q[7], t0: t } : { t: q[0], x: q[1], y: q[2], alt: q[5], small: !!q[8], wh: q[9], v: q[10], side: q[6], t0: t };
     this.fx.push(f);
   }
-  if (this.fx.length > 400) this.fx.splice(0, this.fx.length - 400);
+  { const LIFE = { tracer: 0.5, airburst: 5, fall: 6, money: 3, impact: 30 }; this.fx = this.fx.filter((f) => t - f.t0 < (LIFE[f.t] ?? 5)); }
   for (const side of ['blue', 'red']) {
     const S = this.sides[side], q = s.s[side];
     Object.assign(S, { points: q[0], income: q[1], supply: q[2], gen: q[3], demand: q[4], delivered: q[5], achrUntil: q[6], collapse: q[7], spare: q[8], auto: !!q[9], queue: q[11], tradeAvg: q[12], logi: q[14], oil: q[15], ammo: q[16] });

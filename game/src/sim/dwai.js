@@ -8,6 +8,8 @@ const VALUE = { tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5
 const WANT_COVER = { tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
 const TARGET_COMPS = { hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
+const D_RANGE = (D) => D.range || 99999;
+
 export class DroneWarAI {
   constructor(sim, side, difficulty = 'normal') {
     this.sim = sim;
@@ -45,6 +47,8 @@ export class DroneWarAI {
     if (t > this.next.shelter) { this.next.shelter = t + 90; this.shelters(); }
     if (t > this.next.recon) { this.next.recon = t + 200 / this.k + this.sim.rng.float(0, 80); this.recon(); }
     if (!g.prep && t > this.next.loiter) { this.next.loiter = t + 70; this.loiter(); }
+    if (!g.prep && t > (this.next.hunt ?? t + 150)) { this.next.hunt = t + 170 / this.k + this.sim.rng.float(0, 90); this.hunt(); }
+    else if (this.next.hunt === undefined) this.next.hunt = t + 150;
     if (!g.prep && t > this.next.strike) {
       const night = ((t / 3600) % 24) > 20 || ((t / 3600) % 24) < 5;
       // Эскалация: к третьей фазе удары вдвое чаще
@@ -173,6 +177,21 @@ export class DroneWarAI {
       if (!this.can('off', T.loiter.cost * n)) return;
       if (!g.launch(this.side, T.loiter.k, n, a.x, a.y, { adTarget: a.id })) this.pay('off', g.droneCost(this.side, T.loiter.k) * n);
     }
+  }
+  // Охотники с ИИ — на дороги противника: у распредцентра, погранперехода, нефтебазы, АЗС
+  hunt() {
+    const g = this.g, rng = this.sim.rng;
+    const types = Object.entries(DW_DRONES).filter(([, d]) => d.side === this.side && d.cls === 'hunter');
+    if (!types.length) return;
+    const L = g.logi.side[this.enemy];
+    const areas = [L.hub, L.border, L.oilDepot, ...L.fuels].filter(Boolean);
+    const o = areas[rng.int(0, areas.length - 1)];
+    const p = g.logi.gate(o);
+    const front = types.find(([, d]) => d.front);
+    const [k, D] = front && Math.abs(p[0] - g.frontX) < D_RANGE(front[1]) - 1500 && rng.chance(0.6) ? front : types.find(([, d]) => !d.front) || types[0];
+    const n = D.cost < 10 ? 3 : 1 + (rng.chance(0.4) ? 1 : 0);
+    if (!this.can('off', g.droneCost(this.side, k) * n)) return;
+    if (!g.launch(this.side, k, n, p[0] + rng.float(-800, 800), p[1] + rng.float(-800, 800))) this.pay('off', g.droneCost(this.side, k) * n);
   }
   strike() {
     const g = this.g, S = this.S, T = this.types(), rng = this.sim.rng;

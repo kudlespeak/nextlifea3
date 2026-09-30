@@ -359,6 +359,20 @@ function drawArea(ctx, a, b, ppm) {
       break;
     }
     case 'dwsite': {
+      if (a.site === 'wpp') {
+        // ветропарк: площадки у башен и полевая дорога между ними, без сплошной отсыпки
+        ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.angle);
+        const pts = a.fp.filter((f) => f[4] === 'wt');
+        ctx.strokeStyle = 'rgba(150,138,110,0.8)'; ctx.lineWidth = 5; ctx.lineJoin = 'round';
+        ctx.beginPath(); pts.forEach(([u, v], i) => (i ? ctx.lineTo(u, v) : ctx.moveTo(u, v)));
+        const o = a.fp.find((f) => f[4] === 'oru'); if (o) ctx.lineTo(o[0], o[1]);
+        ctx.stroke();
+        ctx.fillStyle = '#8f8b7c';
+        for (const [u, v] of pts) ctx.fillRect(u - 12, v - 12, 24, 24);
+        if (o) { ctx.fillRect(o[0] - 28, o[1] - 24, 56, 64); ctx.strokeStyle = 'rgba(55,55,50,0.9)'; ctx.lineWidth = Math.max(0.25, 0.6 / ppm); ctx.strokeRect(o[0] - 28, o[1] - 24, 56, 64); }
+        ctx.restore();
+        break;
+      }
       // Прилегающая территория: выкошенная полоса вокруг ограды, площадка (щебень/асфальт/гравий),
       // забор с воротами, у магазинов и АЗС — парковка с разметкой
       const civil = ['mall', 'market', 'store', 'fuel', 'hub', 'border', 'firest', 'rembase'].includes(a.site);
@@ -1860,16 +1874,22 @@ function drawPowerGround(ctx, world, q, ppm) {
     }
     ctx.restore();
   }
-  // Будки ТП
+  // Трансформаторные подстанции 10/0,4 кВ (КТП): будка с кровлей, тенью, дверями и знаком
   for (const tp of p.tps) {
     if (!inQ(q, tp.x, tp.y, 10)) continue;
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(tp.x - 1.5 + 0.8, tp.y - 2 + 0.8, 3, 4);
-    ctx.fillStyle = tp.alive ? '#a7a49b' : '#3a3530';
-    ctx.fillRect(tp.x - 1.5, tp.y - 2, 3, 4);
-    if (tp.alive && ppm >= 3) {
-      ctx.fillStyle = '#d9b93a';
-      ctx.fillRect(tp.x - 0.35, tp.y - 0.5, 0.7, 0.7); // знак «Опасно»
+    const w = 5, h = 3.6;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(tp.x - w / 2 + 0.9, tp.y - h / 2 + 1, w, h);
+    ctx.fillStyle = tp.alive ? '#b9b6ad' : '#2e2a26';
+    ctx.fillRect(tp.x - w / 2, tp.y - h / 2, w, h);
+    if (ppm >= 2) {
+      ctx.strokeStyle = tp.alive ? 'rgba(90,90,85,0.8)' : 'rgba(0,0,0,0.6)'; ctx.lineWidth = 0.12;
+      ctx.strokeRect(tp.x - w / 2, tp.y - h / 2, w, h);
+      ctx.beginPath(); ctx.moveTo(tp.x - w / 2, tp.y); ctx.lineTo(tp.x + w / 2, tp.y); ctx.stroke(); // конёк
+      if (tp.alive) {
+        ctx.fillStyle = '#6e7a82'; ctx.fillRect(tp.x - 1.8, tp.y + h / 2 - 0.2, 1.2, 0.35); ctx.fillRect(tp.x + 0.6, tp.y + h / 2 - 0.2, 1.2, 0.35); // двери
+        ctx.fillStyle = '#e0c040'; ctx.fillRect(tp.x - 0.3, tp.y + h / 2 - 0.25, 0.6, 0.4); // «Опасно»
+      } else { ctx.fillStyle = 'rgba(20,16,12,0.6)'; ctx.beginPath(); ctx.arc(tp.x, tp.y, 3.5, 0, Math.PI * 2); ctx.fill(); }
     }
   }
 }
@@ -1877,76 +1897,122 @@ function drawPowerGround(ctx, world, q, ppm) {
 function drawPowerLines(ctx, world, q, ppm) {
   const p = world.power;
   if (!p || ppm < 0.2) return;
-  // Магистральные ЛЭП 330/110 кВ (режим «Война дронов»): опоры-«рюмки» и расщеплённые фазы
+  // Магистральные ЛЭП 330/110 кВ («Война дронов»): решётчатые опоры с траверсой и тенью от солнца,
+  // три фазы (у 330 кВ — расщеплённые) и их тени; на концах — порталы ОРУ
+  const SH = [0.3, 0.34]; // смещение тени на метр высоты (солнце с северо-запада)
   for (const ln of p.lines || []) {
     const pl = ln.pylons, big = ln.kv >= 330;
-    const sp = big ? 7 : 3.5;
+    const sp = big ? 7.5 : 4, Hw = big ? 30 : 20, Ht = big ? 40 : 28;
     for (let i = 1; i < pl.length; i++) {
       const a = pl[i - 1], b = pl[i];
       if (!inQ(q, a.x, a.y, 400) && !inQ(q, b.x, b.y, 400)) continue;
       const L = Math.hypot(b.x - a.x, b.y - a.y);
       const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
+      const ha = a.portal ? 12 : Hw, hb = b.portal ? 12 : Hw;
       for (const o of [-sp, 0, sp]) {
+        // тень провода: провисает — середина пролёта ниже
         ctx.beginPath();
-        ctx.moveTo(a.x + nx * o + 9, a.y + ny * o + 9);
-        ctx.lineTo(b.x + nx * o + 9, b.y + ny * o + 9);
-        ctx.strokeStyle = 'rgba(0,0,0,0.13)';
-        ctx.lineWidth = Math.max(0.15, (big ? 0.6 : 0.4) / ppm);
+        ctx.moveTo(a.x + nx * o + SH[0] * ha, a.y + ny * o + SH[1] * ha);
+        ctx.quadraticCurveTo((a.x + b.x) / 2 + nx * o + SH[0] * (ha + hb) * 0.3, (a.y + b.y) / 2 + ny * o + SH[1] * (ha + hb) * 0.3, b.x + nx * o + SH[0] * hb, b.y + ny * o + SH[1] * hb);
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+        ctx.lineWidth = Math.max(0.2, (big ? 1.1 : 0.9) / ppm);
         ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(a.x + nx * o, a.y + ny * o);
-        ctx.lineTo(b.x + nx * o, b.y + ny * o);
-        ctx.strokeStyle = 'rgba(50,52,50,0.65)';
-        ctx.stroke();
+        for (const d of big && ppm >= 2 ? [-0.25, 0.25] : [0]) {
+          ctx.beginPath();
+          ctx.moveTo(a.x + nx * (o + d), a.y + ny * (o + d));
+          ctx.lineTo(b.x + nx * (o + d), b.y + ny * (o + d));
+          ctx.strokeStyle = 'rgba(55,57,55,0.85)';
+          ctx.lineWidth = Math.max(0.12, (big && ppm >= 2 ? 0.7 : 0.9) / ppm);
+          ctx.stroke();
+        }
       }
     }
     for (let i = 0; i < pl.length; i++) {
       const t = pl[i];
-      if (!inQ(q, t.x, t.y, 20)) continue;
+      if (!inQ(q, t.x, t.y, 60)) continue;
       const nb = pl[Math.min(pl.length - 1, i + 1)], pb = pl[Math.max(0, i - 1)];
       const ang = Math.atan2(nb.y - pb.y, nb.x - pb.x);
-      ctx.save();
-      ctx.translate(t.x, t.y);
-      ctx.rotate(ang);
-      const s = big ? 1.6 : 1;
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.fillRect(-2.5 * s + 4, -2.5 * s + 4, 5 * s, 5 * s);
-      ctx.strokeStyle = '#4c4d48';
-      ctx.lineWidth = Math.max(0.25, 0.45 / ppm);
-      ctx.strokeRect(-2.5 * s, -2.5 * s, 5 * s, 5 * s); // ствол
-      ctx.beginPath(); ctx.moveTo(-2.5 * s, -2.5 * s); ctx.lineTo(2.5 * s, 2.5 * s); ctx.moveTo(2.5 * s, -2.5 * s); ctx.lineTo(-2.5 * s, 2.5 * s); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, -sp - 1.5); ctx.lineTo(0, sp + 1.5); ctx.lineWidth = Math.max(0.3, 0.9 / ppm); ctx.stroke(); // траверса
+      if (t.portal) {
+        // портал ОРУ: две стойки и ригель поперёк линии
+        ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(ang);
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.moveTo(-sp - 3 + 3.6, 3.4); ctx.lineTo(sp + 3 + 3.6, 3.4); ctx.stroke();
+        ctx.fillStyle = '#8e928e';
+        for (const o of [-sp - 3, sp + 3]) ctx.fillRect(-0.7, o - 0.7, 1.4, 1.4);
+        ctx.strokeStyle = '#a4a8a4'; ctx.lineWidth = 0.7;
+        ctx.beginPath(); ctx.moveTo(0, -sp - 3); ctx.lineTo(0, sp + 3); ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      const s = big ? 9 : 6;
+      // тень решётчатой опоры: сужающаяся к вершине, с тенью траверсы
+      ctx.save(); ctx.translate(t.x, t.y);
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = Math.max(0.3, 1 / ppm);
+      const tx = SH[0] * Ht, ty = SH[1] * Ht, cx = SH[0] * Hw, cy = SH[1] * Hw;
+      const c = Math.cos(ang), sn = Math.sin(ang);
+      ctx.beginPath();
+      for (const [ux, uy] of [[-s / 2, -s / 2], [s / 2, -s / 2], [s / 2, s / 2], [-s / 2, s / 2]]) { ctx.moveTo(ux * c - uy * sn, ux * sn + uy * c); ctx.lineTo(tx, ty); }
+      ctx.moveTo(cx - sn * -(sp + 1.5), cy + c * -(sp + 1.5)); ctx.lineTo(cx - sn * (sp + 1.5), cy + c * (sp + 1.5)); // траверса
+      ctx.stroke();
+      ctx.restore();
+      // сама опора (вид сверху): основание с раскосами, траверса с гирляндами изоляторов
+      ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(70,72,68,0.25)'; ctx.fillRect(-s / 2, -s / 2, s, s);
+      ctx.strokeStyle = '#4e514d';
+      ctx.lineWidth = Math.max(0.3, 1 / ppm);
+      ctx.strokeRect(-s / 2, -s / 2, s, s);
+      ctx.beginPath();
+      ctx.moveTo(-s / 2, -s / 2); ctx.lineTo(s / 2, s / 2); ctx.moveTo(s / 2, -s / 2); ctx.lineTo(-s / 2, s / 2);
+      ctx.stroke();
+      ctx.strokeStyle = '#5e615d'; ctx.lineWidth = Math.max(0.5, 1.6 / ppm);
+      ctx.beginPath(); ctx.moveTo(0, -sp - 1.5); ctx.lineTo(0, sp + 1.5); ctx.stroke();
+      if (ppm >= 1.5) { ctx.fillStyle = '#b8a888'; for (const o of [-sp, 0, sp]) ctx.fillRect(-0.3, o - 0.3, 0.6, 0.6); }
       ctx.restore();
     }
   }
-  // Фидеры 10 кВ: столбы и провод
+  // Фидеры 10 кВ: в городе — кабель в земле (не видно), за городом — бетонные опоры и три провода
+  const inCity = (x, y) => world.mask.has(x, y, M.CITY | M.CITYZONE);
   for (const tp of p.tps) {
     const pts = tp.poles;
-    ctx.beginPath();
-    let on = false;
+    const runs = [];
+    let cur = null;
     for (let i = 0; i < pts.length; i++) {
       const [x, y] = pts[i];
       const gap = tp.cut && Math.hypot(x - tp.cut.x, y - tp.cut.y) < 20;
-      if (!inQ(q, x, y) || gap) { on = false; continue; }
-      if (!on) { ctx.moveTo(x, y); on = true; } else ctx.lineTo(x, y);
+      if (!inQ(q, x, y) || gap || inCity(x, y)) { cur = null; continue; }
+      if (!cur) runs.push((cur = []));
+      cur.push([x, y]);
     }
-    if (ppm >= 0.8) {
-      ctx.save();
-      ctx.translate(2.5, 2.5);
-      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-      ctx.lineWidth = 0.12;
-      ctx.stroke(); // тень провода
-      ctx.restore();
+    for (const run of runs) {
+      if (run.length < 2) continue;
+      if (ppm >= 0.8) strokeLine(ctx, run.map(([x, y]) => [x + 3, y + 3.4]), 0.12, 'rgba(0,0,0,0.16)'); // тень провода
+      strokeLine(ctx, run, Math.max(0.12, 0.8 / ppm), 'rgba(45,45,45,0.7)');
+      if (ppm >= 1)
+        for (const [x, y] of run) {
+          ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.25;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 3, y + 3.4); ctx.stroke(); // тень столба
+          ctx.fillStyle = '#9c988e';
+          ctx.beginPath(); ctx.arc(x, y, 0.3, 0, Math.PI * 2); ctx.fill();
+        }
     }
-    ctx.strokeStyle = 'rgba(40,40,40,0.55)';
-    ctx.lineWidth = Math.max(0.1, 0.35 / ppm);
-    ctx.stroke();
-    if (ppm >= 1)
-      for (const [x, y] of pts) {
-        if (!inQ(q, x, y, 5)) continue;
-        ctx.fillStyle = '#4a4238';
-        ctx.beginPath(); ctx.arc(x, y, 0.3, 0, Math.PI * 2); ctx.fill();
+  }
+  // Сельские линии 0,4 кВ: провод по опорам с фонарями вдоль улицы
+  if (ppm >= 0.8 && p.lamps) {
+    let prev = null;
+    for (const l of p.lamps) {
+      if (l.road < 0) { prev = null; continue; }
+      if (prev && prev.road === l.road && Math.hypot(prev.x - l.x, prev.y - l.y) < 90 && (inQ(q, l.x, l.y, 20) || inQ(q, prev.x, prev.y, 20))) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.14)'; ctx.lineWidth = 0.1;
+        ctx.beginPath(); ctx.moveTo(prev.x + 2.4, prev.y + 2.7); ctx.lineTo(l.x + 2.4, l.y + 2.7); ctx.stroke();
+        ctx.strokeStyle = 'rgba(40,40,40,0.7)'; ctx.lineWidth = Math.max(0.1, 0.7 / ppm);
+        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(l.x, l.y); ctx.stroke();
       }
+      if (inQ(q, l.x, l.y, 5) && ppm >= 1.5) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.25; ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(l.x + 2.4, l.y + 2.7); ctx.stroke(); // тень опоры
+        ctx.fillStyle = '#8f8a80'; ctx.beginPath(); ctx.arc(l.x, l.y, 0.3, 0, Math.PI * 2); ctx.fill();
+      }
+      prev = l;
+    }
   }
   // ЛЭП 110 кВ: решётчатые опоры и три провода
   for (const main of p.mains) {

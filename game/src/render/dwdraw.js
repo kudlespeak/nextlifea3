@@ -12,7 +12,7 @@ import { CivTraffic } from './dwtraffic.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
@@ -48,9 +48,10 @@ export function drawDW(ctx, sim, view, side, ui) {
         if (c.k === 'span') { drawSpan(ctx, c, sx, sy, z, o); continue; }
         const st = c.state;
         const key = `dwc:${c.k}:${st}:${Math.round(c.w)}x${Math.round(c.h)}:${c.shelter}:${o.side}`;
-        const big = c.w > 40 || c.k === 'chimney' || c.k === 'tower';
+        const big = c.w > 40 || c.k === 'chimney' || c.k === 'tower' || c.k === 'wt';
         const r = spriteFor(key, () => buildComp(c.k, c.w, c.h, st, c.shelter, o.side), c.angle, z, { maxLod: big ? 7 : 14, shadowAlpha: 0.4 }, now);
         if (r) drawSprite(ctx, r, sx, sy, z, r.residual);
+        if (c.k === 'wt' && st !== 'destroyed') rotor(ctx, sx, sy, z, now, g.wind ?? 0.6, c, st === 'damaged', dpr);
         // Выжженная земля и разлитое масло под сгоревшим трансформатором
         if (c.burned || st === 'destroyed') {
           ctx.fillStyle = 'rgba(20,16,12,0.35)';
@@ -72,6 +73,28 @@ export function drawDW(ctx, sim, view, side, ui) {
       const size = c.k === 'tank' ? 14 : c.k === 'unit' || c.k === 'shop' ? 20 : c.k === 'bunker' ? 10 : 6;
       fire(ctx, toS, c.x, c.y, size, z, now, c.k === 'tank' || c.k === 'coal', hash(c.x + c.y));
     }
+  }
+
+  // ---------- Разбитые ТП (подложка карты статична — повреждение рисуем поверх) ----------
+  if (z > 0.3) for (const tp of sim.world.power?.tps || []) {
+    if (tp.alive || !inView(tp.x, tp.y, 10)) continue;
+    const [sx, sy] = toS(tp.x, tp.y);
+    ctx.fillStyle = 'rgba(22,18,14,0.85)';
+    ctx.beginPath(); ctx.ellipse(sx, sy, Math.max(3, 3.2 * z), Math.max(2, 2.4 * z), 0, 0, Math.PI * 2); ctx.fill();
+    if (z > 1) { ctx.fillStyle = `rgba(255,${150 + Math.floor(Math.sin(now / 90) * 60)},60,0.8)`; ctx.fillRect(sx - 0.6 * z, sy - 0.6 * z, 1.2 * z, 1.2 * z); } // искрит
+  }
+
+  // ---------- Мобильные ГТУ ----------
+  for (const gt of g.gens || []) {
+    if (gt.side !== side || !inView(gt.x, gt.y, 20)) continue;
+    const [sx, sy] = toS(gt.x, gt.y);
+    if (gt.dead) { ctx.fillStyle = 'rgba(25,20,16,0.85)'; ctx.beginPath(); ctx.ellipse(sx, sy, Math.max(3 * dpr, 9 * z), Math.max(2 * dpr, 3 * z), gt.angle, 0, Math.PI * 2); ctx.fill(); continue; }
+    if (z >= 0.8) {
+      const r = spriteFor(`dwv:gtu:${gt.side}`, () => buildVehicle('gtu', gt.side, 0), gt.angle, z, undefined, now);
+      if (r) drawSprite(ctx, r, sx, sy, z, r.residual);
+      if (gt.state === 'ready' && z > 1.5) plume(ctx, toS, gt.x - Math.cos(gt.angle) * 6.5, gt.y - Math.sin(gt.angle) * 6.5, 8, z, now, 'smoke', 0.4, gt.id);
+    } else badge(ctx, sx, sy, 'ГТУ', SIDE_COL[gt.side], dpr, false, false);
+    if (gt.state === 'deploying') ring(ctx, sx, sy - 10 * dpr, 8 * dpr, 1 - (gt.until - t) / 150, '#ffd36b', dpr);
   }
 
   // ---------- Сетки над дорогами ----------
@@ -172,7 +195,8 @@ export function drawDW(ctx, sim, view, side, ui) {
         // чужие трассеры видно, только если рядом свои
         if (!g.ad.some((q) => q.side === side && Math.hypot(q.x - f.x0, q.y - f.y0) < 3000)) continue;
       }
-      const [ax, ay] = toS(f.x0, f.y0);
+      const [ax, ay0] = toS(f.x0, f.y0);
+      const ay = ay0 - 4 * dpr;
       const [bx, by0] = toS(f.x1, f.y1);
       const by = by0 - up(f.alt);
       const k = 1 - age / 0.35;
@@ -186,26 +210,87 @@ export function drawDW(ctx, sim, view, side, ui) {
         ctx.fillStyle = gr;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx + (nx / L) * wd, by + (ny / L) * wd); ctx.lineTo(bx - (nx / L) * wd, by - (ny / L) * wd); ctx.closePath(); ctx.fill();
       }
-      ctx.strokeStyle = f.heavy ? `rgba(255,190,90,${0.9 * k})` : `rgba(255,120,70,${0.85 * k})`;
-      ctx.lineWidth = (f.heavy ? 1.8 : 1.3) * dpr;
-      ctx.setLineDash([5 * dpr, 9 * dpr]);
-      ctx.lineDashOffset = -now / 8;
-      ctx.beginPath(); ctx.moveTo(ax, ay - 4 * dpr); ctx.lineTo(bx, by); ctx.stroke();
-      ctx.setLineDash([]);
+      // Очередь: трассирующие пули/снаряды летят от ствола к цели (каждая — светящийся штрих)
+      const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+      const seg = Math.min(L * 0.12, (f.heavy ? 26 : 18) * dpr);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      const nB = f.heavy ? 5 : 4;
+      for (let i = 0; i < nB; i++) {
+        const u = ((age / 0.35) * 1.6 + i / nB + hash(f.x0 + i)) % 1;
+        const x1 = ax + dx * u, y1 = ay + dy * u, x0 = x1 - (dx / L) * seg, y0 = y1 - (dy / L) * seg;
+        ctx.strokeStyle = f.heavy ? `rgba(255,200,90,${0.35 * k})` : `rgba(255,110,60,${0.3 * k})`;
+        ctx.lineWidth = (f.heavy ? 5 : 3.6) * dpr;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+        ctx.strokeStyle = f.heavy ? `rgba(255,240,190,${0.95 * k})` : `rgba(255,200,150,${0.95 * k})`;
+        ctx.lineWidth = (f.heavy ? 2 : 1.4) * dpr;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      }
+      // Дульная вспышка
+      if (age < 0.12) {
+        const r = (f.heavy ? 9 : 6) * dpr * (1 - age / 0.12);
+        const gm = ctx.createRadialGradient(ax, ay, 0, ax, ay, r);
+        gm.addColorStop(0, 'rgba(255,245,200,0.95)'); gm.addColorStop(1, 'rgba(255,150,50,0)');
+        ctx.fillStyle = gm; ctx.beginPath(); ctx.arc(ax, ay, r, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      // Разрывы зенитных снарядов рядом с целью — серые облачка
+      if (f.heavy && age > 0.1) {
+        ctx.fillStyle = `rgba(70,68,64,${0.45 * k})`;
+        for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(bx + (hash(f.x1 + i) - 0.5) * 30 * dpr, by + (hash(f.y1 + i * 3) - 0.5) * 20 * dpr, (3 + age * 10) * dpr, 0, Math.PI * 2); ctx.fill(); }
+      }
     } else if (f.t === 'airburst') {
-      if (age > 4) continue;
+      if (age > 5) continue;
       const [sx, sy0] = toS(f.x, f.y);
       const sy = sy0 - up(f.alt);
-      if (age < 0.25) {
-        ctx.fillStyle = `rgba(255,220,140,${1 - age / 0.25})`;
-        ctx.beginPath(); ctx.arc(sx, sy, (f.small ? 6 : 12) * dpr * (0.5 + age * 4), 0, Math.PI * 2); ctx.fill();
+      const R = (f.small ? 7 : 16) * dpr;
+      if (age < 0.35) {
+        const k = age / 0.35;
+        const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, R * (0.6 + k));
+        gr.addColorStop(0, `rgba(255,250,220,${1 - k})`); gr.addColorStop(0.4, `rgba(255,170,60,${0.9 * (1 - k)})`); gr.addColorStop(1, 'rgba(255,90,20,0)');
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(sx, sy, R * (0.6 + k), 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
       }
-      ctx.fillStyle = `rgba(60,58,55,${0.5 * (1 - age / 4)})`;
-      ctx.beginPath(); ctx.arc(sx + age * 3 * dpr, sy - age * 2 * dpr, (f.small ? 4 : 8) * dpr * (1 + age), 0, Math.PI * 2); ctx.fill();
-      // обломки падают
+      ctx.fillStyle = `rgba(55,52,48,${0.55 * (1 - age / 5)})`;
+      ctx.beginPath(); ctx.arc(sx + age * 4 * dpr, sy - age * 2 * dpr, R * 0.5 * (1 + age * 0.8), 0, Math.PI * 2); ctx.fill();
+      // горящие обломки падают
       if (!f.small) {
-        ctx.fillStyle = 'rgba(40,36,32,0.8)';
-        for (let i = 0; i < 4; i++) { const k2 = Math.min(1, age / 3); ctx.fillRect(sx + (hash(i + f.x) - 0.5) * 20 * dpr, sy + k2 * up(f.alt) * (0.8 + hash(i * 3 + f.y) * 0.2), 2 * dpr, 2 * dpr); }
+        for (let i = 0; i < 6; i++) {
+          const k2 = Math.min(1, age / 3.5);
+          const px = sx + (hash(i + f.x) - 0.5) * 36 * dpr * (0.3 + k2), py = sy + k2 * k2 * up(f.alt) * (0.8 + hash(i * 3 + f.y) * 0.2);
+          if (k2 >= 1) continue;
+          ctx.fillStyle = i % 2 ? `rgba(255,170,70,${1 - k2})` : 'rgba(40,36,32,0.85)';
+          ctx.fillRect(px, py, 2.2 * dpr, 2.2 * dpr);
+        }
+      }
+    } else if (f.t === 'impact') {
+      // Прилёт: огненный шар, ударная волна, столб дыма, уносимый ветром
+      if (age > 30) continue;
+      const [sx, sy] = toS(f.x, f.y);
+      const wh = f.wh || 20;
+      const Rm = Math.max(8 * dpr, (6 + wh * 0.35) * z);
+      if (age < 0.8) {
+        const k = age / 0.8;
+        ctx.strokeStyle = `rgba(255,240,210,${0.6 * (1 - k)})`; ctx.lineWidth = 2 * dpr;
+        ctx.beginPath(); ctx.ellipse(sx, sy, Rm * (1 + k * 3), Rm * (1 + k * 3) * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
+        const gr = ctx.createRadialGradient(sx, sy - Rm * k * 0.6, 0, sx, sy - Rm * k * 0.6, Rm * (0.8 + k * 0.6));
+        gr.addColorStop(0, `rgba(255,248,210,${1 - k})`); gr.addColorStop(0.35, `rgba(255,160,50,${0.95 * (1 - k * 0.7)})`); gr.addColorStop(1, 'rgba(120,40,10,0)');
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(sx, sy - Rm * k * 0.6, Rm * (0.8 + k * 0.6), 0, Math.PI * 2); ctx.fill();
+        // вспышка освещает округу
+        const gl = ctx.createRadialGradient(sx, sy, 0, sx, sy, Rm * 5);
+        gl.addColorStop(0, `rgba(255,170,80,${0.35 * (1 - k)})`); gl.addColorStop(1, 'rgba(255,120,40,0)');
+        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(sx, sy, Rm * 5, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      const n = 7;
+      for (let i = 0; i < n; i++) {
+        const u = Math.min(1, age / 30);
+        const hh = (i / n) * (0.4 + age * 0.12) * Rm * 5;
+        const r = Rm * (0.5 + (i / n) * 1.2 + age * 0.05);
+        ctx.fillStyle = `rgba(${40 + i * 4},${38 + i * 4},${36 + i * 4},${0.5 * (1 - u) * (1 - i / (n + 2))})`;
+        ctx.beginPath(); ctx.arc(sx + hh * 0.35, sy - hh, r, 0, Math.PI * 2); ctx.fill();
       }
     } else if (f.t === 'money') {
       if (age > 3 || f.side !== side || z < 0.05) continue;
@@ -230,14 +315,19 @@ export function drawDW(ctx, sim, view, side, ui) {
   for (const m of g.missiles) {
     const own = m.side === side;
     if (!own && !g.ad.some((q) => q.side === side && Math.hypot(q.x - m.x, q.y - m.y) < 6000)) continue;
-    ctx.lineWidth = 2 * dpr;
-    ctx.strokeStyle = 'rgba(230,228,220,0.55)';
-    ctx.beginPath();
-    m.trail.forEach(([x, y, alt], i) => { const [sx, sy] = toS(x, y); i ? ctx.lineTo(sx, sy - up(alt)) : ctx.moveTo(sx, sy - up(alt)); });
-    ctx.stroke();
+    // дымный след ракеты: густой у сопла, расплывается к хвосту
+    for (let i = 1; i < m.trail.length; i++) {
+      const [x0, y0, a0] = m.trail[i - 1], [x1, y1, a1] = m.trail[i];
+      const [p0x, p0y] = toS(x0, y0), [p1x, p1y] = toS(x1, y1);
+      const k = i / m.trail.length;
+      ctx.strokeStyle = `rgba(232,230,224,${0.15 + 0.5 * k})`;
+      ctx.lineWidth = (5 - k * 3) * dpr;
+      ctx.beginPath(); ctx.moveTo(p0x, p0y - up(a0)); ctx.lineTo(p1x, p1y - up(a1)); ctx.stroke();
+    }
     const [sx, sy] = toS(m.x, m.y);
-    ctx.fillStyle = '#fff3c0';
-    ctx.beginPath(); ctx.arc(sx, sy - up(m.alt), 2.5 * dpr, 0, Math.PI * 2); ctx.fill();
+    const gm = ctx.createRadialGradient(sx, sy - up(m.alt), 0, sx, sy - up(m.alt), 7 * dpr);
+    gm.addColorStop(0, 'rgba(255,255,230,1)'); gm.addColorStop(0.4, 'rgba(255,190,90,0.9)'); gm.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = gm; ctx.beginPath(); ctx.arc(sx, sy - up(m.alt), 7 * dpr, 0, Math.PI * 2); ctx.fill();
   }
 
   // ---------- Машины на дорогах ----------
@@ -302,10 +392,11 @@ export function drawDW(ctx, sim, view, side, ui) {
     ctx.fillStyle = `rgba(0,0,0,${Math.max(0.1, 0.35 - d.alt / 6000)})`;
     ctx.beginPath(); ctx.ellipse(gx, gy, Math.max(2 * dpr, 1.2 * z), Math.max(1.2 * dpr, 0.6 * z), 0, 0, Math.PI * 2); ctx.fill();
     // Опознание: свои — модель; чужие — силуэт по классу (ложную цель от ударной на радаре не отличить)
-    const showType = own ? d.type : D.cls === 'decoy' ? 'shahed' : d.type;
+    const showType = own ? d.type : D.cls === 'decoy' ? (d.side === 'red' ? 'shahed' : 'fp1') : d.type;
+    const vr = D.cls === 'decoy' && !own ? 0 : d.variant || 0;
     if (z >= 1.2) {
       const k = Math.max(z * 1.1, (D.cls === 'interceptor' ? 7 : 5) * dpr); // не мельче читаемого
-      const r = spriteFor(`dwd:${showType}`, () => buildDrone(showType), d.heading, k, { shadow: false }, now);
+      const r = spriteFor(`dwd:${showType}:${vr}`, () => buildDrone(showType, vr), d.heading, k, { shadow: false }, now);
       if (r) drawSprite(ctx, r, sx, sy, k, r.residual);
       // толкающий винт — мерцающий диск за хвостом
       if (D.cls !== 'interceptor') {
@@ -418,6 +509,35 @@ function drawSpan(ctx, c, sx, sy, z, o) {
     for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc((hash(i + c.x) - 0.5) * w * 0.8, (hash(i * 2 + c.y) - 0.5) * h * 0.6, Math.max(1.5, 1.6 * z), 0, Math.PI * 2); ctx.fill(); }
   }
   ctx.restore();
+}
+
+// Ротор ветроустановки: три лопасти по 55 м на высоте 90 м, вращение от силы ветра; тень на земле
+function rotor(ctx, sx, sy, z, now, wind, c, damaged, dpr) {
+  const H = 90, R = 55;
+  const px = -Math.sin(c.angle), py = Math.cos(c.angle); // плоскость вращения — поперёк ветра
+  const a0 = damaged ? 0.5 : (now / 1000) * (0.5 + wind * 1.3) + c.x * 0.01;
+  const hubX = sx, hubY = sy - H * K3 * z;
+  const shx = 0.3, shy = 0.34; // тень от солнца: смещение на метр высоты
+  ctx.lineCap = 'round';
+  // тень лопастей на земле
+  ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth = Math.max(1, 1.8 * z);
+  ctx.beginPath();
+  for (let k = 0; k < 3; k++) {
+    const a = a0 + (k * Math.PI * 2) / 3, h = H + Math.sin(a) * R;
+    ctx.moveTo(sx + shx * H * z, sy + shy * H * z);
+    ctx.lineTo(sx + (px * Math.cos(a) * R + shx * h) * z, sy + (py * Math.cos(a) * R + shy * h) * z);
+  }
+  ctx.stroke();
+  // лопасти
+  ctx.strokeStyle = 'rgba(236,236,230,0.95)'; ctx.lineWidth = Math.max(1, 2.2 * z);
+  ctx.beginPath();
+  for (let k = 0; k < 3; k++) {
+    const a = a0 + (k * Math.PI * 2) / 3;
+    ctx.moveTo(hubX, hubY);
+    ctx.lineTo(hubX + px * Math.cos(a) * R * z, hubY + py * Math.cos(a) * R * z - Math.sin(a) * R * K3 * z);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#e8e8e2'; ctx.beginPath(); ctx.arc(hubX, hubY, Math.max(1.2 * dpr, 1.6 * z), 0, Math.PI * 2); ctx.fill();
 }
 
 // Столб пара / дыма над высоким сооружением

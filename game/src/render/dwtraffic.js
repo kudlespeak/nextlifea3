@@ -8,7 +8,7 @@ import { spriteFor, drawSprite } from './mesh3d.js';
 import { buildVehicle } from './dwmodels.js';
 
 const PER_SIDE = 55;
-const SPEED = 1.5; // тот же темп, что у служебного транспорта
+const SPEED = 1.7; // тот же темп, что у служебного транспорта
 
 export class CivTraffic {
   constructor(g) {
