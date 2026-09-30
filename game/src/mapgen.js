@@ -512,12 +512,21 @@ function generateDroneWarWorld(seed) {
   // Дороги из сёл: близко к городу — в город, иначе — к ближайшей точке уже проложенной сети
   // (трасса, дороги между городами, дороги соседних сёл): получается дерево с примыканиями «Т»,
   // а не пучок прямых, пересекающихся в чистом поле
-  const net = [highway, hwLocal, ...[...growth.values()].flat()];
+  // сеть — только настоящие дороги: линии роста городов из их центров — не дороги (connectToCity их обрезает)
+  const net = [highway, hwLocal];
   const order = villages.map((v) => { let bd = Infinity, best = null; for (const ct of allC) { const d = Math.hypot(ct.c[0] - v.c[0], ct.c[1] - v.c[1]); if (d < bd) { bd = d; best = ct; } } return { v, bd, best }; }).sort((a, b) => a.bd - b.bd);
   for (const { v, bd, best } of order) {
     if (bd < 3500) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
     let tp = null, td = Infinity;
-    for (const ln of net) { const p = nearestPoint(ln, v.c), d = Math.hypot(p[0] - v.c[0], p[1] - v.c[1]); if (d < td) { td = d; tp = p; } }
+    // точки внутри городов не годятся: въезды в город потом обрезаются по краю застройки
+    const nearCity = (p) => allC.some((ct) => Math.hypot(ct.c[0] - p[0], ct.c[1] - p[1]) < 2600 * (ct.sc || 1));
+    // без переправ: мост через реку у сельской дороги может не встать — такая дорога оборвёт сеть
+    const dry = (p) => { const L = Math.hypot(p[0] - v.c[0], p[1] - v.c[1]); for (let t = 0; t < L; t += 15) if (mask.has(v.c[0] + ((p[0] - v.c[0]) * t) / L, v.c[1] + ((p[1] - v.c[1]) * t) / L, M.WATER | M.RAIL)) return false; return true; };
+    const cands = [];
+    for (const ln of net) for (let k = 0; k < ln.length; k += 2) { const p = ln[k]; if (!nearCity(p)) cands.push([Math.hypot(p[0] - v.c[0], p[1] - v.c[1]), p]); }
+    cands.sort((a, b) => a[0] - b[0]);
+    for (const [d, p] of cands.slice(0, 200)) if (dry(p)) { td = d; tp = p; break; }
+    if (!tp) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
     if (bd < 6000 && td > bd * 0.8) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
     const ln = wobblyRoad(rng, v.c, tp.slice(), td > 2500 ? 4 : 2);
     addRoad(world, ln, 'local'); net.push(ln);
@@ -1210,42 +1219,45 @@ function connectRoadNet(world, rng) {
   for (let i = 0; i < n; i++) { const k = Math.floor(xs[i] / C) * 100003 + Math.floor(ys[i] / C); (bins.get(k) || bins.set(k, []).get(k)).push(i); }
   const near = (x, y, r, fn) => { for (let cx = Math.floor((x - r) / C); cx <= Math.floor((x + r) / C); cx++) for (let cy = Math.floor((y - r) / C); cy <= Math.floor((y + r) / C); cy++) for (const j of bins.get(cx * 100003 + cy) || []) fn(j); };
   for (let i = 1; i < n; i++) if (rid[i] === rid[i - 1]) uni(i, i - 1);
-  for (let i = 0; i < n; i++) near(xs[i], ys[i], 45, (j) => { if (rid[j] !== rid[i] && Math.hypot(xs[j] - xs[i], ys[j] - ys[i]) < 45) uni(i, j); });
+  // связь — как в графе дорог логистики (узлы ближе полуширины + 11 м), иначе машины не проедут
+  const wOf = (i) => world.roadList[rid[i]].width || 8;
+  for (let i = 0; i < n; i++) near(xs[i], ys[i], 40, (j) => { if (rid[j] !== rid[i] && Math.hypot(xs[j] - xs[i], ys[j] - ys[i]) < Math.max(wOf(i), wOf(j)) / 2 + 9) uni(i, j); });
   // концы дорог — к ближайшему узлу в 90 м (как в дорожном графе логистики)
   for (let i = 0; i < n; i++) {
     if (i > 0 && rid[i - 1] === rid[i] && i + 1 < n && rid[i + 1] === rid[i]) continue;
-    near(xs[i], ys[i], 90, (j) => { if (rid[j] !== rid[i] && Math.hypot(xs[j] - xs[i], ys[j] - ys[i]) < 90) uni(i, j); });
+    near(xs[i], ys[i], 40, (j) => { if (rid[j] !== rid[i] && Math.hypot(xs[j] - xs[i], ys[j] - ys[i]) < Math.max(wOf(i), wOf(j)) / 2 + 9) uni(i, j); });
   }
+  let noCross = true;
   const passable = (a, b) => {
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
     let wet = 0, wetMax = 0;
     for (let t = 20; t < L - 20; t += 10) {
       const x = a[0] + ((b[0] - a[0]) * t) / L, y = a[1] + ((b[1] - a[1]) * t) / L;
-      if (mask.has(x, y, M.BUILD | M.RAIL | M.CITY)) return false;
-      if (t > 40 && t < L - 40 && mask.has(x, y, M.ROAD)) return false; // перемычка не пересекает другие дороги
+      if (mask.has(x, y, M.BUILD | M.RAIL) || (mask.has(x, y, M.CITY) && t > 150 && t < L - 150)) return false; // из города можно выехать, но не пересечь его
+      if (noCross && t > 40 && t < L - 40 && mask.has(x, y, M.ROAD)) return false; // перемычка не пересекает другие дороги
       if (mask.has(x, y, M.WATER)) { wet += 10; wetMax = Math.max(wetMax, wet); } else wet = 0;
     }
     return wetMax < 200;
   };
-  for (let pass = 0; pass < 40; pass++) {
+  for (let pass = 0; pass < 120; pass++) {
     const size = new Map();
     for (let i = 0; i < n; i++) { const r = find(i); size.set(r, (size.get(r) || 0) + 1); }
     const main = [...size.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    const islands = [...size.entries()].filter(([r, k]) => r !== main && k >= 8).sort((a, b) => b[1] - a[1]);
+    const islands = [...size.entries()].filter(([r, k]) => r !== main && k >= 3).sort((a, b) => b[1] - a[1]);
     if (!islands.length) break;
     let linked = false;
     for (const [root] of islands) {
       const cand = [];
-      for (let i = 0; i < n; i += 2) {
+      for (let i = 0; i < n; i += 1) {
         if (find(i) !== root) continue;
-        for (const R of [400, 1200, 3000]) {
+        for (const R of [400, 1200, 3000, 8000]) {
           let best = -1, bd = R;
           near(xs[i], ys[i], R, (j) => { if (find(j) !== main) return; const d = Math.hypot(xs[j] - xs[i], ys[j] - ys[i]); if (d < bd) { bd = d; best = j; } });
           if (best >= 0) { cand.push([bd, i, best]); break; }
         }
       }
       cand.sort((a, b) => a[0] - b[0]);
-      for (const [, i, j] of cand.slice(0, 40)) {
+      for (const [, i, j] of cand.slice(0, 300)) {
         const a = [xs[i], ys[i]], b = [xs[j], ys[j]];
         if (!passable(a, b)) continue;
         const L = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L, o = rng.float(-0.06, 0.06) * L;
@@ -1256,7 +1268,7 @@ function connectRoadNet(world, rng) {
         break;
       }
     }
-    if (!linked) break;
+    if (!linked) { if (noCross) { noCross = false; continue; } break; } // без перемычек, не пересекающих дорог, не обойтись — разрешаем перекрёсток
   }
 }
 
