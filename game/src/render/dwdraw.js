@@ -167,6 +167,134 @@ function drawFarmWork(ctx, g, world, toS, inView, z, now, dpr) {
   }
 }
 
+function drawFrontFire(ctx, world, toS, inView, z, now, dpr) {
+  const F = world.front, H = world.H, t = now / 1000;
+  const lineX = (y, off) => F.fx + off + Math.sin(y / 2700 + F.ph) * 180 + Math.sin(y / 900 + F.ph * 2) * 45;
+  const hs = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+  for (let i = 0; i < 40; i++) {
+    const per = 4 + hs(i, 1) * 9, cyc = Math.floor((t + hs(i, 2) * per) / per), ph = ((t + hs(i, 2) * per) % per) / per * per;
+    const y = 300 + hs(i, cyc) * (H - 600), x = lineX(y, (hs(cyc, i) - 0.5) * 1100);
+    if (!inView(x, y, 200)) continue;
+    const [sx, sy] = toS(x, y);
+    if (ph < 0.25) {
+      // вспышка разрыва
+      const r = (18 + 30 * hs(i, cyc + 7)) * z * (1 - ph * 2) + 3 * dpr;
+      const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+      gr.addColorStop(0, 'rgba(255,240,190,0.95)'); gr.addColorStop(0.4, 'rgba(255,150,60,0.7)'); gr.addColorStop(1, 'rgba(255,90,30,0)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+    }
+    if (ph < 7) {
+      // облако дыма и пыли, уносимое ветром
+      const k = ph / 7, r = (10 + 45 * k) * z + 2 * dpr;
+      ctx.fillStyle = `rgba(70,64,56,${0.45 * (1 - k)})`;
+      ctx.beginPath(); ctx.arc(sx + k * 30 * z, sy - k * 40 * z, r, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // очаги пожаров в серой зоне: столбы дыма
+  for (let i = 0; i < 12; i++) {
+    const y = 600 + hs(i, 99) * (H - 1200), x = lineX(y, (hs(i, 98) - 0.5) * 900);
+    if (!inView(x, y, 400)) continue;
+    for (let k = 0; k < 6; k++) {
+      const f = ((t * 0.08 + k / 6 + hs(i, k)) % 1);
+      const [sx, sy] = toS(x + f * 120, y - f * 40);
+      ctx.fillStyle = `rgba(55,52,48,${0.35 * (1 - f)})`;
+      ctx.beginPath(); ctx.arc(sx, sy - f * 160 * z, (8 + f * 40) * z + dpr, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+function drawLineEnds(ctx, g, world, side, toS, inView, z) {
+  const known = (id) => id == null || id === 'import' || g.known(side, g.obj(id));
+  for (const ln of world.power?.lines || []) {
+    const pl = ln.pylons;
+    if (!pl || pl.length < 2) continue;
+    if (!(ln.feed ? known(ln.a) : known(ln.a) && known(ln.b))) continue;
+    const big = ln.kv >= 330, sp = big ? 7.5 : 4, Hw = big ? 30 : 20;
+    for (const [end, nb] of [[pl[0], pl[1]], [pl[pl.length - 1], pl[pl.length - 2]]]) {
+      if (!end.ph || !inView(end.x, end.y, 300)) continue;
+      const L = Math.hypot(end.x - nb.x, end.y - nb.y) || 1, nx = -(end.y - nb.y) / L, ny = (end.x - nb.x) / L;
+      for (const pass of [0, 1]) {
+        ctx.strokeStyle = pass ? 'rgba(55,57,55,0.9)' : 'rgba(0,0,0,0.18)';
+        ctx.lineWidth = Math.max(0.7, (big ? 0.7 : 0.5) * z);
+        ctx.beginPath();
+        for (const o of [-sp, 0, sp]) {
+          const P = (x, y, h) => { const [sx, sy] = toS(pass ? x : x + 0.3 * h, pass ? y : y + 0.34 * h); return [sx, sy - (pass ? h * K3 * z : 0)]; };
+          // от опоры (провод на высоте траверсы) к порталу; на опоре — там же, где кончается провод на карте
+          const A = P(nb.x + nx * o, nb.y + ny * o, pass ? 0 : Hw), B = P(end.x + nx * o * 0.5, end.y + ny * o * 0.5, end.ph), M = P((nb.x + end.x) / 2 + nx * o * 0.75, (nb.y + end.y) / 2 + ny * o * 0.75, end.ph * 0.6);
+          ctx.moveTo(A[0], A[1]); ctx.quadraticCurveTo(2 * M[0] - (A[0] + B[0]) / 2, 2 * M[1] - (A[1] + B[1]) / 2, B[0], B[1]);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+}
+// ---------- Ограда объекта: бетонный забор у энергетики, военных и промышленных объектов,
+// сетчатый — у магазинов и АЗС; ворота со шлагбаумом и будкой охраны со стороны подъезда ----------
+const HARD_FENCE = new Set(['tpp', 'hpp', 'chp', 'ps330', 'ps110', 'decoy', 'oil', 'ammo', 'factory', 'workshop', 'launch', 'refinery', 'coalmine', 'reserve', 'bess', 'spp', 'solar', 'hub', 'elevator', 'cement', 'railterm', 'port']);
+function drawFence(ctx, o, toS, z, dpr, part) {
+  if (o.kind === 'store' || o.kind === 'kiosk') return;
+  const hard = HARD_FENCE.has(o.kind), Hf = hard ? 2.6 : 1.8;
+  const hw = o.w / 2 + 8, hh = o.h / 2 + 8, c = Math.cos(o.angle), s = Math.sin(o.angle);
+  const W = (u, v) => [o.x + u * c - v * s, o.y + u * s + v * c];
+  // стороны: 0 — +u, π/2 — +v, π — −u, −π/2 — −v; ворота — на стороне gateQ
+  const gq = o.gateQ ?? Math.PI / 2;
+  const gside = Math.abs(Math.cos(gq)) > 0.5 ? (Math.cos(gq) > 0 ? 0 : 2) : (Math.sin(gq) > 0 ? 1 : 3);
+  const sides = [[[hw, -hh], [hw, hh]], [[hw, hh], [-hw, hh]], [[-hw, hh], [-hw, -hh]], [[-hw, -hh], [hw, -hh]]];
+  const gate = 5;
+  const runs = [];
+  sides.forEach(([p, q], i) => {
+    if (i !== gside) { runs.push([p, q]); return; }
+    const m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], L = Math.hypot(q[0] - p[0], q[1] - p[1]), d = [(q[0] - p[0]) / L, (q[1] - p[1]) / L];
+    runs.push([p, [m[0] - d[0] * gate, m[1] - d[1] * gate]], [[m[0] + d[0] * gate, m[1] + d[1] * gate], q]);
+  });
+  // дальние от зрителя стороны рисуем до сооружений, ближние — после (перекрывают правильно)
+  const cy = toS(o.x, o.y)[1];
+  const mine = (p, q) => { const my = toS(...W((p[0] + q[0]) / 2, (p[1] + q[1]) / 2))[1]; return part === 'back' ? my < cy : my >= cy; };
+  for (let i = runs.length - 1; i >= 0; i--) if (!mine(...runs[i])) runs.splice(i, 1);
+  const P = (u, v, h) => { const [x, y] = W(u, v); const [sx, sy] = toS(x, y); return [sx, sy - h * K3 * z]; };
+  const G = (u, v, h) => { const [x, y] = W(u, v); const [sx, sy] = toS(x + 0.3 * h, y + 0.34 * h); return [sx, sy]; };
+  // тень забора
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = Math.max(1, (hard ? 1.2 : 0.6) * z * 2);
+  ctx.beginPath();
+  for (const [p, q] of runs) { const A = G(p[0], p[1], Hf), B = G(q[0], q[1], Hf); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); }
+  ctx.stroke();
+  // полотно: у бетонного — плиты (заливка между низом и верхом), у сетчатого — прозрачная сетка
+  for (const [p, q] of runs) {
+    const a0 = P(p[0], p[1], 0), b0 = P(q[0], q[1], 0), a1 = P(p[0], p[1], Hf), b1 = P(q[0], q[1], Hf);
+    ctx.beginPath(); ctx.moveTo(a0[0], a0[1]); ctx.lineTo(b0[0], b0[1]); ctx.lineTo(b1[0], b1[1]); ctx.lineTo(a1[0], a1[1]); ctx.closePath();
+    ctx.fillStyle = hard ? 'rgba(168,164,152,0.95)' : 'rgba(150,160,150,0.25)'; ctx.fill();
+    ctx.strokeStyle = hard ? 'rgba(90,88,82,0.9)' : 'rgba(110,118,112,0.8)'; ctx.lineWidth = Math.max(0.6, 0.15 * z * 4);
+    ctx.beginPath(); ctx.moveTo(a1[0], a1[1]); ctx.lineTo(b1[0], b1[1]); ctx.stroke();
+    if (z > 0.8) {
+      // столбы / стыки плит через 3 м
+      const L = Math.hypot(q[0] - p[0], q[1] - p[1]), n = Math.floor(L / 3);
+      ctx.beginPath();
+      for (let k = 0; k <= n; k++) { const t = k / Math.max(1, n), u = p[0] + (q[0] - p[0]) * t, v = p[1] + (q[1] - p[1]) * t; const A = P(u, v, 0), B = P(u, v, Hf + (hard ? 0.3 : 0)); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); }
+      ctx.strokeStyle = hard ? 'rgba(120,116,108,0.9)' : 'rgba(80,86,82,0.9)'; ctx.lineWidth = Math.max(0.5, 0.12 * z * 4); ctx.stroke();
+      if (hard) { // «колючка» поверху
+        ctx.strokeStyle = 'rgba(60,60,58,0.7)'; ctx.lineWidth = Math.max(0.4, 0.06 * z * 4);
+        ctx.beginPath(); const a2 = P(p[0], p[1], Hf + 0.5), b2 = P(q[0], q[1], Hf + 0.5); ctx.moveTo(a2[0], a2[1]); ctx.lineTo(b2[0], b2[1]); ctx.stroke();
+      }
+    }
+  }
+  // ворота: шлагбаум и будка охраны
+  if (!mine(...sides[gside])) return;
+  const [gp, gq2] = sides[gside], gm = [(gp[0] + gq2[0]) / 2, (gp[1] + gq2[1]) / 2], L = Math.hypot(gq2[0] - gp[0], gq2[1] - gp[1]), d = [(gq2[0] - gp[0]) / L, (gq2[1] - gp[1]) / L];
+  if (z > 0.5) {
+    const A = P(gm[0] - d[0] * gate, gm[1] - d[1] * gate, 1), B = P(gm[0] + d[0] * (gate - 1), gm[1] + d[1] * (gate - 1), 1);
+    ctx.strokeStyle = '#d23a2a'; ctx.lineWidth = Math.max(0.8, 0.25 * z * 4); ctx.setLineDash([3 * z, 3 * z]);
+    ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = '#f2f0ea'; ctx.lineWidth = Math.max(0.4, 0.12 * z * 4); ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke();
+  }
+  if (hard) {
+    // будка КПП внутри у ворот
+    const nIn = gside === 0 ? [-1, 0] : gside === 2 ? [1, 0] : gside === 1 ? [0, -1] : [0, 1];
+    const bu = gm[0] - d[0] * (gate + 4) + nIn[0] * 4, bv = gm[1] - d[1] * (gate + 4) + nIn[1] * 4;
+    const corners = [[-1.8, -1.4], [1.8, -1.4], [1.8, 1.4], [-1.8, 1.4]];
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); corners.forEach(([du, dv], i) => { const q = G(bu + du, bv + dv, 2.6); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.fill();
+    ctx.fillStyle = '#c9c4b6'; ctx.beginPath(); corners.forEach(([du, dv], i) => { const q = P(bu + du, bv + dv, 0); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.fill();
+    ctx.fillStyle = '#6f7b83'; ctx.beginPath(); corners.forEach(([du, dv], i) => { const q = P(bu + du, bv + dv, 2.6); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.fill();
+  }
+}
 // ---------- Связи внутри объекта: ошиновка от ОРУ к трансформаторам, токопроводы от блоков,
 // газоходы к трубе, кабели солнечных полей, трубопроводы резервуарного парка ----------
 const ORU_H = (c) => (c.w > 100 || /330/.test(c.name) ? 13 : 8.5);
@@ -253,6 +381,8 @@ export function drawDW(ctx, sim, view, side, ui) {
     if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
       // Сначала дальние узлы (по y экрана), чтобы высокие не перекрывались неверно
       const comps = [...o.comps].sort((a, b) => a.y - b.y);
+      const fenced = z > 0.2 && o.kind !== 'bridge' && o.kind !== 'pontoon' && o.kind !== 'wpp';
+      if (fenced) drawFence(ctx, o, toS, z, dpr, 'back');
       for (const c of comps) {
         if (!inView(c.x, c.y, Math.max(c.w, c.h) + 40)) continue;
         const [sx, sy] = toS(c.x, c.y);
@@ -270,6 +400,7 @@ export function drawDW(ctx, sim, view, side, ui) {
         }
       }
       if (z > 0.12) drawLinks(ctx, o, toS, z, dpr);
+      if (fenced) drawFence(ctx, o, toS, z, dpr, 'front');
       // Пар градирен и дым труб — пока блоки работают
       const units = o.comps.filter((c) => c.k === 'unit' && c.state === 'ok').length;
       if (o.kind === 'tpp' && units) {
@@ -287,6 +418,10 @@ export function drawDW(ctx, sim, view, side, ui) {
     }
   }
 
+  // ---------- Бои на линии фронта: разрывы артиллерии и дым над серой зоной ----------
+  if (sim.world.front) drawFrontFire(ctx, sim.world, toS, inView, z, now, dpr);
+  // ---------- Последние пролёты ЛЭП: от опоры к концевому порталу ОРУ, провода на высоте траверсы ----------
+  if (z > 0.08) drawLineEnds(ctx, g, sim.world, side, toS, inView, z);
   // ---------- Поезда и баржи с зерном, дорожники, строящиеся ЛЭП ----------
   if (g.infra) drawInfra(ctx, g, side, toS, inView, z, now, dpr, t);
 

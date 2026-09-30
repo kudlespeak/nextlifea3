@@ -7,15 +7,16 @@ import { BUILD, BUILD_GROUPS, STAGE_NAME, upgradeCost, UPKEEP, LAUNCH_PER } from
 import { LAWS, TAXES, MOBIL, PROJECTS, TECH } from './sim/dwstate.js';
 import { REGION_SPEC } from './sim/dwinfra.js';
 import { RESEARCH, droneWork } from './sim/dwres.js';
+import { icon } from './icons.js';
 const CREW_ST = { travel: 'едет к объекту', waitfire: 'ждёт, пока потушат', work: 'ремонтирует' };
 
 const $ = (id) => document.getElementById(id);
 const TAB_TITLE = { grid: 'Обзор', ad: 'ПВО', strike: 'Дроны и удары', repair: 'Ремонт', econ: 'Стройка', res: 'Исследования', state: 'Страна' };
-const AD_ICON = { mog: '🔫', spaag: '💥', sam: '🚀', ew: '📡', acoustic: '👂', radar: '📶', ewd: '🧿', icpt: '🪃' };
-const DRONE_ICON = { strike: '💣', decoy: '🎭', recon: '🛰', loiter: '🎯', hunter: '🦅' };
-const GROUP_ICON = ['🛒', '🌾', '🚂', '🏘', '⚡', '🎖'];
+const AD_ICON = { mog: 'mog', spaag: 'spaag', sam: 'sam', ew: 'ew', acoustic: 'acoustic', radar: 'radar', ewd: 'ewd', icpt: 'icpt' };
+const DRONE_ICON = { strike: 'strike', decoy: 'decoy', recon: 'recon', loiter: 'loiter', hunter: 'hunter' };
+const GROUP_ICON = ['market', 'mill', 'railterm', 'housing', 'bolt', 'shield'];
 const GROUP_SHORT = ['торговля', 'агро', 'экспорт', 'люди', 'энергия', 'военное'];
-const BUILD_ICON = { store: '🏪', fuel: '⛽', market: '🛒', mall: '🏬', hub: '📦', autopark: '🚚', elevator: '🌾', agro: '🚜', mill: '🍞', dairy: '🐄', cement: '🧱', railterm: '🚂', port: '⚓', housing: '🏘', hospital: '🏥', school: '🏫', watertower: '💧', solar: '☀', bess: '🔋', refinery: '🛢', coalmine: '⛏', reserve: '🏦', pontoon: '🌉', launch: '🚀', workshop: '🏭', decoy: '🎭' };
+const BUILD_ICON = { store: 'store', fuel: 'fuel', market: 'market', mall: 'mall', hub: 'hub', autopark: 'autopark', elevator: 'elevator', agro: 'agro', mill: 'mill', dairy: 'dairy', cement: 'cement', railterm: 'railterm', port: 'port', housing: 'housing', hospital: 'hospital', school: 'school', watertower: 'watertower', solar: 'solar', bess: 'bess', refinery: 'refinery', coalmine: 'coalmine', reserve: 'reserve', pontoon: 'pontoon', launch: 'launch', workshop: 'workshop', decoy: 'decoyps' };
 // Первое предложение описания — для плитки
 // Перерисовать блок, не закрывая раскрытые «подробности» и не сбрасывая прокрутку
 function setHTML(el, html) {
@@ -39,8 +40,11 @@ export class DWUI {
     this.enemy = this.side === 'blue' ? 'red' : 'blue';
     $('roster').style.display = 'none';
     $('dw-panel').classList.add('show');
+    for (const [k, ic] of Object.entries({ grid: 'home', ad: 'shield', strike: 'target', repair: 'wrench', econ: 'crane', res: 'flask', state: 'columns' })) { const b = document.querySelector(`.dw-rail [data-dwtab="${k}"] i`); if (b) b.outerHTML = icon(ic, 'ri'); }
+    $('dw-fold').onclick = () => { this.state.folded = !this.state.folded; this.fold(); };
+    this.fold();
     document.body.classList.add('dw');
-    for (const t of document.querySelectorAll('[data-dwtab]')) t.onclick = () => { this.state.tab = t.dataset.dwtab; this.build(); };
+    for (const t of document.querySelectorAll('[data-dwtab]')) t.onclick = () => { if (this.state.tab === t.dataset.dwtab && !this.state.folded) { this.state.folded = true; this.fold(); return; } this.state.tab = t.dataset.dwtab; this.state.folded = false; this.fold(); this.build(); };
     $('dw-body').onclick = (e) => this.onPanel(e);
     $('dw-card').onclick = (e) => this.onPanel(e);
     $('dw-status').onclick = (e) => this.onPanel(e);
@@ -58,7 +62,8 @@ export class DWUI {
     for (const t of document.querySelectorAll('[data-dwtab]')) t.classList.toggle('active', t.dataset.dwtab === this.state.tab);
     const g = this.g, side = this.side;
     $('dw-title').textContent = TAB_TITLE[this.state.tab] || '';
-    const tile = (attr, sel, icon, name, sub, right, extra = '', cls = '', title = '') => `<div class="dw-tile${sel ? ' sel' : ''}${cls ? ' ' + cls : ''}" ${attr} title="${esc(title)}"><span class="ic">${icon}</span><b>${esc(name)}</b><small>${sub}</small>${right}${extra}</div>`;
+    const ICON = icon;
+    const tile = (attr, sel, icon, name, sub, right, extra = '', cls = '', title = '') => `<div class="dw-tile${sel ? ' sel' : ''}${cls ? ' ' + cls : ''}" ${attr} title="${esc(title)}">${icon ? ICON(icon, 'ic') : ''}<b>${esc(name)}</b><small>${sub}</small>${right}${extra}</div>`;
     let h = '';
     if (this.state.tab === 'grid') {
       h = `<div id="dw-grid"></div>`;
@@ -66,7 +71,7 @@ export class DWUI {
       h += `<div class="dw-note">Выберите средство и кликните по карте на своей земле. Свою позицию выделите кликом — правый клик переместит мобильную группу.</div><div class="dw-tiles">`;
       for (const [k, T] of Object.entries(DW_AD)) {
         const ok = g.res.adOk(side, k);
-        h += tile(ok ? `data-ad="${k}"` : '', this.state.mode === 'ad:' + k, AD_ICON[k] || '🛡', T.name[side], ok ? esc(T.sub[side]) : `🔒 исследуйте «${esc(g.res.needFor('ad', k))}»`, `<span class="price">${g.adCost(side, k)}</span>`, '', ok ? '' : 'locked', T.desc);
+        h += tile(ok ? `data-ad="${k}"` : '', this.state.mode === 'ad:' + k, AD_ICON[k] || 'shield', T.name[side], ok ? esc(T.sub[side]) : `${icon('lock')} исследуйте «${esc(g.res.needFor('ad', k))}»`, `<span class="price">${g.adCost(side, k)}</span>`, '', ok ? '' : 'locked', T.desc);
       }
       h += `</div><label class="dw-check"><input type="checkbox" data-act="ranges" ${this.state.showRanges ? 'checked' : ''}> Показывать зоны поражения</label>`;
       h += `<div class="dw-sub">Ваши позиции</div><div id="dw-adlist"></div>`;
@@ -75,38 +80,44 @@ export class DWUI {
       for (const k of dronesOf(side)) {
         const D = DW_DRONES[k], ok = g.res.droneOk(side, k), cost = g.droneCost(side, k);
         const role = { strike: 'ударный', decoy: 'ложная цель', recon: 'разведчик', loiter: 'по ПВО и машинам', hunter: 'охотник на дорогах' }[D.cls] || '';
-        const sub = ok ? `${role}${D.wh ? ` · ${D.wh} кг` : ''} · ${Math.round(cost)} оч.` : `🔒 исследуйте «${esc(g.res.needFor('drone', k))}»`;
+        const sub = ok ? `${role}${D.wh ? ` · ${D.wh} кг` : ''} · ${Math.round(cost)} оч.` : `${icon('lock')} исследуйте «${esc(g.res.needFor('drone', k))}»`;
         const n = g.res.stock(side, k);
-        h += tile(ok ? `data-drone="${k}"` : '', this.state.mode === 'strike:' + k, DRONE_ICON[D.cls] || '✈', D.short, sub, ok ? `<span class="stock${n ? '' : ' zero'}" data-stock="${k}">${n}</span>` : '', ok ? `<span class="row"><button data-order="${k}:1" title="заказать 1 — ${cost.toFixed(0)} оч.">+1</button><button data-order="${k}:5" title="заказать 5 — ${(cost * 5).toFixed(0)} оч.">+5</button></span>` : '', ok ? '' : 'locked', D.desc);
+        h += tile(ok ? `data-drone="${k}"` : '', this.state.mode === 'strike:' + k, DRONE_ICON[D.cls] || 'strike', D.short, sub, ok ? `<span class="stock${n ? '' : ' zero'}" data-stock="${k}">${n}</span>` : '', ok ? `<span class="row"><button data-order="${k}:1" title="заказать 1 — ${cost.toFixed(0)} оч.">+1</button><button data-order="${k}:5" title="заказать 5 — ${(cost * 5).toFixed(0)} оч.">+5</button></span>` : '', ok ? '' : 'locked', D.desc);
       }
       const wave = side === 'red' ? { label: 'Волна «Гербер» и «Гераней»' } : { label: 'Рой «Бобров» и FP-1' };
-      h += tile('data-wave="1"', this.state.mode === 'wave', '🌊', wave.label, 'до 6 каждого типа из запаса одним кликом', '');
+      h += tile('data-wave="1"', this.state.mode === 'wave', 'wave', wave.label, 'до 6 каждого типа из запаса одним кликом', '');
       h += `</div><div class="dw-sub">В воздухе</div><div id="dw-air"></div>`;
     } else if (this.state.tab === 'repair') {
       h += `<label class="dw-check"><input type="checkbox" data-act="auto" ${this.S.auto ? 'checked' : ''}> <b>Авторемонт</b> — бригады сами едут к повреждениям (важное первым)</label>`;
-      h += `<div class="dw-tiles">${tile('data-act="crew"', false, '👷', 'Нанять бригаду', 'зарплата 0,9 оч/мин', '<span class="price">60</span>')}${tile('data-act="spare"', false, '🔌', 'Резервный АТ', 'запасной автотрансформатор', '<span class="price">150</span>')}${tile('data-act="net"', this.state.mode === 'net', '🕸', 'Сетка над дорогой', 'кликните по дороге: 600 м защиты от лёгких дронов', '<span class="price">40</span>')}</div>`;
+      h += `<div class="dw-tiles">${tile('data-act="crew"', false, 'crew', 'Нанять бригаду', 'зарплата 0,9 оч/мин', '<span class="price">60</span>')}${tile('data-act="spare"', false, 'spare', 'Резервный АТ', 'запасной автотрансформатор', '<span class="price">150</span>')}${tile('data-act="net"', this.state.mode === 'net', 'net', 'Сетка над дорогой', 'кликните по дороге: 600 м защиты от лёгких дронов', '<span class="price">40</span>')}</div>`;
       h += `<div id="dw-crews"></div><div class="dw-sub">Повреждено</div><div id="dw-dmg"></div>`;
     } else if (this.state.tab === 'econ') {
       h += `<div class="dw-note">Выберите постройку и кликните у дороги на своей земле (правый клик — отмена). Готовый объект подключите к сети в его карточке.</div>`;
       const grp = this.state.bgrp ?? 0;
-      h += `<div class="dw-subtabs">${BUILD_GROUPS.map(([n], i) => `<button data-bgrp="${i}" class="${grp === i ? 'sel' : ''}" title="${esc(n)}">${GROUP_ICON[i] || '•'}<small>${GROUP_SHORT[i] || ''}</small></button>`).join('')}</div><div class="dw-sub">${esc(BUILD_GROUPS[grp][0])}</div><div class="dw-tiles">`;
+      h += `<div class="dw-subtabs">${BUILD_GROUPS.map(([n], i) => `<button data-bgrp="${i}" class="${grp === i ? 'sel' : ''}" title="${esc(n)}">${icon(GROUP_ICON[i] || 'info')}<small>${GROUP_SHORT[i] || ''}</small></button>`).join('')}</div><div class="dw-sub">${esc(BUILD_GROUPS[grp][0])}</div><div class="dw-tiles">`;
       for (const k of BUILD_GROUPS[grp][1]) {
         const B = BUILD[k], ok = g.res.buildOk(side, k);
-        h += tile(ok ? `data-build="${k}"` : '', this.state.mode === 'build:' + k, BUILD_ICON[k] || '🏢', B.name, ok ? `${rmin(this.sim, B.time)} мин · ${esc(shortDesc(B.desc))}` : `🔒 исследуйте «${esc(g.res.needFor('build', k))}»`, `<span class="price">${B.cost}</span>`, '', ok ? '' : 'locked', B.desc);
+        h += tile(ok ? `data-build="${k}"` : '', this.state.mode === 'build:' + k, BUILD_ICON[k] || 'store', B.name, ok ? `${rmin(this.sim, B.time)} мин · ${esc(shortDesc(B.desc))}` : `${icon('lock')} исследуйте «${esc(g.res.needFor('build', k))}»`, `<span class="price">${B.cost}</span>`, '', ok ? '' : 'locked', B.desc);
       }
       h += `</div><div class="dw-sub">Инструменты</div><div class="dw-tiles">`;
-      h += tile('data-act="pave"', this.state.mode === 'pave', '🛣', 'Асфальт', 'клик по грунтовке — машины быстрее', '<span class="price">60/км</span>');
-      h += tile('data-act="line"', this.state.mode?.startsWith('line'), '⚡', 'ЛЭП 110 кВ', 'клик по двум подстанциям — обходная линия', '<span class="price">25/км</span>');
+      h += tile('data-act="pave"', this.state.mode === 'pave', 'pave', 'Асфальт', 'клик по грунтовке — машины быстрее', '<span class="price">60/км</span>');
+      h += tile('data-act="line"', this.state.mode?.startsWith('line'), 'line', 'ЛЭП 110 кВ', 'клик по двум подстанциям — обходная линия', '<span class="price">25/км</span>');
       h += `</div><div id="dw-econ"></div>`;
     } else if (this.state.tab === 'state') {
       const sub = this.state.gsub || 'econ';
-      h += `<div class="dw-subtabs">${[['econ', '💰 Бюджет'], ['law', '📜 Законы'], ['reg', '🗺 Области']].map(([k, n]) => `<button data-gsub="${k}" class="${sub === k ? 'sel' : ''}">${n}</button>`).join('')}</div><div id="dw-state"></div>`;
+      h += `<div class="dw-subtabs">${[['econ', 'coin', 'Бюджет'], ['law', 'law', 'Законы'], ['reg', 'map', 'Области']].map(([k, ic, n]) => `<button data-gsub="${k}" class="${sub === k ? 'sel' : ''}">${icon(ic)} ${n}</button>`).join('')}</div><div id="dw-state"></div>`;
     } else if (this.state.tab === 'res') {
       h += `<div id="dw-res"></div>`;
     }
     $('dw-body').innerHTML = h;
     this.modeHint();
     this.update(true);
+  }
+  // Свернуть панель до узкой полосы с иконками (карта свободна); клик по иконке — развернуть
+  fold() {
+    $('dw-panel').classList.toggle('folded', !!this.state.folded);
+    $('dw-fold').innerHTML = icon(this.state.folded ? 'expand' : 'collapse');
+    $('dw-fold').title = this.state.folded ? 'Развернуть панель' : 'Свернуть панель (или повторный клик по вкладке)';
   }
   // Подсказка по текущему режиму — над картой, чтобы было понятно, что делает клик
   modeHint() {
@@ -130,7 +141,7 @@ export class DWUI {
     if (g.prep) out.push(['info', 'Подготовка: расставьте ПВО у ТЭС и подстанций, затем нажмите «К бою».', `<button data-tab="ad">ПВО</button>`]);
     if (S.collapse > 0) out.push(['bad', `Энергосистема на грани краха — ${Math.max(0, 120 - S.collapse).toFixed(0)} с. Нужны деньги на ремонт!`, `<button data-tab="repair">Ремонт</button>`]);
     const unplugged = g.objs(side).filter((o) => g.econ.needsGrid(o) && !o.grid && !(o.build && !o.build.grid));
-    if (unplugged.length) { const o = unplugged[0], q = g.econ.gridCheck(side, o.id); out.push(['bad', `«${esc(o.name)}» не подключён к сети и не работает`, q.err ? `<button data-obj="${o.id}">Показать</button>` : `<button data-grid="${o.id}">⚡ ${q.cost}</button>`]); }
+    if (unplugged.length) { const o = unplugged[0], q = g.econ.gridCheck(side, o.id); out.push(['bad', `«${esc(o.name)}» не подключён к сети и не работает`, q.err ? `<button data-obj="${o.id}">Показать</button>` : `<button data-grid="${o.id}">${icon('plug')} ${q.cost}</button>`]); }
     const dmg = []; for (const o of g.objs(side)) for (const c of o.comps) if (c.state !== 'ok' && !S.queue.includes(c.id) && !S.crews.some((w) => w.job?.id === c.id)) dmg.push(c);
     if (dmg.length && !S.auto) out.push(['bad', `Повреждено ${dmg.length} узл. без ремонта`, `<button data-act="auto" data-on="1">Включить авторемонт</button>`]);
     const shed = g.objs(side, 'ps110').find((p) => p.unstable);
@@ -141,7 +152,7 @@ export class DWUI {
       if (!stock && !queued) out.push(['', 'Ударных дронов нет в запасе — закажите на заводе', `<button data-order="${strikeTypes[0]}:5">+5 ${esc(DW_DRONES[strikeTypes[0]].short)}</button>`]);
       const known = g.objects.filter((o) => o.side === this.enemy && g.known(side, o) && !CIVIL.has(o.kind) && o.kind !== 'bridge').length;
       const recon = dronesOf(side).find((k) => DW_DRONES[k].cls === 'recon');
-      if (known < 4) out.push(['info', 'Цели противника не найдены — отправьте разведчика вглубь его территории', `<button data-drone="${recon}">🛰 ${esc(DW_DRONES[recon].short)}</button>`]);
+      if (known < 4) out.push(['info', 'Цели противника не найдены — отправьте разведчика вглубь его территории', `<button data-drone="${recon}">${icon('recon')} ${esc(DW_DRONES[recon].short)}</button>`]);
     }
     if (!g.prep && !g.res.side[side].cur && S.points > 400) { const id = Object.keys(RESEARCH).find((k) => g.res.available(side, k)); if (id) out.push(['info', `Лаборатории простаивают: «${esc(RESEARCH[id].name)}»`, `<button data-res="${id}">${g.res.cost(side, id)}</button>`]); }
     $('dw-advice').innerHTML = out.slice(0, 3).map(([c, txt, btn]) => `<div class="dw-tip ${c}"><span>${txt}</span>${btn}</div>`).join('');
@@ -178,8 +189,8 @@ export class DWUI {
       const achr = this.sim.time < S.achrUntil;
       const supCol = S.supply > 0.8 ? 'var(--ok)' : S.supply > 0.4 ? '#f0c34a' : 'var(--bad)';
       const I = S.inc || {};
-      let h = `<div class="dw-big"><div title="сколько вырабатывают станции"><small>⚡ выработка</small><b>${S.gen}</b> МВт</div><div title="сколько нужно городам и сёлам"><small>🏙 нужно</small><b>${S.demand}</b> МВт</div><div title="сколько дошло до потребителей"><small>💡 свет</small><b style="color:${supCol}">${(S.supply * 100).toFixed(0)}%</b></div></div>`;
-      h += `<div class="dw-big"><div title="доход в минуту (реальную)"><small>💰 доход</small><b style="color:${S.income >= 0 ? 'var(--ok)' : 'var(--bad)'}">${S.income >= 0 ? '+' : ''}${(S.income * (this.sim.pace || 1)).toFixed(0)}</b>/мин</div><div><small>🚚 логистика</small><b>${(S.logi ?? 1) < 1 ? '<span class="bad">сбой</span>' : 'норма'}</b></div><div><small>🛢 топливо</small><b>${((S.oil ?? 1) * 100).toFixed(0)}%</b></div></div>`;
+      let h = `<div class="dw-big"><div title="сколько вырабатывают станции"><small>выработка</small><b>${S.gen}</b> МВт</div><div title="сколько нужно городам и сёлам"><small>нужно</small><b>${S.demand}</b> МВт</div><div title="сколько дошло до потребителей"><small>свет</small><b style="color:${supCol}">${(S.supply * 100).toFixed(0)}%</b></div></div>`;
+      h += `<div class="dw-big"><div title="доход в минуту (реальную)"><small>доход</small><b style="color:${S.income >= 0 ? 'var(--ok)' : 'var(--bad)'}">${S.income >= 0 ? '+' : ''}${(S.income * (this.sim.pace || 1)).toFixed(0)}</b>/мин</div><div><small>логистика</small><b>${(S.logi ?? 1) < 1 ? '<span class="bad">сбой</span>' : 'норма'}</b></div><div><small>топливо</small><b>${((S.oil ?? 1) * 100).toFixed(0)}%</b></div></div>`;
       if (achr) h += `<div class="dw-alarm">⚠ АЧР: аварийные отключения</div>`;
       if (S.collapse > 0) h += `<div class="dw-alarm">⚠ Энергосистема на грани: ${Math.max(0, 120 - S.collapse).toFixed(0)} с до краха — нужны средства на ремонт</div>`;
       const P = S.moraleParts;
@@ -215,7 +226,7 @@ export class DWUI {
       const E = g.sides[this.enemy];
       let en = `<div class="dw-income">Снабжение городов противника ≈ <b>${(E.supply * 100).toFixed(0)}%</b> · очки ≈ ${Math.round(E.points / 50) * 50}</div>`;
       const hiddenN = g.objects.filter((o) => o.side === this.enemy && !g.known(side, o) && !CIVIL.has(o.kind)).length;
-      if (hiddenN) en += `<div class="dw-note">🛰 Не найдено ещё ~${hiddenN} объектов — ищите разведчиками, ударными дронами на маршруте и спутником.</div>`;
+      if (hiddenN) en += `<div class="dw-note">Не найдено ещё ~${hiddenN} объектов — ищите разведчиками, ударными дронами на маршруте и спутником.</div>`;
       for (const k of groups) for (const o of g.objs(this.enemy, k)) if (g.known(side, o) && !CIVIL.has(k) && (k !== 'bridge' || o.btype === 'rail' || o.btype === 'highway')) en += this.objRow(o);
       h += `<details class="dw-more"><summary>Противник — разведданные</summary>${en}</details>`;
       setHTML($('dw-grid'), h);
@@ -269,15 +280,15 @@ export class DWUI {
     const g = this.g, side = this.side, T = g.state.side[side], R = g.res.side[side], t = this.sim.time;
     const bar = (k) => `<div class="bar"><i style="width:${(100 * Math.max(0, Math.min(1, k))).toFixed(0)}%"></i></div>`;
     let h = `<div class="dw-note">Исследования открывают новые дроны, ПВО и постройки. Идёт одна тема за раз; улучшения (НИОКР) — параллельно, внизу.</div>`;
-    if (R.cur) { const Q = RESEARCH[R.cur.id]; h += `<div class="dw-crew">🔬 <b>${esc(Q.name)}</b> — ещё ${rmin(this.sim, R.cur.until - t)} мин${bar(1 - (R.cur.until - t) / R.cur.total)}</div>`; }
-    const CI = { 'Дроны': '🎯', 'ПВО': '🛡', 'Строительство': '🏗' };
+    if (R.cur) { const Q = RESEARCH[R.cur.id]; h += `<div class="dw-crew">${icon('flask')} <b>${esc(Q.name)}</b> — ещё ${rmin(this.sim, R.cur.until - t)} мин${bar(1 - (R.cur.until - t) / R.cur.total)}</div>`; }
+    const CI = { 'Дроны': icon('target'), 'ПВО': icon('shield'), 'Строительство': icon('crane') };
     for (const cat of ['Дроны', 'ПВО', 'Строительство']) {
       h += `<div class="dw-sub">${CI[cat]} ${cat}</div><div class="dw-tiles">`;
       for (const [id, Q] of Object.entries(RESEARCH)) {
         if (Q.cat !== cat) continue;
         const done = g.res.has(side, id), av = g.res.available(side, id), cur = R.cur?.id === id;
         const req = (Q.req || []).filter((q) => !g.res.has(side, q)).map((q) => `«${RESEARCH[q].name}»`).join(', ');
-        const right = done ? '<span class="price ok">✔</span>' : cur ? '<span class="price">идёт</span>' : av ? `<span class="price">${g.res.cost(side, id)}</span>` : '<span class="price">🔒</span>';
+        const right = done ? '<span class="price ok">✔</span>' : cur ? '<span class="price">идёт</span>' : av ? `<span class="price">${g.res.cost(side, id)}</span>` : `<span class="price">${icon('lock')}</span>`;
         const clickable = !done && !cur && av && !R.cur;
         h += `<div class="dw-tile${done ? ' sel' : ''}${!done && !av ? ' locked' : ''}" ${clickable ? `data-res="${id}"` : ''} title="${esc(Q.desc)}"><b>${esc(Q.name)}</b><small>${esc(Q.desc)}${req ? ` · сначала ${esc(req)}` : ` · ${rmin(this.sim, Q.time)} мин`}</small>${right}</div>`;
       }

@@ -56,7 +56,12 @@ export function checkWorld(world, fix = false) {
   const dropB = new Set();
   for (const b of world.buildings.items) {
     if (!b.poly) continue;
+    // углы, центр и точки по контуру и оси через ~4 м: длинный дом-«панелька» может лечь на дорогу серединой
     const pts = [[b.x, b.y], ...b.poly];
+    for (let i = 0; i < b.poly.length; i++) {
+      const p = b.poly[i], q = b.poly[(i + 1) % b.poly.length], L = Math.hypot(q[0] - p[0], q[1] - p[1]), n = Math.floor(L / 4);
+      for (let k = 1; k < n; k++) { const t = k / n, x = p[0] + (q[0] - p[0]) * t, y = p[1] + (q[1] - p[1]) * t; pts.push([x, y], [(x + b.x) / 2, (y + b.y) / 2]); }
+    }
     if (pts.some(([x, y]) => onRoad(world, x, y, -0.5))) { out.buildingRoad++; dropB.add(b); continue; }
     if (pts.filter(([x, y]) => mask.has(x, y, M.WATER)).length >= 3) { out.buildingWater++; dropB.add(b); continue; }
   }

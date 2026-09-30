@@ -8,7 +8,7 @@ import {
   distToLine, rectCorners, blob, dist,
 } from './geom.js';
 import { SpatialIndex, PointBins, Mask, M } from './spatial.js';
-import { buildFortifications } from './forts.js';
+import { buildFortifications, digTrench } from './forts.js';
 import { seedBattleDamage } from './damage.js';
 import { generateInterior } from './interiors.js';
 import { buildPowerGrid, buildPowerGridDW } from './power.js';
@@ -285,9 +285,10 @@ function infraLayout0(kind, L = 0) {
       c('gsu', -100, -92, 14, 9, { n: 'Блочный трансформатор №1' }), c('gsu', 0, -92, 14, 9, { n: 'Блочный трансформатор №2' }), c('gsu', 100, -92, 14, 9, { n: 'Блочный трансформатор №3' }),
       c('oru', 160, -110, 110, 70, { n: 'ОРУ-330 кВ' }), c('coal', 165, 90, 100, 110, { n: 'Угольный склад' }), c('ctrl', -180, -110, 32, 20, { n: 'Главный щит управления' }),
     ] };
-    case 'ps330': return { w: 250, h: 180, comps: [
-      c('at', -60, 0, 15, 10, { n: 'АТ-1 330/110 кВ' }), c('at', 0, 0, 15, 10, { n: 'АТ-2 330/110 кВ' }), c('at', 60, 0, 15, 10, { n: 'АТ-3 330/110 кВ' }),
-      c('oru', 0, -58, 210, 42, { n: 'ОРУ-330 кВ' }), c('oru', 0, 58, 210, 42, { n: 'ОРУ-110 кВ' }), c('ctrl', 104, 0, 24, 14, { n: 'ОПУ' }),
+    case 'ps330': return { w: 340, h: 260, comps: [
+      c('at', -80, 2, 20, 13, { n: 'АТ-1 330/110 кВ' }), c('at', 0, 2, 20, 13, { n: 'АТ-2 330/110 кВ' }), c('at', 80, 2, 20, 13, { n: 'АТ-3 330/110 кВ' }),
+      c('oru', -10, -80, 280, 84, { n: 'ОРУ-330 кВ' }), c('oru', -10, 82, 280, 60, { n: 'ОРУ-110 кВ' }), c('ctrl', 150, -8, 30, 16, { n: 'ОПУ' }),
+      c('tr', 150, 30, 9, 6.5, { n: 'ТСН 10/0,4 кВ' }), c('garage', 145, 105, 26, 14, { n: 'Склад и мастерская' }),
     ] };
     case 'ps110': return { w: 96, h: 76, comps: [
       c('tr', -16, 6, 9, 6.5, { n: 'Т-1 110/10 кВ' }), c('tr', 16, 6, 9, 6.5, { n: 'Т-2 110/10 кВ' }), c('oru', 0, -24, 84, 18, { n: 'ОРУ-110 кВ' }), c('ctrl', 34, 26, 14, 10, { n: 'ОПУ' }),
@@ -397,8 +398,9 @@ function generateDroneWarWorld(seed) {
   const mask = world.mask;
   const J = (x, y, jx, jy) => [x + rng.float(-jx, jx), y + rng.float(-jy, jy)];
   const sides = {
-    blue: { dir: -1, rear: 0, cities: [{ c: J(W * 0.13, H * 0.5, 400, 800), sc: 1 }, { c: J(W * 0.31, H * 0.24, 600, 600), sc: 0.62 }, { c: J(W * 0.3, H * 0.77, 600, 600), sc: 0.62 }] },
-    red: { dir: 1, rear: W, cities: [{ c: J(W * 0.87, H * 0.5, 400, 800), sc: 1 }, { c: J(W * 0.69, H * 0.25, 600, 600), sc: 0.62 }, { c: J(W * 0.7, H * 0.76, 600, 600), sc: 0.62 }] },
+    // стороны не зеркальны: у каждой своё расположение городов (а значит, и объектов при них)
+    blue: { dir: -1, rear: 0, cities: [{ c: [W * rng.float(0.1, 0.16), H * rng.float(0.36, 0.64)], sc: 1 }, { c: [W * rng.float(0.26, 0.34), H * rng.float(0.17, 0.32)], sc: 0.62 }, { c: [W * rng.float(0.24, 0.34), H * rng.float(0.68, 0.84)], sc: 0.62 }] },
+    red: { dir: 1, rear: W, cities: [{ c: [W * rng.float(0.84, 0.9), H * rng.float(0.36, 0.64)], sc: 1 }, { c: [W * rng.float(0.66, 0.74), H * rng.float(0.17, 0.32)], sc: 0.62 }, { c: [W * rng.float(0.66, 0.76), H * rng.float(0.68, 0.84)], sc: 0.62 }] },
   };
   for (const [side, S] of Object.entries(sides))
     S.cities.forEach((ct, i) => {
@@ -507,11 +509,18 @@ function generateDroneWarWorld(seed) {
     growth.get(cN).push(wobblyRoad(rng, cN.c, [W / 2 - S.dir * 400, cN.c[1] + rng.float(-600, 600)], 4));
     growth.get(cS).push(wobblyRoad(rng, cS.c, [W / 2 - S.dir * 400, cS.c[1] + rng.float(-600, 600)], 4));
   }
-  for (const v of villages) {
-    let best = null, bd = Infinity;
-    for (const ct of allC) { const d = Math.hypot(ct.c[0] - v.c[0], ct.c[1] - v.c[1]); if (d < bd) { bd = d; best = ct; } }
-    if (bd < 6000) growth.get(best).push(wobblyRoad(rng, v.c, best.c.slice(), 4));
-    else addRoad(world, wobblyRoad(rng, v.c, nearestPoint(highway, v.c), 4), 'local');
+  // Дороги из сёл: близко к городу — в город, иначе — к ближайшей точке уже проложенной сети
+  // (трасса, дороги между городами, дороги соседних сёл): получается дерево с примыканиями «Т»,
+  // а не пучок прямых, пересекающихся в чистом поле
+  const net = [highway, hwLocal, ...[...growth.values()].flat()];
+  const order = villages.map((v) => { let bd = Infinity, best = null; for (const ct of allC) { const d = Math.hypot(ct.c[0] - v.c[0], ct.c[1] - v.c[1]); if (d < bd) { bd = d; best = ct; } } return { v, bd, best }; }).sort((a, b) => a.bd - b.bd);
+  for (const { v, bd, best } of order) {
+    if (bd < 3500) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
+    let tp = null, td = Infinity;
+    for (const ln of net) { const p = nearestPoint(ln, v.c), d = Math.hypot(p[0] - v.c[0], p[1] - v.c[1]); if (d < td) { td = d; tp = p; } }
+    if (bd < 6000 && td > bd * 0.8) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
+    const ln = wobblyRoad(rng, v.c, tp.slice(), td > 2500 ? 4 : 2);
+    addRoad(world, ln, 'local'); net.push(ln);
   }
   for (const v of villages) addRoad(world, v.street, 'village');
 
@@ -621,17 +630,19 @@ function generateDroneWarWorld(seed) {
     pyl = pyl.filter((p, i) => i === 0 || i === pyl.length - 1 || !mask.has(p.x, p.y, M.BUILD | M.WATER | M.ROAD));
     pyl[0].portal = true; pyl[pyl.length - 1].portal = !!b.comps;
     // провода заходят на шины ОРУ (а не обрываются у ограды)
-    if (a.comps) pyl[0].into = portalOf(a, kv, cb).into;
-    if (b.comps) pyl[pyl.length - 1].into = portalOf(b, kv, ca).into;
+    if (a.comps) pyl[0].ph = portalOf(a, kv, cb).h;
+    if (b.comps) pyl[pyl.length - 1].ph = portalOf(b, kv, ca).h;
     lines.push({ id: lines.length + 1, kv, a: a.id ?? null, b: b.id ?? null, pylons: pyl, side: a.side });
   };
   for (const [side, S] of Object.entries(sides)) {
     const [cap, cN, cS] = S.cities.map((ct) => ct.c);
     const rearX = S.rear;
     const nm = DW_NAMES[side].cities;
-    const tpp = place(side, 'tpp', DW_NAMES[side].tpp, (cap[0] + rearX) / 2 + rng.float(-300, 300), H * 0.22 + rng.float(-600, 600), { angle: rng.float(-0.2, 0.2), paved: true });
-    const psA = place(side, 'ps330', `ПС 330 кВ «${nm[0]}»`, cap[0] - S.dir * 2200, cap[1] - 1200 + rng.float(-300, 300));
-    const psB = place(side, 'ps330', 'ПС 330 кВ «Центральная»', (cap[0] + cN[0] + cS[0]) / 3 + S.dir * 600, H * 0.5 + rng.float(-900, 900));
+    const tppNorth = rng.chance(0.5); // ТЭС то на севере, то на юге тыла — у каждой стороны по-своему
+    const tpp = place(side, 'tpp', DW_NAMES[side].tpp, cap[0] + (rearX - cap[0]) * rng.float(0.35, 0.7), H * (tppNorth ? rng.float(0.12, 0.3) : rng.float(0.7, 0.88)), { angle: rng.float(-0.5, 0.5), paved: true });
+    const aA = rng.float(0, Math.PI * 2);
+    const psA = place(side, 'ps330', `ПС 330 кВ «${nm[0]}»`, cap[0] - S.dir * 1800 + Math.cos(aA) * 900, cap[1] + Math.sin(aA) * 1600);
+    const psB = place(side, 'ps330', 'ПС 330 кВ «Центральная»', (cap[0] + cN[0] + cS[0]) / 3 + S.dir * rng.float(-400, 1400), H * rng.float(0.35, 0.65));
     const cp1 = place(side, 'ps110', `ПС 110 кВ «${nm[0]}-Северная»`, cap[0] + rng.float(-300, 300), cap[1] - 1100);
     const cp2 = place(side, 'ps110', `ПС 110 кВ «${nm[0]}-Южная»`, cap[0] + rng.float(-300, 300), cap[1] + 1150);
     const pN = place(side, 'ps110', `ПС 110 кВ «${nm[1]}»`, cN[0] + S.dir * 900, cN[1] - 300);
@@ -643,10 +654,10 @@ function generateDroneWarWorld(seed) {
     const lerp2 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
     const oilAt = S.branch[Math.floor(S.branch.length * rng.float(0.55, 0.75))];
     place(side, 'oil', `Нефтебаза «${nm[2]}»`, oilAt[0] + rng.float(-300, 300), oilAt[1] + (rng.chance(0.5) ? 450 : -450));
-    place(side, 'ammo', 'Арсенал', (cap[0] + rearX) / 2, H * 0.8 + rng.float(-600, 600));
-    place(side, 'factory', `Завод БПЛА «${side === 'blue' ? 'Сокол' : 'Беркут'}»`, cN[0] + S.dir * 1500, cN[1] - 900);
-    place(side, 'launch', 'Стартовая позиция «Север»', W / 2 + S.dir * W * 0.2 + rng.float(-800, 800), H * 0.1 + rng.float(-300, 500));
-    place(side, 'launch', 'Стартовая позиция «Юг»', W / 2 + S.dir * W * 0.2 + rng.float(-800, 800), H * 0.9 + rng.float(-500, 300));
+    place(side, 'ammo', 'Арсенал', cap[0] + (rearX - cap[0]) * rng.float(0.3, 0.8), H * (tppNorth ? rng.float(0.65, 0.88) : rng.float(0.12, 0.35)));
+    { const fc = rng.chance(0.5) ? cN : cS, fa = rng.float(0, Math.PI * 2); place(side, 'factory', `Завод БПЛА «${side === 'blue' ? 'Сокол' : 'Беркут'}»`, fc[0] + S.dir * 1200 + Math.cos(fa) * 700, fc[1] + Math.sin(fa) * 1100); }
+    place(side, 'launch', 'Стартовая позиция «Север»', W / 2 + S.dir * W * rng.float(0.14, 0.3), H * rng.float(0.08, 0.3));
+    place(side, 'launch', 'Стартовая позиция «Юг»', W / 2 + S.dir * W * rng.float(0.14, 0.3), H * rng.float(0.7, 0.92));
     // Логистика: погранпереход на трассе у тылового края
     const hwp = highway.reduce((a, p) => (Math.abs(p[0] - (rearX - S.dir * 700)) < Math.abs(a[0] - (rearX - S.dir * 700)) ? p : a));
     place(side, 'border', side === 'blue' ? 'Погранпереход «Запад»' : 'Погранпереход «Восток»', hwp[0], hwp[1] + 150, { angle: 0, paved: true });
@@ -761,6 +772,7 @@ function generateDroneWarWorld(seed) {
   }
   const frontX = seedWarScars(world, rng, W * 0.5 + rng.float(-200, 200));
   world.frontX = frontX;
+  buildFrontDW(world, new Rng((seed ^ 0xf207) >>> 0), frontX);
   world.mapFix = checkWorld(world, true); // починка: дома на дорогах и внахлёст, поля поперёк дорог, деревья на асфальте
   finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0), false);
   buildPowerGridDW(world, new Rng((seed ^ 0x9092) >>> 0));
@@ -1092,11 +1104,17 @@ export function portalOf(o, kv, toward) {
   const orus = o.comps.filter((q) => q.k === 'oru');
   const oru = orus.find((q) => (q.n || q.name || '').includes(String(kv))) || orus[0];
   if (!oru) return { pt: edgeOf(o, toward), into: null };
+  // линия заходит на концевой портал ряда ОРУ (ряды — вдоль длинной стороны, как в модели switchyard):
+  // конец ряда со стороны линии, ряд — ближний к направлению линии
   const c = Math.cos(o.angle), s = Math.sin(o.angle);
   const lx = (toward[0] - o.x) * c + (toward[1] - o.y) * s - oru.u, ly = -(toward[0] - o.x) * s + (toward[1] - o.y) * c - oru.v;
-  const [u, v] = Math.abs(lx) / oru.w > Math.abs(ly) / oru.h ? [oru.u + Math.sign(lx) * oru.w / 2, oru.v] : [oru.u, oru.v + Math.sign(ly) * oru.h / 2];
-  const [iu, iv] = Math.abs(lx) / oru.w > Math.abs(ly) / oru.h ? [oru.u + Math.sign(lx) * oru.w * 0.15, oru.v] : [oru.u, oru.v + Math.sign(ly) * oru.h * 0.15];
-  return { pt: [o.x + u * c - v * s, o.y + u * s + v * c], into: [o.x + iu * c - iv * s, o.y + iu * s + iv * c] };
+  const big = oru.w > 100 || kv >= 330, H = big ? 17 : 11;
+  const rows = Math.max(2, Math.round(oru.h / (big ? 20 : 9)));
+  const L = Math.hypot(lx, ly) || 1;
+  let r = Math.round(((ly / L) * 0.5 + 0.5) * (rows - 1));
+  r = Math.max(0, Math.min(rows - 1, r));
+  const u = oru.u + Math.sign(lx || 1) * oru.w / 2, v = oru.v - oru.h / 2 + ((r + 0.5) * oru.h) / rows;
+  return { pt: [o.x + u * c - v * s, o.y + u * s + v * c], into: null, h: H };
 }
 // Точка на границе площадки объекта в сторону цели
 export function edgeOf(o, toward) {
@@ -1127,7 +1145,7 @@ export function gridFeed(world, o, maxPs = 9000) {
     const P = portalOf(best, 110, [o.x, o.y]);
     const A = edgeOf(o, P.pt);
     const pyl = route(A, P.pt, 220).map(([x, y]) => ({ x, y }));
-    pyl[0].portal = true; pyl[pyl.length - 1].portal = true; pyl[pyl.length - 1].into = P.into;
+    pyl[0].portal = true; pyl[pyl.length - 1].portal = true; pyl[pyl.length - 1].ph = P.h;
     return { oid: o.id, kv: 110, side, pylons: pyl, id: 'f' + o.id, L: bd };
   }
   let tgt = null, td = 3500;
@@ -1204,6 +1222,7 @@ function connectRoadNet(world, rng) {
     for (let t = 20; t < L - 20; t += 10) {
       const x = a[0] + ((b[0] - a[0]) * t) / L, y = a[1] + ((b[1] - a[1]) * t) / L;
       if (mask.has(x, y, M.BUILD | M.RAIL | M.CITY)) return false;
+      if (t > 40 && t < L - 40 && mask.has(x, y, M.ROAD)) return false; // перемычка не пересекает другие дороги
       if (mask.has(x, y, M.WATER)) { wet += 10; wetMax = Math.max(wetMax, wet); } else wet = 0;
     }
     return wetMax < 200;
@@ -2358,6 +2377,57 @@ function buildStation(world, rng, rail, C) {
 }
 
 // ---------- Следы войны ----------
+// ---------- Линия фронта «Войны дронов» ----------
+// Серая зона (изрытая воронками полоса, выгоревшая трава), по две линии окопов с каждой стороны,
+// ряды противотанковых «зубов драконов», на дорогах — КПП с бетонными блоками и шлагбаумом
+function buildFrontDW(world, rng, fx) {
+  const { W, H, mask } = world;
+  const ph = rng.float(0, 6.28);
+  const lineX = (y, off) => fx + off + Math.sin(y / 2700 + ph) * 180 + Math.sin(y / 900 + ph * 2) * 45;
+  const along = (off, step = 120) => { const pts = []; for (let y = 150; y <= H - 150; y += step) pts.push([lineX(y, off), y]); return pts; };
+  // серая зона
+  const zl = along(-650, 400), zr = along(650, 400).reverse();
+  addItem(world.areas, { kind: 'frontzone', poly: [...zl, ...zr], x: fx, y: H / 2 }, 20);
+  for (let y = 200; y < H - 200; y += rng.float(90, 170)) {
+    const x = lineX(y, rng.gauss(0, 260));
+    addCraterCluster(world, rng, x, y, rng.int(5, 16), rng.float(25, 70), rng.float(0, 1));
+    if (rng.chance(0.18)) addBurn(world, rng, x + rng.float(-80, 80), y, rng.float(40, 140));
+  }
+  // окопы: для каждой стороны — передний край (±450 м) и вторая линия (±1100 м)
+  const NO = M.WATER | M.CITY | M.SETTLE | M.BUILD | M.RAIL;
+  for (const [side, dir] of [['blue', -1], ['red', 1]]) {
+    const enemy = [-dir, 0];
+    for (const off of [450, 1100]) {
+      const pts = along(dir * off, 160);
+      let run = [];
+      const flush = () => { if (run.length >= 2) digTrench(world, rng, run, side, enemy); run = []; };
+      for (const p of pts) { if (mask.near(p[0], p[1], 25, NO)) flush(); else run.push(p); }
+      flush();
+      addItem(world.areas, { kind: 'frontline', line: pts, side, x: pts[0][0], y: H / 2 }, 30);
+    }
+    // «зубы драконов» перед первой линией
+    const teeth = along(dir * 300, 200).filter((p) => !mask.near(p[0], p[1], 20, NO | M.ROAD));
+    for (let i = 1; i < teeth.length; i++) if (rng.chance(0.75)) addItem(world.areas, { kind: 'teeth', line: [teeth[i - 1], teeth[i]], x: teeth[i][0], y: teeth[i][1] }, 12);
+  }
+  // КПП на дорогах, пересекающих фронт: по одному с каждой стороны серой зоны
+  const kpp = [];
+  for (const r of world.roadList) {
+    if (r.type === 'street' || r.type === 'village' || r.type === 'dirt') continue;
+    for (let i = 1; i < r.line.length; i++) {
+      const a = r.line[i - 1], b = r.line[i];
+      for (const dir of [-1, 1]) {
+        const x0 = lineX(a[1], dir * 820);
+        if ((a[0] - x0) * (b[0] - x0) > 0 || a[0] === b[0]) continue;
+        const t = (x0 - a[0]) / (b[0] - a[0]), y = a[1] + (b[1] - a[1]) * t;
+        if (kpp.some((k) => Math.hypot(k.x - x0, k.y - y) < 300)) continue;
+        const k = { kind: 'kpp', pts: [[x0, y]], x: x0, y, angle: Math.atan2(b[1] - a[1], b[0] - a[0]), side: dir < 0 ? 'blue' : 'red', w: r.width || 8 };
+        kpp.push(k);
+        addItem(world.areas, k, 40);
+      }
+    }
+  }
+  world.front = { fx, ph, kpp };
+}
 function seedWarScars(world, rng, cx) {
   // Условная «серая зона» — полоса посередине между городами
   for (let k = 0; k < 14; k++) {

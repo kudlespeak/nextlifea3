@@ -8,7 +8,7 @@ import { M } from '../spatial.js';
 
 const GROUND = '#7b784e';
 
-const AREA_ORDER = ['hill', 'floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'square', 'park', 'plot', 'garden', 'stadium', 'pitch', 'platform', 'dam', 'drive', 'path'];
+const AREA_ORDER = ['hill', 'frontzone', 'floodplain', 'vground', 'suburb', 'balka', 'urban', 'farmyard', 'industrial', 'dwsite', 'yard', 'square', 'park', 'plot', 'garden', 'stadium', 'pitch', 'platform', 'dam', 'drive', 'path', 'frontline', 'teeth'];
 const AREA_COLORS = {
   floodplain: '#6c7843',
   urban: '#7d7c64',
@@ -124,6 +124,7 @@ export function drawChunk(ctx, world, b, ppm) {
   for (const s of scars) if (s.kind === 'tracks') drawTracks(ctx, s, ppm);
   drawRails(ctx, world, b, q, ppm);
   drawRoads(ctx, world, b, q, ppm);
+  for (const k of world.areas.query(q)) if (k.kind === 'kpp') drawKpp(ctx, k, ppm);
   drawRailCrossings(ctx, world, b, q, ppm);
   drawForts(ctx, world, q, ppm);
   for (const s of scars) if (s.kind === 'crater') drawCrater(ctx, s, ppm);
@@ -163,6 +164,28 @@ function drawAutumnLeaves(ctx, world, b, ppm) {
   }
 }
 
+// КПП на дороге у линии фронта: змейка из бетонных блоков, шлагбаум, будка, мешки с песком, флаг
+function drawKpp(ctx, k, ppm) {
+  ctx.save(); ctx.translate(k.x, k.y); ctx.rotate(k.angle);
+  const hw = (k.w || 8) / 2;
+  const block = (x, y, w, h) => { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(x - w / 2 + 0.5, y - h / 2 + 0.6, w, h); ctx.fillStyle = '#c4c0b4'; ctx.fillRect(x - w / 2, y - h / 2, w, h); };
+  // змейка: блоки поочерёдно с разных сторон дороги
+  for (let i = 0; i < 4; i++) { const x = -14 + i * 9, y = (i % 2 ? 1 : -1) * (hw - 2.2); block(x, y, 1.6, hw + 0.5); }
+  if (ppm >= 0.6) {
+    // шлагбаум
+    ctx.strokeStyle = '#e6e2d8'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(22, -hw - 1); ctx.lineTo(22, hw - 1); ctx.stroke();
+    ctx.strokeStyle = '#c8321f'; ctx.setLineDash([1, 1]); ctx.beginPath(); ctx.moveTo(22, -hw - 1); ctx.lineTo(22, hw - 1); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // будка и мешки с песком на обочине
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(18.6, hw + 2.6, 5, 4);
+  ctx.fillStyle = '#7d8a6a'; ctx.fillRect(18, hw + 2, 5, 4);
+  ctx.strokeStyle = '#9a8a62'; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.arc(8, -hw - 5, 3.2, Math.PI * 0.1, Math.PI * 1.9); ctx.stroke();
+  // флагшток с флагом стороны
+  ctx.fillStyle = k.side === 'blue' ? '#3d6fb8' : '#b8423d'; ctx.fillRect(26, hw + 3, 3, 2);
+  ctx.fillStyle = '#e0dccf'; ctx.fillRect(25.7, hw + 3, 0.3, 5);
+  ctx.restore();
+}
 // ---------- Фон степи: пятна травы разной сухости ----------
 function drawSteppeTexture(ctx, world, b, ppm) {
   const size = b.x1 - b.x0;
@@ -400,6 +423,38 @@ function drawArea(ctx, a, b, ppm) {
       pathPoly(ctx, a.poly);
       ctx.fillStyle = gr;
       ctx.fill();
+      break;
+    }
+    case 'frontzone': {
+      // серая зона: выгоревшая, изрытая земля между позициями
+      ctx.beginPath(); pathPoly(ctx, a.poly);
+      ctx.fillStyle = 'rgba(96,84,60,0.5)'; ctx.fill();
+      ctx.save(); ctx.clip();
+      for (let y = Math.floor(b.y0 / 60) * 60; y < b.y1; y += 60)
+        for (let x = Math.floor(b.x0 / 60) * 60; x < b.x1; x += 60) {
+          const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453, f = h - Math.floor(h);
+          if (f < 0.55) continue;
+          ctx.fillStyle = `rgba(${f > 0.85 ? '40,34,26' : '70,60,44'},${0.25 + (f - 0.55) * 0.5})`;
+          ctx.beginPath(); ctx.ellipse(x + f * 40, y + (1 - f) * 40, 6 + f * 14, 5 + f * 10, f * 3, 0, Math.PI * 2); ctx.fill();
+        }
+      ctx.restore();
+      break;
+    }
+    case 'frontline': {
+      // линия окопов издали — бурая извилистая полоса (вблизи её рисуют сами траншеи)
+      if (ppm >= 0.9) break;
+      strokeLine(ctx, a.line, Math.max(5, 2.2 / ppm), a.side === 'blue' ? 'rgba(70,58,40,0.85)' : 'rgba(78,56,40,0.85)');
+      break;
+    }
+    case 'teeth': {
+      // противотанковые «зубы драконов» — три ряда бетонных пирамидок
+      const [p, q] = a.line, L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1, dx = (q[0] - p[0]) / L, dy = (q[1] - p[1]) / L;
+      if (ppm < 0.35) { strokeLine(ctx, a.line, Math.max(2, 1.2 / ppm), 'rgba(170,166,154,0.7)'); break; }
+      for (let t = 0; t < L; t += 3) for (const r of [-3, 0, 3]) {
+        const x = p[0] + dx * (t + (r ? 1.5 : 0)) - dy * r, y = p[1] + dy * (t + (r ? 1.5 : 0)) + dx * r;
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - 0.4, y - 0.2, 1.4, 1.4);
+        ctx.fillStyle = '#b8b4a8'; ctx.fillRect(x - 0.6, y - 0.6, 1.2, 1.2);
+      }
       break;
     }
     case 'dwsite': {
@@ -1978,6 +2033,7 @@ function drawPowerLines(ctx, world, q, ppm) {
     for (let i = 1; i < pl.length; i++) {
       const a = pl[i - 1], b = pl[i];
       if (!inQ(q, a.x, a.y, 400) && !inQ(q, b.x, b.y, 400)) continue;
+      if (a.ph || b.ph) continue; // последний пролёт к порталу ОРУ рисует слой объектов — с высотой
       const L = Math.hypot(b.x - a.x, b.y - a.y);
       const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
       const ha = a.portal ? 12 : Hw, hb = b.portal ? 12 : Hw;
@@ -1999,21 +2055,12 @@ function drawPowerLines(ctx, world, q, ppm) {
         }
       }
     }
-    // заход проводов с портала на шины ОРУ
-    for (const t of [pl[0], pl[pl.length - 1]]) {
-      if (!t.into || !inQ(q, t.x, t.y, 120)) continue;
-      const L = Math.hypot(t.into[0] - t.x, t.into[1] - t.y) || 1;
-      const nx = -(t.into[1] - t.y) / L, ny = (t.into[0] - t.x) / L;
-      ctx.strokeStyle = 'rgba(55,57,55,0.85)'; ctx.lineWidth = Math.max(0.12, 0.8 / ppm);
-      ctx.beginPath();
-      for (const o of [-sp, 0, sp]) { ctx.moveTo(t.x + nx * o, t.y + ny * o); ctx.lineTo(t.into[0] + nx * o * 0.6, t.into[1] + ny * o * 0.6); }
-      ctx.stroke();
-    }
     for (let i = 0; i < pl.length; i++) {
       const t = pl[i];
       if (!inQ(q, t.x, t.y, 60)) continue;
       const nb = pl[Math.min(pl.length - 1, i + 1)], pb = pl[Math.max(0, i - 1)];
       const ang = Math.atan2(nb.y - pb.y, nb.x - pb.x);
+      if (t.portal && t.ph) continue; // портал — часть модели ОРУ
       if (t.portal) {
         // портал ОРУ: две стойки и ригель поперёк линии
         ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(ang);

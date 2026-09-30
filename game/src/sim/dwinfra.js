@@ -291,8 +291,8 @@ export class DWInfra {
     const A = pa.pt, B = pb.pt, n = Math.max(2, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1]) / 250));
     const pylons = [];
     for (let i = 0; i <= n; i++) pylons.push({ x: A[0] + ((B[0] - A[0]) * i) / n, y: A[1] + ((B[1] - A[1]) * i) / n, portal: i === 0 || i === n });
-    if (pa.into) pylons[0].into = pa.into;
-    if (pb.into) pylons[n].into = pb.into;
+    if (pa.h) pylons[0].ph = pa.h;
+    if (pb.h) pylons[n].ph = pb.h;
     this.newLines.push({ side, a: q.a.id, b: q.b.id, kv: 110, pylons, until: this.sim.time + LINE.time, total: LINE.time, name: `${q.a.name} — ${q.b.name}` });
     this.sim.msg(`Стройка ЛЭП 110 кВ «${q.a.name} — ${q.b.name}» (${(q.L / 1000).toFixed(1)} км, −${cost} оч., ${Math.round(LINE.time / 60)} мин)`, side);
     return null;

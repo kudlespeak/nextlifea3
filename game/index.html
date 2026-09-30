@@ -193,6 +193,14 @@
     .dw-rail button .badge { position: relative; }
     .dw-rail button[data-alert]::after { content: attr(data-alert); margin-top: -34px; margin-left: 34px; position: absolute; background: var(--bad); color: #fff; border-radius: 8px; padding: 0 5px; font-size: 10px; }
     .dw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+    #dw-panel.folded { width: auto; }
+    #dw-panel.folded .dw-main { display: none; }
+    #dw-panel.folded .dw-rail { border-right: none; }
+    #dw-fold { margin-left: 8px; padding: 2px 4px; }
+    svg.ri { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .dw-tile svg.ic { width: 24px; height: 24px; fill: none; stroke: var(--accent-2); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .dw-tile.locked svg.ic { stroke: var(--muted); }
+    .dw-subtabs svg.i, .dw-tip svg.i, .dw-sub svg.i { width: 16px; height: 16px; vertical-align: -3px; }
     #dw-title { font-size: 14px; color: var(--text, #eee); }
     #dw-advice:empty { display: none; }
     #dw-advice { padding: 6px 9px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
@@ -216,7 +224,9 @@
     .dw-tile .row button { flex: 1; padding: 1px 0; font-size: 11.5px; }
     details.dw-more { margin: 6px 0; border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; }
     details.dw-more summary { cursor: pointer; font: 700 12px "PT Sans Narrow", sans-serif; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-    .dw-subtabs { display: flex; gap: 4px; margin-bottom: 7px; }
+    .dw-subtabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 7px; }
+    .dw-subtabs button { flex: 1 0 30%; }
+    .dw-tile small svg.i, .dw-tile .price svg.i { width: 12px; height: 12px; vertical-align: -2px; }
     .dw-subtabs button { flex: 1; padding: 4px 0; font-size: 12px; }
     .dw-subtabs button.sel { border-color: var(--accent); color: var(--accent-2); background: rgba(242,193,78,0.12); }
     #dw-hint { position: absolute; left: calc(50% + 200px); top: 158px; transform: translateX(-50%); display: none; z-index: 20; background: rgba(20,22,18,0.92); border: 1px solid var(--accent); color: #f5ecd0; padding: 7px 14px; border-radius: 9px; font-size: 13.5px; pointer-events: none; box-shadow: 0 4px 18px rgba(0,0,0,0.4); }
@@ -391,7 +401,7 @@
       <button data-dwtab="state" title="Государство: законы, бюджет, области"><i>🏛</i><span>Страна</span></button>
     </nav>
     <div class="dw-main">
-      <div class="head"><b id="dw-title">Обзор</b><b id="dw-pts" title="Очки"></b></div>
+      <div class="head"><b id="dw-title">Обзор</b><b id="dw-pts" title="Очки"></b><button id="dw-fold" title="Свернуть панель"></button></div>
       <div id="dw-status"></div>
       <div id="dw-advice"></div>
       <div id="dw-body"></div>
