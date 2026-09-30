@@ -167,6 +167,68 @@ function drawFarmWork(ctx, g, world, toS, inView, z, now, dpr) {
   }
 }
 
+// ---------- Связи внутри объекта: ошиновка от ОРУ к трансформаторам, токопроводы от блоков,
+// газоходы к трубе, кабели солнечных полей, трубопроводы резервуарного парка ----------
+const ORU_H = (c) => (c.w > 100 || /330/.test(c.name) ? 13 : 8.5);
+function edgeToward(c, px, py, inset = 3) {
+  // точка на границе прямоугольника узла в сторону (px, py)
+  const cs = Math.cos(c.angle), sn = Math.sin(c.angle);
+  const lx = (px - c.x) * cs + (py - c.y) * sn, ly = -(px - c.x) * sn + (py - c.y) * cs;
+  const hw = Math.max(1, c.w / 2 - inset), hh = Math.max(1, c.h / 2 - inset);
+  const k = Math.min(hw / (Math.abs(lx) || 1e-6), hh / (Math.abs(ly) || 1e-6), 1);
+  const u = lx * k, v = ly * k;
+  return [c.x + u * cs - v * sn, c.y + u * sn + v * cs];
+}
+function nearestComp(list, c) { let b = null, bd = Infinity; for (const q of list) { const d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; b = q; } } return b; }
+function drawLinks(ctx, o, toS, z, dpr) {
+  const alive = o.comps.filter((c) => c.state !== 'destroyed');
+  if (alive.length < 2) return;
+  const by = (...k) => alive.filter((c) => k.includes(c.k));
+  const SHX = 0.3, SHY = 0.34;
+  // провод/шина между точками a(h0) и b(h1): тень на земле, затем сам провод с провисом
+  const wire = (a, h0, b, h1, phases, gap, col, w, sag = 0.25) => {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+    for (const pass of [0, 1]) {
+      ctx.strokeStyle = pass ? col : 'rgba(0,0,0,0.18)';
+      ctx.lineWidth = Math.max(pass ? 0.8 : 0.6, w * z);
+      ctx.beginPath();
+      for (let i = 0; i < phases; i++) {
+        const o2 = (i - (phases - 1) / 2) * gap;
+        const ax = a[0] + nx * o2, ay = a[1] + ny * o2, bx = b[0] + nx * o2, by2 = b[1] + ny * o2;
+        const hm = (h0 + h1) / 2 - L * sag * 0.08;
+        const P = (x, y, h) => { const [sx, sy] = toS(pass ? x : x + SHX * h, pass ? y : y + SHY * h); return [sx, sy - (pass ? h * K3 * z : 0)]; };
+        const A = P(ax, ay, h0), B = P(bx, by2, h1), M = P((ax + bx) / 2, (ay + by2) / 2, hm);
+        ctx.moveTo(A[0], A[1]); ctx.quadraticCurveTo(2 * M[0] - (A[0] + B[0]) / 2, 2 * M[1] - (A[1] + B[1]) / 2, B[0], B[1]);
+      }
+      ctx.stroke();
+    }
+  };
+  const orus = by('oru');
+  // трансформаторы — к ОРУ: автотрансформатор к обоим напряжениям, остальные к ближнему
+  for (const T of by('at', 'gsu', 'tr')) {
+    const targets = T.k === 'at' ? orus : orus.length ? [nearestComp(orus, T)] : [];
+    for (const O of targets) {
+      const pO = edgeToward(O, T.x, T.y, 4), pT = edgeToward(T, O.x, O.y, T.w * 0.25);
+      wire(pT, T.k === 'tr' ? 4 : 6.5, pO, ORU_H(O), 3, T.k === 'tr' ? 1.2 : 2.2, 'rgba(70,72,68,0.95)', 0.35);
+    }
+  }
+  // энергоблок / гидроагрегат → блочный трансформатор: закрытый токопровод
+  const gsus = by('gsu');
+  for (const U of by('unit', 'hgen')) { const G = nearestComp(gsus, U); if (G) wire(edgeToward(U, G.x, G.y, 2), 9, edgeToward(G, U.x, U.y, 1), 6, 1, 0, '#8d8f88', 1.4, 0); }
+  // энергоблок → дымовая труба: газоход на эстакаде
+  const ch = by('chimney');
+  for (const U of by('unit')) { const C = nearestComp(ch, U); if (C) wire(edgeToward(U, C.x, C.y, 2), 22, [C.x, C.y], 24, 1, 0, '#8a857a', 4.5, 0); }
+  // солнечные поля → инверторная → ОРУ: кабельные трассы по земле
+  const inv = by('inv');
+  for (const P of by('pv')) { const I = nearestComp(inv, P); if (I) wire(edgeToward(P, I.x, I.y, 1), 0.3, edgeToward(I, P.x, P.y, 1), 0.3, 1, 0, 'rgba(40,40,38,0.8)', 0.5, 0); }
+  for (const I of inv) { const O = nearestComp(orus, I); if (O) wire(edgeToward(I, O.x, O.y, 1), 0.3, edgeToward(O, I.x, I.y, 2), 0.3, 1, 0, 'rgba(40,40,38,0.8)', 0.6, 0); }
+  // накопитель → трансформатор
+  const trs = by('tr');
+  for (const B of by('bess')) { const T = nearestComp(trs, B); if (T) wire(edgeToward(B, T.x, T.y, 1), 0.3, edgeToward(T, B.x, B.y, 1), 0.3, 1, 0, 'rgba(40,40,38,0.8)', 0.6, 0); }
+  // резервуарный парк: трубопроводы на низких опорах к насосной или установке
+  const hubs = by('pump', 'shop', 'rack');
+  if (hubs.length) for (const Tk of by('tank')) { const H = nearestComp(hubs, Tk); if (H) wire(edgeToward(Tk, H.x, H.y, 0), 1.6, edgeToward(H, Tk.x, Tk.y, 1), 1.6, 2, 0.8, '#9c968b', 0.45, 0); }
+}
 function hash(i) { const s = Math.sin(i * 127.1) * 43758.5453; return s - Math.floor(s); }
 
 export function drawDW(ctx, sim, view, side, ui) {
@@ -178,7 +240,7 @@ export function drawDW(ctx, sim, view, side, ui) {
   const toS = (x, y) => [(x - cam.x) * z + W / 2, (y - cam.y) * z + H / 2];
   const now = performance.now();
   const t = sim.time;
-  const night = 1 - daylight(t);
+  const night = 1 - daylight(sim.tod());
   const inView = (x, y, r) => { const [sx, sy] = toS(x, y); return sx > -r * z - 200 && sy > -r * z - 300 && sx < W + r * z + 200 && sy < H + r * z + 200; };
   const up = (alt) => Math.min(90 * dpr, dispH(alt) * K3 * Math.max(z, 0.35)); // смещение вверх в пикселях
   const detail = z >= 0.3;
@@ -207,6 +269,7 @@ export function drawDW(ctx, sim, view, side, ui) {
           ctx.beginPath(); ctx.ellipse(sx, sy, (c.w * 0.8 + 4) * z, (c.h * 0.8 + 4) * z, c.angle, 0, Math.PI * 2); ctx.fill();
         }
       }
+      if (z > 0.12) drawLinks(ctx, o, toS, z, dpr);
       // Пар градирен и дым труб — пока блоки работают
       const units = o.comps.filter((c) => c.k === 'unit' && c.state === 'ok').length;
       if (o.kind === 'tpp' && units) {

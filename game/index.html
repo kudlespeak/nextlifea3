@@ -36,6 +36,8 @@
     kbd { font: 700 11px "PT Sans Narrow", sans-serif; background: rgba(255, 255, 255, 0.1); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--muted); }
 
     #topbar { top: 10px; left: 10px; right: 10px; height: 50px; display: flex; align-items: center; gap: 12px; padding: 0 10px; }
+    @media (max-width: 1500px) { #topbar .toolbar .lbl { display: none; } #topbar { gap: 8px; } }
+    @media (max-width: 1350px) { #topbar .brand .txt { display: none; } #scoreboard { font-size: 12px; } }
     .brand { display: flex; align-items: center; gap: 10px; font: 700 16px "PT Sans Narrow", sans-serif; letter-spacing: 0.08em; white-space: nowrap; }
     .brand .mark { width: 18px; height: 18px; border: 2px solid var(--accent); transform: rotate(45deg); border-radius: 3px; margin: 0 4px; }
     #side-badge { font-weight: 700; }
@@ -46,6 +48,9 @@
     #clock { font: 700 15px "PT Sans Narrow", sans-serif; padding: 0 10px; min-width: 128px; text-align: center; font-variant-numeric: tabular-nums; }
     .timebox button { padding: 4px 9px; border-color: transparent; background: transparent; }
     .timebox button.active { background: rgba(242, 193, 78, 0.2); border-color: var(--accent); }
+    .timebox button.eff { box-shadow: inset 0 -2px 0 var(--ok, #7bd88f); }
+    .mp-only { display: none; font-size: 11px; color: var(--muted, #aaa); margin: 0 4px; white-space: nowrap; }
+    .timebox.mp .mp-only { display: inline; }
     .toolbar { display: flex; gap: 6px; align-items: center; }
     .toolbar button { padding: 6px 9px; }
     .toolbar .lbl { font-size: 13px; }
@@ -177,8 +182,48 @@
     #scoreboard .m { color: var(--muted); font-weight: 400; }
 
     /* ---- Война дронов ---- */
-    #dw-panel { top: 70px; left: 10px; width: 330px; max-height: calc(100vh - 290px); display: none; flex-direction: column; overflow: hidden; }
+    #dw-panel { top: 70px; left: 10px; width: 400px; max-height: calc(100vh - 290px); display: none; flex-direction: row; overflow: hidden; }
     #dw-panel.show { display: flex; }
+    .dw-rail { display: flex; flex-direction: column; gap: 2px; padding: 6px 4px; border-right: 1px solid var(--line); background: rgba(0,0,0,0.18); }
+    .dw-rail button { display: flex; flex-direction: column; align-items: center; gap: 1px; width: 56px; padding: 6px 2px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); font: 700 10.5px "PT Sans Narrow", sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
+    .dw-rail button i { font-style: normal; font-size: 19px; line-height: 1.1; filter: grayscale(0.4); }
+    .dw-rail button:hover { background: rgba(255,255,255,0.05); color: var(--text, #eee); }
+    .dw-rail button.active { background: rgba(242,193,78,0.16); border-color: rgba(242,193,78,0.5); color: var(--accent-2); }
+    .dw-rail button.active i { filter: none; }
+    .dw-rail button .badge { position: relative; }
+    .dw-rail button[data-alert]::after { content: attr(data-alert); margin-top: -34px; margin-left: 34px; position: absolute; background: var(--bad); color: #fff; border-radius: 8px; padding: 0 5px; font-size: 10px; }
+    .dw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+    #dw-title { font-size: 14px; color: var(--text, #eee); }
+    #dw-advice:empty { display: none; }
+    #dw-advice { padding: 6px 9px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+    .dw-tip { display: flex; align-items: center; gap: 7px; font-size: 12.5px; line-height: 1.25; padding: 5px 7px; border-radius: 7px; background: rgba(242,193,78,0.08); border: 1px solid rgba(242,193,78,0.28); cursor: pointer; }
+    .dw-tip.bad { background: rgba(239,90,74,0.12); border-color: rgba(239,90,74,0.45); }
+    .dw-tip.info { background: rgba(120,170,255,0.08); border-color: rgba(120,170,255,0.3); }
+    .dw-tip > span { flex: 1; }
+    .dw-tip button { padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+    .dw-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 6px; }
+    .dw-tile { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 7px 8px 6px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,0.03); cursor: pointer; min-height: 62px; }
+    .dw-tile:hover { border-color: var(--line-2); background: rgba(255,255,255,0.06); }
+    .dw-tile.sel { border-color: var(--accent); background: rgba(242,193,78,0.13); box-shadow: 0 0 0 1px rgba(242,193,78,0.35) inset; }
+    .dw-tile.locked { opacity: 0.5; cursor: default; }
+    .dw-tile .ic { font-size: 18px; line-height: 1; }
+    .dw-tile b { font-size: 12.5px; line-height: 1.15; }
+    .dw-tile small { color: var(--muted); font-size: 11px; line-height: 1.2; }
+    .dw-tile .price { position: absolute; top: 6px; right: 7px; font: 700 13px "PT Sans Narrow", sans-serif; color: var(--accent-2); }
+    .dw-tile .stock { position: absolute; top: 5px; right: 7px; font: 700 18px "PT Sans Narrow", sans-serif; color: var(--accent-2); }
+    .dw-tile .stock.zero { color: var(--bad); }
+    .dw-tile .row { display: flex; gap: 3px; margin-top: 3px; }
+    .dw-tile .row button { flex: 1; padding: 1px 0; font-size: 11.5px; }
+    details.dw-more { margin: 6px 0; border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; }
+    details.dw-more summary { cursor: pointer; font: 700 12px "PT Sans Narrow", sans-serif; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .dw-subtabs { display: flex; gap: 4px; margin-bottom: 7px; }
+    .dw-subtabs button { flex: 1; padding: 4px 0; font-size: 12px; }
+    .dw-subtabs button.sel { border-color: var(--accent); color: var(--accent-2); background: rgba(242,193,78,0.12); }
+    #dw-hint { position: absolute; left: calc(50% + 200px); top: 158px; transform: translateX(-50%); display: none; z-index: 20; background: rgba(20,22,18,0.92); border: 1px solid var(--accent); color: #f5ecd0; padding: 7px 14px; border-radius: 9px; font-size: 13.5px; pointer-events: none; box-shadow: 0 4px 18px rgba(0,0,0,0.4); }
+    #dw-hint.show { display: block; }
+    body.dw #prep-bar { margin-left: 210px; }
+    .dw-subtabs button small { display: block; font-size: 10px; color: var(--muted); }
+    #dw-hint b { color: var(--accent-2); }
     #dw-panel .head { display: flex; flex-wrap: wrap; row-gap: 3px; align-items: center; gap: 2px; padding: 7px 8px; border-bottom: 1px solid var(--line); font: 700 12px "PT Sans Narrow", sans-serif; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     #dw-panel .head .rtab { padding: 3px 5px; border-radius: 6px; cursor: pointer; }
     .dw-law { display: block !important; }
@@ -256,7 +301,7 @@
     .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
     .dot.ok { background: var(--ok); } .dot.warn { background: #f0c34a; } .dot.bad { background: var(--bad); }
     .dw-stats { font-size: 12.5px; margin: 6px 0; }
-    @media (max-width: 900px) { #dw-card { width: calc(100vw - 20px); min-width: 0; } #dw-panel { width: 270px; } }
+    @media (max-width: 900px) { #dw-card { width: calc(100vw - 20px); min-width: 0; } #dw-panel { width: 330px; } .dw-tiles { grid-template-columns: 1fr; } }
     #prep-bar { top: 70px; left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 14px; padding: 8px 10px 8px 16px; border-color: rgba(242,193,78,0.5); }
     #prep-bar.show { display: flex; }
     #prep-bar b { font: 700 16px "PT Sans Narrow", sans-serif; color: var(--accent-2); letter-spacing: 0.04em; }
@@ -304,7 +349,7 @@
     <div id="scoreboard"></div>
     <div class="timebox">
       <button data-speed="0" title="Пауза (Пробел)"><svg class="i"><path d="M8 5v14M16 5v14"/></svg></button>
-      <span id="clock">—</span>
+      <span id="clock">—</span><span id="mp-speed" class="mp-only"></span>
       <button data-speed="0.5" title="Клавиша 1 — замедленно">½×</button>
       <button data-speed="1" title="Клавиша 2 — реальное время">1×</button>
       <button data-speed="2" title="Клавиша 3">2×</button>
@@ -336,10 +381,23 @@
   </aside>
 
   <aside id="dw-panel" class="panel">
-    <div class="head"><span class="rtab active" data-dwtab="grid">Энергосистема</span><span class="rtab" data-dwtab="ad">ПВО</span><span class="rtab" data-dwtab="strike">Удары</span><span class="rtab" data-dwtab="repair">Ремонт</span><span class="rtab" data-dwtab="econ">Экономика</span><span class="rtab" data-dwtab="state">Государство</span><span class="rtab" data-dwtab="res">Исследования</span><b id="dw-pts" title="Очки"></b></div>
-    <div id="dw-status"></div>
-    <div id="dw-body"></div>
+    <nav class="dw-rail">
+      <button data-dwtab="grid" title="Обзор: свет, доход, что происходит"><i>🏠</i><span>Обзор</span></button>
+      <button data-dwtab="ad" title="ПВО: поставить и двигать средства"><i>🛡</i><span>ПВО</span></button>
+      <button data-dwtab="strike" title="Дроны: производство и удары"><i>🎯</i><span>Удары</span></button>
+      <button data-dwtab="repair" title="Ремонт и бригады"><i>🔧</i><span>Ремонт</span></button>
+      <button data-dwtab="econ" title="Стройка: новые объекты и дороги"><i>🏗</i><span>Стройка</span></button>
+      <button data-dwtab="res" title="Исследования и улучшения"><i>🔬</i><span>Наука</span></button>
+      <button data-dwtab="state" title="Государство: законы, бюджет, области"><i>🏛</i><span>Страна</span></button>
+    </nav>
+    <div class="dw-main">
+      <div class="head"><b id="dw-title">Обзор</b><b id="dw-pts" title="Очки"></b></div>
+      <div id="dw-status"></div>
+      <div id="dw-advice"></div>
+      <div id="dw-body"></div>
+    </div>
   </aside>
+  <div id="dw-hint"></div>
   <section id="dw-card" class="panel"></section>
 
   <section id="card" class="panel">
@@ -489,6 +547,8 @@
         <tr><td>Энергосистема</td><td>станции: ТЭС (3 блока), ГЭС у плотины водохранилища, ТЭЦ в столице, ветровая (зависит от ветра) и солнечная (только днём) станции, импорт по межсистемной ЛЭП, покупные мобильные ГТУ. Мощность идёт по сети: ОРУ станций → ЛЭП 330 кВ → автотрансформаторы ПС 330/110 → ЛЭП 110 кВ → трансформаторы ПС 110/10 → районы → городские ТП 10/0,4 кВ. Разбили АТ, трансформатор или ЛЭП — районы недополучают мощность. Резкая потеря генерации — срабатывает АЧР</td></tr>
         <tr><td>Веерные отключения</td><td>если сеть не может дать подстанции всю мощность, режим неустойчив: аварийные отключения, перегрев — через минуту защита выводит трансформатор (нужен ремонт). Введите очереди отключений (0–4 из 5, по 20% нагрузки) — остальные районы получат свет стабильно, а графики люди переносят легче. Автоматический диспетчер делает это сам, но с задержкой. Мобильная ГТУ (25 МВт) подключается прямо к шинам 10 кВ подстанции и работает на топливе с нефтебазы. Прилёт по кварталу может разбить ТП — квартал без света до ремонта</td></tr>
         <tr><td>ПВО (вкладка «ПВО»)</td><td>ставите сами на своей территории: мобильные огневые группы (дёшево, хорошо по «Шахедам» на малой высоте), ЗСУ, ЗРК (ракета = 16 очков, ложные цели съедают боезапас; режим «беречь ракеты»), РЭБ (сбивает спутниковую навигацию — промахи и падения), акустические посты и РЛС (обнаружение и наводка), расчёты перехватчиков. Мобильные — ПКМ для перемещения. Боезапас подвозят грузовики с арсенала</td></tr>
+        <tr><td>Меню управления</td><td>слева — вертикальное меню: <b>Обзор</b> (свет, доход, районы), <b>ПВО</b>, <b>Удары</b> (запас и заказ дронов, пуск), <b>Ремонт</b>, <b>Стройка</b>, <b>Наука</b>, <b>Страна</b> (бюджет, законы, области). Вверху панели — подсказки «что сделать сейчас» с кнопкой действия; над картой — подсказка, что сделает клик в выбранном режиме. Подробности спрятаны в раскрывающихся блоках</td></tr>
+        <tr><td>Темп и скорость</td><td>мир в «Войне дронов» идёт втрое быстрее (полёты, машины, стройка, ремонт, экономика), а часы суток — в обычном темпе; время на плитках — в реальных минутах. В сетевой игре каждый выбирает скорость, идёт меньшая из двух; пауза — если любой нажал паузу. Считает только хост, поэтому синхронизация не ломается</td></tr>
         <tr><td>Производство дронов</td><td>дроны больше не бесконечны: их собирает завод БПЛА (и сборочные цеха после исследования). На вкладке «Удары» у каждого типа — запас и кнопки <b>+1 / +5</b>: заказ оплачивается сразу, цеха собирают по очереди (скорость — число исправных цехов со светом; разбитый завод — только поставки партнёров). Незапущенный заказ можно отменить с возвратом денег</td></tr>
         <tr><td>Исследования</td><td>вкладка «Исследования»: барражирующие боеприпасы, тяжёлые и реактивные БПЛА, охотники с машинным зрением, поточная сборка и роботизированные линии, сборочные цеха, спутниковая разведка; перехватчики и купола РЭБ; СЭС и накопители, НПЗ/шахта/цемент, ж/д терминал и порт, ТЦ, госрезерв. Одна тема за раз; там же НИОКР (улучшения)</td></tr>
         <tr><td>Разведка (туман войны)</td><td>объекты противника — ТЭС, подстанции, склады, заводы — не видны, пока их не найдут: разведчики («Орлан», «Лелека») видят на 1,6 км, ударные дроны — на 0,7 км вдоль маршрута, у линии фронта (5 км) всё видно, спутник (исследование) раз в 8 минут открывает случайный объект. ИИ бьёт только по разведанному</td></tr>

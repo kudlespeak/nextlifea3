@@ -322,12 +322,13 @@ export function renderModel(model, angle, ppm, opts = {}) {
     const sc = mkCanvas(w, h);
     const sg = sc.getContext('2d');
     sg.fillStyle = '#000';
-    sg.beginPath();
+    // каждую грань — отдельно: встречные контуры (оболочка градирни, полые формы) не вычитаются
     for (const poly of shadowPolys) {
+      sg.beginPath();
       poly.forEach(([X, Y], i) => { const px = (X - minX) * ppm, py = (Y - minY) * ppm; i ? sg.lineTo(px, py) : sg.moveTo(px, py); });
       sg.closePath();
+      sg.fill();
     }
-    sg.fill('nonzero');
     g2.globalAlpha = opts.shadowAlpha ?? 0.42;
     g2.filter = `blur(${Math.max(0.6, ppm * 0.05)}px)`;
     g2.drawImage(sc, 0, 0);

@@ -74,7 +74,7 @@ export class DroneWarAI {
     if (!g.prep && t > (this.next.hunt ?? t + 150)) { this.next.hunt = t + 170 / this.k + this.sim.rng.float(0, 90); this.hunt(); }
     else if (this.next.hunt === undefined) this.next.hunt = t + 150;
     if (!g.prep && t > this.next.strike) {
-      const night = ((t / 3600) % 24) > 20 || ((t / 3600) % 24) < 5;
+      const hr = (this.sim.tod() / 3600) % 24, night = hr > 20 || hr < 5;
       // Эскалация: к третьей фазе удары вдвое чаще
       // Богатая казна — удары чаще (деньги копить незачем, когда стройки окупились)
       const rich = Math.min(2.5, 1 + Math.max(0, S.points - 800) / 2000);

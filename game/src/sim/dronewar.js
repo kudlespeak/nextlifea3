@@ -551,7 +551,7 @@ export class DroneWar {
         return all('unit').reduce((a, u, i) => a + (this.compOk(u) && gsus[i] && this.compOk(gsus[i]) ? GEN.chp : 0), 0) * (0.5 + 0.5 * frac('chimney')) * ctrl;
       }
       case 'wpp': return ok('gsu').length ? ok('wt').length * GEN.wt * this.wind : 0;
-      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(t) * (0.3 + 0.7 * frac('inv')) * (this.infra?.season().eff.solar ?? 1);
+      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(this.sim.tod()) * (0.3 + 0.7 * frac('inv')) * (this.infra?.season().eff.solar ?? 1);
     }
     return 0;
   }
@@ -561,7 +561,7 @@ export class DroneWar {
   // трансформатора. Плановые очереди снимают нагрузку, и остальные районы получают свет стабильно.
   flow(first = false) {
     const sim = this.sim;
-    const hour = (sim.time / 3600) % 24;
+    const hour = (sim.tod() / 3600) % 24;
     const prof = 0.72 + 0.18 * Math.exp(-(((hour - 8.5) / 2) ** 2)) + 0.28 * Math.exp(-(((hour - 19.5) / 2.5) ** 2));
     // Ветер: медленное случайное блуждание 0.15..1
     this.wind = Math.max(0.15, Math.min(1, (this.wind ?? 0.6) + sim.rng.gauss(0, 0.03)));
@@ -738,7 +738,7 @@ export class DroneWar {
       // Рабочие руки: мобилизованные (ПВО, бригады, пусковые) не работают на заводах
       const labor = this.econ.labor(side);
       // ночная смена на заводах работает не в полную силу
-      const shift = 0.85 + 0.15 * daylight(sim.time);
+      const shift = 0.85 + 0.15 * daylight(sim.tod());
       const perMin = (4 + 10 * ind(0) + (4 * ind(1) + 4 * ind(2)) * logi + 4 * facOk * town(0) + 2 * S.oil) * this.incomeK(side) * labor * shift * this.state.k(side, 'industry');
       const tax = this.econ.taxes(side, dt) * this.incomeK(side) * labor * this.state.k(side, 'tax');
       const upkeep = this.econ.upkeep(side) * this.state.k(side, 'upkeep');
@@ -1061,7 +1061,7 @@ export class DroneWar {
 
   engage(a, T, dt) {
     const sim = this.sim;
-    const night = 1 - daylight(sim.time);
+    const night = 1 - daylight(sim.tod());
     // Цели: вражеские дроны, которые видит сторона (кроме своих перехватчиков)
     let best = null, bs = Infinity;
     for (const d of this.drones) {
@@ -1298,7 +1298,7 @@ export class DroneWar {
     d.scanT = (d.scanT || 0) - dt;
     if (d.scanT > 0 || !inArea) return;
     d.scanT = 1;
-    const night = 1 - daylight(sim.time);
+    const night = 1 - daylight(sim.tod());
     const Rs = D.spot * (1 - night * 0.3);
     let best = null, bd = Rs;
     for (const q of this.logi.vehicles) {
@@ -1332,7 +1332,7 @@ export class DroneWar {
     d.trail.push([d.x, d.y]); if (d.trail.length > 40) d.trail.shift();
     if (d.state === 'rtb' && dist < 150) { d.dead = true; d.deadAt = sim.time; }
     // Разведка: позиции ПВО в радиусе обзора (ночью — тепловизор, дальность меньше)
-    const night = 1 - daylight(sim.time);
+    const night = 1 - daylight(sim.tod());
     const R = D.spot * (1 - night * 0.35);
     for (const a of this.ad) {
       if (a.dead || a.side === d.side) continue;
@@ -1473,7 +1473,7 @@ export class DroneWar {
   // ---------- Обнаружение ----------
   detect() {
     const sim = this.sim;
-    const night = 1 - daylight(sim.time);
+    const night = 1 - daylight(sim.tod());
     if (this.fog) {
       if ((this.intelT = (this.intelT || 0) - 1) <= 0) { this.intelT = 5; this.intelTick(); }
       for (const d of this.drones) {

@@ -137,26 +137,72 @@ function chimney(M, st) {
   M.cylZ(0, 0, 11, 10.5, 0, 3, CONCRETE, 16);
 }
 function coolingTower(M, st) {
-  // Гиперболоид: сечения с сужением на 3/4 высоты
-  const H = st === 'destroyed' ? 40 : 76, R0 = 38;
-  const rings = [];
-  for (let i = 0; i <= 8; i++) {
-    const z = (i / 8) * H;
-    const t = z / 76;
-    const r = R0 * (0.62 + 0.38 * ((t - 0.78) / 0.78) ** 2);
-    const ring = [];
-    for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2; ring.push([Math.cos(a) * r, Math.sin(a) * r]); }
-    rings.push([z, ring]);
+  // Гиперболоид с открытым верхом: снаружи бетонная оболочка, внутри видна тёмная влажная стенка
+  // и бассейн с водой; по низу — воздухозаборные окна на колоннах
+  const dead = st === 'destroyed';
+  const H = dead ? 40 : 76, R0 = 38, N = 28;
+  const rad = (z) => R0 * (0.62 + 0.38 * ((z / 76 - 0.78) / 0.78) ** 2);
+  const zs = []; for (let i = 0; i <= 10; i++) zs.push(6 + (i / 10) * (H - 6));
+  const ang = (k) => (k / N) * Math.PI * 2;
+  const shell = mat('#bdb9ae', { fn(o, x, y, z) { mix(o, [112, 110, 102], vnoise(x * 0.15, y * 0.15, z * 0.1) * 0.28); if (z > H - 8) mix(o, [96, 94, 88], 0.35); if (fr(z * 0.18) < 0.05) mix(o, [150, 146, 136], 0.3); } });
+  const inner = mat('#4f5552', { fn(o, x, y, z) { mix(o, [34, 40, 40], 0.4 * (1 - z / 76)); mix(o, [70, 74, 70], vnoise(x * 0.2, y * 0.2, z * 0.2) * 0.3); } });
+  const faces = [], inF = [];
+  for (let r = 0; r < zs.length - 1; r++) {
+    const za = zs[r], zb = zs[r + 1], ra = rad(za), rb = rad(zb), ia = ra - 0.8, ib = rb - 0.8;
+    for (let k = 0; k < N; k++) {
+      const a0 = ang(k), a1 = ang(k + 1), am = (a0 + a1) / 2;
+      faces.push({ v: [[Math.cos(a0) * ra, Math.sin(a0) * ra, za], [Math.cos(a1) * ra, Math.sin(a1) * ra, za], [Math.cos(a1) * rb, Math.sin(a1) * rb, zb], [Math.cos(a0) * rb, Math.sin(a0) * rb, zb]], m: shell });
+      // внутренняя стенка: нормаль к оси — видна сквозь открытый верх
+      inF.push({ v: [[Math.cos(a0) * ia, Math.sin(a0) * ia, za], [Math.cos(a0) * ib, Math.sin(a0) * ib, zb], [Math.cos(a1) * ib, Math.sin(a1) * ib, zb], [Math.cos(a1) * ia, Math.sin(a1) * ia, za]], m: inner, nHint: [-Math.cos(am) * 0.9, -Math.sin(am) * 0.9, 0.44] });
+    }
   }
-  const shell = mat('#b9b5aa', { fn(o, x, y, z) { mix(o, [110, 108, 100], vnoise(x * 0.15, y * 0.15, z * 0.1) * 0.3); if (z > H - 10) mix(o, [90, 88, 82], 0.3); } });
-  M.loft(rings, shell, mat('#4a5054'), false);
-  if (st === 'destroyed') for (let i = 0; i < 8; i++) { const a = i * 0.8; M.box(Math.cos(a) * 30 - 4, Math.cos(a) * 30 + 4, Math.sin(a) * 30 - 3, Math.sin(a) * 30 + 3, 0, 4 + (i % 3) * 3, CONC_DK); }
+  // верхний венец (кольцо толщины оболочки)
+  const rt = rad(H);
+  for (let k = 0; k < N; k++) {
+    const a0 = ang(k), a1 = ang(k + 1);
+    faces.push({ v: [[Math.cos(a0) * (rt - 0.8), Math.sin(a0) * (rt - 0.8), H], [Math.cos(a1) * (rt - 0.8), Math.sin(a1) * (rt - 0.8), H], [Math.cos(a1) * (rt + 0.3), Math.sin(a1) * (rt + 0.3), H], [Math.cos(a0) * (rt + 0.3), Math.sin(a0) * (rt + 0.3), H]], m: mat('#8f8b82'), nHint: [0, 0, 1] });
+  }
+  M.part(faces);
+  M.part(inF);
+  // бассейн с водой внутри (видно сверху)
+  const rw = rad(6) - 1;
+  M.part([{ v: Array.from({ length: N }, (_, k) => [Math.cos(ang(k)) * rw, Math.sin(ang(k)) * rw, 5.5]), m: mat(dead ? '#2b2926' : '#3d5a60', { spec: 0.35, fn(o, x, y) { mix(o, [90, 120, 124], vnoise(x * 0.3, y * 0.3, 1) * 0.35); } }), nHint: [0, 0, 1] }]);
+  // колонны воздухозаборных окон и тёмный проём под оболочкой
+  const rb0 = rad(6);
+  for (let k = 0; k < 20; k++) { const a0 = (k / 20) * Math.PI * 2; M.seg([Math.cos(a0) * rb0, Math.sin(a0) * rb0, 0], [Math.cos(a0) * (rb0 - 0.5), Math.sin(a0) * (rb0 - 0.5), 6], 1.1, 0.9, CONC_DK); }
+  M.cylZ(0, 0, rb0 - 1.2, rb0 - 1.2, 0, 5.4, mat('#1f2322'), 24);
+  if (dead) for (let i = 0; i < 8; i++) { const a0 = i * 0.8; M.box(Math.cos(a0) * 30 - 4, Math.cos(a0) * 30 + 4, Math.sin(a0) * 30 - 3, Math.sin(a0) * 30 + 3, 0, 4 + (i % 3) * 3, CONC_DK); }
 }
 function coalYard(M, w, h, st) {
-  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.3, mat('#3b3934'));
-  for (let i = 0; i < 3; i++) M.dome(-w / 2 + (i + 0.5) * (w / 3), 0, 0.3, w / 7, h * 0.4, st === 'destroyed' ? 3 : 9, st === 'ok' ? COAL : SOOT, 3, 14);
-  // Конвейерная галерея к котельной
+  // Угольный склад: штабели-бурты вдоль склада, между ними рельсы роторного штабелеукладчика,
+  // конвейерная галерея к котельной
+  const burnt = st !== 'ok';
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.25, mat('#34322d', { fn(o, x, y) { mix(o, [20, 19, 17], vnoise(x * 0.3, y * 0.3, 0) * 0.5); } }));
+  const piles = 2, gap = h / piles;
+  const coal = mat(burnt ? '#231f1b' : '#2c2a27', { fn(o, x, y, z) { mix(o, [70, 66, 58], vnoise(x * 0.4, y * 0.4, z * 0.5) * 0.35); if (z > 6) mix(o, [58, 56, 52], 0.25); } });
+  for (let i = 0; i < piles; i++) {
+    const y0 = -h / 2 + gap * i + 5, y1 = y0 + gap - 14, ym = (y0 + y1) / 2, Hp = burnt ? 4 : 11;
+    // бурт — трапеция в разрезе, вытянутая вдоль склада
+    const faces = [];
+    faces.push({ v: [[-w / 2 + 6, y0, 0.25], [w / 2 - 6, y0, 0.25], [w / 2 - 14, ym - 2, Hp], [-w / 2 + 14, ym - 2, Hp]], m: coal });
+    faces.push({ v: [[-w / 2 + 14, ym + 2, Hp], [w / 2 - 14, ym + 2, Hp], [w / 2 - 6, y1, 0.25], [-w / 2 + 6, y1, 0.25]], m: coal });
+    faces.push({ v: [[-w / 2 + 14, ym - 2, Hp], [w / 2 - 14, ym - 2, Hp], [w / 2 - 14, ym + 2, Hp], [-w / 2 + 14, ym + 2, Hp]], m: coal, nHint: [0, 0, 1] });
+    faces.push({ v: [[w / 2 - 6, y0, 0.25], [w / 2 - 6, y1, 0.25], [w / 2 - 14, ym + 2, Hp], [w / 2 - 14, ym - 2, Hp]], m: coal });
+    faces.push({ v: [[-w / 2 + 6, y1, 0.25], [-w / 2 + 6, y0, 0.25], [-w / 2 + 14, ym - 2, Hp], [-w / 2 + 14, ym + 2, Hp]], m: coal });
+    M.part(faces);
+    // рельсы штабелеукладчика между буртами
+    if (i < piles - 1) { const yr = y1 + 7; for (const d of [-2.5, 2.5]) M.box(-w / 2 + 4, w / 2 - 4, yr + d - 0.3, yr + d + 0.3, 0.25, 0.5, STEEL); }
+  }
+  if (!burnt) {
+    // роторный штабелеукладчик: портал на рельсах и стрела над буртом
+    const yr = -h / 2 + gap - 2, x = w * 0.1;
+    M.box(x - 4, x + 4, yr - 3.5, yr + 3.5, 0.5, 7, mat('#c9a431'));
+    M.seg([x, yr, 7], [x + 26, yr - gap * 0.45, 11], 1.4, 1.4, mat('#c9a431'));
+    M.cylX(yr - gap * 0.45, 11, 2.6, 2.6, x + 25, x + 28, mat('#8a7a3a'), 10);
+  }
+  // конвейерная галерея к котельной
   M.seg([-w / 2, -h / 2 + 4, 6], [-w / 2 - 60, -h / 2 - 40, 26], 3, 3, mat('#8a877d'));
+  M.seg([-w / 2 + 6, -h / 2 + 4, 0], [-w / 2 + 6, -h / 2 + 4, 6], 1.2, 1.2, STEEL);
 }
 function oilTank(M, w, st) {
   const r = w / 2, H = 12;
@@ -595,8 +641,44 @@ export function buildDrone(type, variant = 0) {
 }
 
 // ------------------------------------------------------------ Узлы по типу
+// Руины здания: обгоревший пол, куски стен разной высоты по периметру, кучи обломков, упавшие балки
+const RUIN_WALL = { ctrl: BRICK, house: CONCRETE, pump: BRICK, shop: CONCRETE, hall: CONCRETE, store: CONCRETE, garage: BRICK, barn: BRICK, mall: CONCRETE, kiosk: CONCRETE, dryer: CONCRETE, inv: CONCRETE, canopy: null, fcanopy: null };
+const RUIN_H = { ctrl: 7, house: 15, pump: 5, shop: 12, hall: 10, store: 8, garage: 6, barn: 4, mall: 10, kiosk: 3.5, dryer: 18, inv: 3 };
+function ruins(M, w, h, k) {
+  let seed = (Math.round(w * 13 + h * 7) * 2654435761) >>> 0;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const wall = RUIN_WALL[k], H = RUIN_H[k] || 6;
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.3, mat('#2c2925', { fn(o, x, y) { mix(o, [70, 62, 52], vnoise(x * 0.5, y * 0.5, 0) * 0.45); } }));
+  const debris = mat('#6d665c', { fn(o, x, y, z) { mix(o, [40, 36, 32], vnoise(x * 0.9, y * 0.9, z) * 0.6); if (fr(x * 0.7 + y * 0.3) < 0.1) mix(o, [140, 90, 60], 0.35); } });
+  // обломки внутри контура
+  const nPiles = Math.max(2, Math.round((w * h) / 350));
+  for (let i = 0; i < Math.min(nPiles, 14); i++) {
+    const rx = Math.min(w, h) * (0.12 + rnd() * 0.18), cx = (rnd() - 0.5) * (w - rx * 2), cy = (rnd() - 0.5) * (h - rx * 2);
+    M.dome(cx, cy, 0.3, rx, rx * (0.7 + rnd() * 0.5), 1.2 + rnd() * Math.min(4, H * 0.35), debris, 3, 10);
+  }
+  if (wall) {
+    // уцелевшие куски стен: периметр режется на отрезки, часть стоит, часть обвалилась
+    const top = mat('#1f1c19');
+    const side = (x0, y0, x1, y1) => {
+      const L = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.round(L / 6));
+      for (let i = 0; i < n; i++) {
+        if (rnd() < 0.35) continue;
+        const t0 = i / n, t1 = (i + 1) / n, hh = H * (0.25 + rnd() * 0.6);
+        const ax = x0 + (x1 - x0) * t0, ay = y0 + (y1 - y0) * t0, bx = x0 + (x1 - x0) * t1, by = y0 + (y1 - y0) * t1;
+        M.box(Math.min(ax, bx) - 0.3, Math.max(ax, bx) + 0.3, Math.min(ay, by) - 0.3, Math.max(ay, by) + 0.3, 0, hh, wall, top);
+      }
+    };
+    side(-w / 2, -h / 2, w / 2, -h / 2); side(-w / 2, h / 2, w / 2, h / 2); side(-w / 2, -h / 2, -w / 2, h / 2); side(w / 2, -h / 2, w / 2, h / 2);
+  }
+  // упавшие балки и фермы перекрытия
+  for (let i = 0; i < Math.min(6, 1 + Math.round(w / 20)); i++) {
+    const x = (rnd() - 0.5) * w * 0.8, y = (rnd() - 0.5) * h * 0.8, a = rnd() * 3.14, L = Math.min(w, h) * (0.3 + rnd() * 0.4);
+    M.seg([x - Math.cos(a) * L / 2, y - Math.sin(a) * L / 2, 0.4], [x + Math.cos(a) * L / 2, y + Math.sin(a) * L / 2, 0.4 + rnd() * H * 0.4], 0.35, 0.35, rnd() < 0.5 ? RUST : SOOT);
+  }
+}
 export function buildComp(k, w, h, st, shelterLevel, side) {
   const M = new Model();
+  if (st === 'destroyed' && k in RUIN_WALL) { ruins(M, w, h, k); return M; }
   switch (k) {
     case 'at': case 'gsu': transformer(M, w, h, st, true); if (shelterLevel && st !== 'destroyed') shelter(M, w, h, shelterLevel, true); break;
     case 'tr': transformer(M, w, h, st, false); if (shelterLevel && st !== 'destroyed') shelter(M, w, h, shelterLevel, false); break;

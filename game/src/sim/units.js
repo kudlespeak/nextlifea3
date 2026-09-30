@@ -143,6 +143,7 @@ function formationOffset(i, column = false) {
 import { DroneWar } from './dronewar.js';
 import { DroneWarAI } from './dwai.js';
 
+export const WORLD_PACE = 3;
 export class Sim {
   constructor(world) {
     this.world = world;
@@ -175,9 +176,14 @@ export class Sim {
   }
 
   // Начало партии: время суток, расстановка, режим, ИИ
+  tod() { return this.tod0 === undefined ? this.time : this.tod0 + (this.time - this.tod0) / this.pace; }
   setupGame(cfg) {
     this.cfg = cfg;
     this.time = (cfg.startHour ?? 5.5) * 3600;
+    // Темп мира: в «Войне дронов» всё (полёты, машины, стройка, ремонт, экономика) идёт в WORLD_PACE раз
+    // быстрее, а часы суток — в обычном темпе (tod — время суток для света, ночи и часов на экране)
+    this.pace = cfg.mode === 'drones' ? (cfg.pace ?? WORLD_PACE) : 1;
+    this.tod0 = this.time;
     const rng = new Rng((this.world.seed ^ 0xa11) >>> 0);
     if (cfg.mode === 'drones') {
       // «Война дронов»: наземных войск нет — только тыл, ПВО и дроны

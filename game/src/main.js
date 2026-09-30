@@ -172,7 +172,7 @@ $('mp-join').onclick = async () => {
   role = 'guest';
   net.on('joined', (m) => { $('mp-status').textContent = `Вы в комнате ${m.code}. Ждём, пока хост начнёт игру…`; })
     .on('start', (m) => startGame(m.cfg))
-    .on('snap', (m) => { if (sim) { applySnapshot(sim, m); lastSnap = performance.now(); } })
+    .on('snap', (m) => { if (sim) { applySnapshot(sim, m); lastSnap = performance.now(); if (m.spd) { mpSpeed.host = m.spd[0]; mpSpeed.guest = m.spd[1]; mpApply(); } } })
     .on('grid', (m) => { if (sim) applyGrid(sim, m); })
     .on('ev', (m) => { if (!sim) return; for (const e of m.list) { chunks.worldEvent(e); applyWorldEvent(sim, e, (b) => chunks.invalidate(b)); } })
     .on('msg', (m) => { if (sim && (!m.side || m.side === controlSide)) log(m.text); });
@@ -198,7 +198,7 @@ function startGame(c) {
     if (role === 'guest') { sim.puppet = true; sim.ais = []; }
     if (c.mode === 'drones') { const fe = { k: 'fog', side: controlSide, on: sim.game.fog, reset: true, ids: [...sim.game.intel[controlSide]] }; chunks.worldEvent(fe); applyEconEvent(world, fe); }
     digRng = new Rng(c.seed ^ 0xd16);
-    if (c.multiplayer) { timeScale = 1; setSpeed(1); document.querySelector('.timebox').classList.add('mp'); for (const b of document.querySelectorAll('[data-speed]')) b.style.display = 'none'; }
+    if (c.multiplayer) { timeScale = 1; mpSpeed.host = mpSpeed.guest = 1; mpApply(); document.querySelector('.timebox').classList.add('mp'); }
     $('info').textContent = `seed ${c.seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.genTime.toFixed(0)} мс`;
     const b = $('side-badge');
     b.textContent = FACTIONS[controlSide].country;
@@ -226,7 +226,7 @@ function startGame(c) {
       $('prep-text').innerHTML = 'Разверните ПВО: мобильные группы, РЛС, РЭБ, посты. Удары дронами — после окончания развёртывания.';
       log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
       log('Защищайте ТЭС, подстанции, мосты и склады; ремонтируйте их. Проиграет тот, чья энергосистема рухнет без денег на восстановление.');
-      log('Слева: «Энергосистема», «ПВО» (поставить средства), «Удары» (пуск дронов), «Ремонт».');
+      log('Слева — меню: Обзор, ПВО, Удары (производство и пуск дронов), Ремонт, Стройка, Наука, Страна. Вверху панели — «что сделать сейчас» с кнопками.');
       $('loading').style.opacity = 0;
       lastNow = performance.now();
       requestAnimationFrame(frame);
@@ -293,6 +293,7 @@ const unitsById = (ids) => sim.units.filter((u) => ids.includes(u.id) && !u.dead
 // Отделение в машине перед любым приказом, кроме посадки/позы/огня, спешивается
 const dis = (u) => { if (u?.embarked) sim.disembark(u); return u; };
 const COMMANDS_IMPL = {
+  speed: (who, v) => { mpSpeed[who] = v; mpApply(); },
   move: (ids, x, y, stealth, direct) => {
     const us = unitsById(ids);
     // Ручной приказ приостанавливает автоматику (снабжение, санитарки, укрытие) на 3 минуты
@@ -581,7 +582,7 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (c === 'F1') { e.preventDefault(); toggleHelp(); return; }
-  if (c === 'Space') { e.preventDefault(); if (!cfg.multiplayer) setSpeed(paused ? timeScale : 0); return; }
+  if (c === 'Space') { e.preventDefault(); requestSpeed(paused ? timeScale : 0); return; }
   if (c === 'Enter' && orderMode === 'dig') { finishDig(); return; }
   if (c === 'KeyA' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -590,7 +591,7 @@ addEventListener('keydown', (e) => {
     return;
   }
   const speedKeys = { Digit1: 0.5, Digit2: 1, Digit3: 2, Digit4: 4, ...(dwui ? { Digit5: 8 } : {}) };
-  if (speedKeys[c] && !cfg.multiplayer) { setSpeed(speedKeys[c]); return; }
+  if (speedKeys[c]) { requestSpeed(speedKeys[c]); return; }
   if (c === 'KeyL') toggleLabels();
   if (c === 'KeyO') cycleFortView();
   if (c === 'KeyI') toggleInterior();
@@ -1075,7 +1076,7 @@ function log(text) {
   const box = $('log');
   const ev = document.createElement('div');
   ev.className = 'ev' + (/убит|уничтож|обруш|погиб|умер|тяжело ранен|обесточ/.test(text) ? ' loss' : '');
-  ev.innerHTML = `<time>${sim ? fmtClock(sim.time) : ''}</time><span></span>`;
+  ev.innerHTML = `<time>${sim ? fmtClock(sim.tod()) : ''}</time><span></span>`;
   ev.querySelector('span').textContent = text;
   box.prepend(ev);
   while (box.children.length > 9) box.lastChild.remove();
@@ -1144,7 +1145,22 @@ function setSpeed(v) {
   else { paused = false; timeScale = v; }
   for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('active', paused ? b.dataset.speed === '0' : Number(b.dataset.speed) === timeScale);
 }
-for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => { if (!cfg?.multiplayer) setSpeed(Number(b.dataset.speed)); };
+for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => requestSpeed(Number(b.dataset.speed));
+// Скорость в сетевой игре: каждый игрок просит свою, идёт наименьшая из двух (пауза — если кто-то на паузе).
+// Считает только хост, гость лишь показывает снимки — синхронизация не ломается.
+const mpSpeed = { host: 1, guest: 1, eff: 1 };
+function mpApply() {
+  mpSpeed.eff = Math.min(mpSpeed.host, mpSpeed.guest);
+  if (mpSpeed.eff === 0) paused = true; else { paused = false; timeScale = mpSpeed.eff; }
+  for (const b of document.querySelectorAll('[data-speed]')) { const v = Number(b.dataset.speed); b.classList.toggle('active', v === mpSpeed[role === 'guest' ? 'guest' : 'host']); b.classList.toggle('eff', v === mpSpeed.eff); }
+  const other = role === 'guest' ? mpSpeed.host : mpSpeed.guest;
+  const el = $('mp-speed'); if (el) { el.textContent = `соп. ${other ? other + '×' : '❚❚'}`; el.title = `Идёт ${mpSpeed.eff ? mpSpeed.eff + '×' : 'пауза'}: скорость — меньшая из выбранных вами и соперником, пауза — если кто-то нажал паузу`; }
+}
+function requestSpeed(v) {
+  if (!cfg?.multiplayer) { setSpeed(v); return; }
+  issue('speed', role === 'guest' ? 'guest' : 'host', v);
+  if (role === 'guest') { mpSpeed.guest = v; mpApply(); }
+}
 setSpeed(timeScale);
 
 function toggleLabels() { showLabels = !showLabels; $('btn-labels').classList.toggle('active', showLabels); }
@@ -1175,24 +1191,24 @@ $('end-menu').onclick = () => { location.reload(); };
 function updateScoreboard() {
   const g = sim.game;
   if (!g) return;
-  const left = g.endless ? sim.time - (g.startAt ?? sim.time) : Math.max(0, g.endAt - sim.time);
+  const left = (g.endless ? sim.time - (g.startAt ?? sim.time) : Math.max(0, g.endAt - sim.time)) / (sim.pace || 1); // в реальных секундах
   const pb = $('prep-bar');
   pb.classList.toggle('show', !!g.prep);
   if (g.prep) {
-    const pl = Math.max(0, g.prepEnd - sim.time);
+    const pl = Math.max(0, g.prepEnd - sim.time) / (sim.pace || 1);
     $('prep-time').textContent = `${Math.floor(pl / 60)}:${String(Math.floor(pl % 60)).padStart(2, '0')}`;
     const rd = g.ready[controlSide];
     $('btn-ready').textContent = rd ? 'ЖДЁМ СОПЕРНИКА…' : 'К БОЮ ▶';
     $('btn-ready').disabled = rd;
   }
-  const light = daylight(sim.time);
+  const light = daylight(sim.tod());
   const sun = light > 0.6 ? '☀' : light > 0.1 ? '◐' : '☾';
   let mid = '';
   if (g.mode === 'drones') {
     const S = g.sides[controlSide], E = g.sides[controlSide === 'blue' ? 'red' : 'blue'];
     const col = (v) => (v > 0.8 ? 'var(--ok)' : v > 0.4 ? '#f0c34a' : 'var(--bad)');
     const mc = (v) => (v > 60 ? 'var(--ok)' : v > 30 ? '#f0c34a' : 'var(--bad)');
-    mid = `<span class="m" title="Устойчивость тыла: ваша : противника">тыл</span> <b style="color:${mc(S.morale ?? 100)}">${Math.round(S.morale ?? 100)}</b><span class="m">:</span><span style="color:${mc(E.morale ?? 100)}">${Math.round(E.morale ?? 100)}</span> <span class="m">· свет</span> <span style="color:${col(S.supply)}">${(S.supply * 100).toFixed(0)}%</span> <span class="m">·</span> <b>${Math.floor(S.points)}</b> <span class="m">оч (+${S.income.toFixed(0)})${g.prep ? '' : ` · фаза ${(g.phaseNo || 0) + 1}`}</span>`;
+    mid = `<span class="m" title="Устойчивость тыла: ваша : противника">тыл</span> <b style="color:${mc(S.morale ?? 100)}">${Math.round(S.morale ?? 100)}</b><span class="m">:</span><span style="color:${mc(E.morale ?? 100)}">${Math.round(E.morale ?? 100)}</span> <span class="m">· свет</span> <span style="color:${col(S.supply)}">${(S.supply * 100).toFixed(0)}%</span> <span class="m">·</span> <b>${Math.floor(S.points)}</b> <span class="m">оч (+${(S.income * (sim.pace || 1)).toFixed(0)}/мин)${g.prep ? '' : ` · фаза ${(g.phaseNo || 0) + 1}`}</span>`;
   } else if (g.mode === 'zones') mid = `<span class="b">${Math.floor(g.score.blue)}</span> : <span class="r">${Math.floor(g.score.red)}</span> <span class="m">/ 500</span>`;
   else if (g.mode === 'assault') { const att = g.cfg.attacker; mid = `<span class="m">прорвано линий</span> <span class="${att === 'blue' ? 'b' : 'r'}">${g.linesTaken || 0}/4</span>`; }
   else {
@@ -1250,7 +1266,7 @@ function drawMinimap() {
       const e = chunks.get(0, cx, cy);
       if (e) mctx.drawImage(e.canvas, cx * size * miniScale, cy * size * miniScale, size * miniScale, size * miniScale);
     }
-  const dark = 1 - daylight(sim.time);
+  const dark = 1 - daylight(sim.tod());
   if (dark > 0.05) { mctx.fillStyle = `rgba(6,10,26,${0.6 * dark})`; mctx.fillRect(0, 0, mini.width, mini.height); }
   for (const line of dwui ? [] : sim.game?.lines || []) {
     for (const sec of line.sectors) {
@@ -1421,11 +1437,11 @@ function frameBody(now) {
     // Гость: плавное движение между снимками, свой расчёт тумана войны
     interpolate(sim, dtReal);
     if (sim.game?.interpolate) sim.game.interpolate(dtReal);
-    sim.time += dtReal;
+    if (!paused) sim.time += dtReal * timeScale * (sim.pace || 1);
     visTimer += dtReal;
     if (visTimer > 1) { visTimer = 0; sim.vision.update(true); }
   } else if (!paused) {
-    let gdt = dtReal * (cfg.multiplayer ? 1 : timeScale);
+    let gdt = dtReal * timeScale * (sim.pace || 1);
     while (gdt > 1e-6) {
       const step = Math.min(0.25, gdt);
       sim.update(step);
@@ -1455,11 +1471,11 @@ function frameBody(now) {
   if (role === 'host') {
     if (netEvents.length) net.send({ t: 'ev', list: netEvents });
     netTimer += dtReal;
-    if (netTimer > 0.125) { netTimer = 0; net.send(makeSnapshot(sim)); }
+    if (netTimer > 0.125) { netTimer = 0; const sn = makeSnapshot(sim); sn.spd = [mpSpeed.host, mpSpeed.guest, paused ? 0 : timeScale]; net.send(sn); }
     gridTimer += dtReal;
     if (gridTimer > 3) { gridTimer = 0; const gp = gridPacket(sim); if (gp) net.send(gp); }
   }
-  emitDust(sim, paused ? 0 : dtReal, cfg.multiplayer ? 1 : timeScale);
+  emitDust(sim, paused ? 0 : dtReal, timeScale * (sim.pace || 1));
   const pan = (12 * dpr) / cam.zoom;
   if (!keys.has('ControlLeft') && !keys.has('ControlRight')) {
     if (keys.has('KeyW') || keys.has('ArrowUp')) cam.y -= pan;
@@ -1517,7 +1533,7 @@ function frameBody(now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawInteriors(ctx, world, sim, view, interiorsForce, ui.underground);
   if (dwui) {
-    drawNight(ctx, world, sim, view, 1 - daylight(sim.time));
+    drawNight(ctx, world, sim, view, 1 - daylight(sim.tod()));
     drawDWPreview(ctx, sim, view, controlSide, dwui.state, mouse ? screenToWorld(mouse[0], mouse[1]) : null);
     drawDW(ctx, sim, view, controlSide, dwui.state);
     drawArtillery(ctx, sim, view);
@@ -1525,7 +1541,7 @@ function frameBody(now) {
     uiTimer += dtReal;
     if (uiTimer > 0.25) {
       uiTimer = 0;
-      $('clock').textContent = fmtTime(sim.time);
+      $('clock').textContent = fmtTime(sim.tod());
       dwui.update();
       drawMinimap();
       updateScale();
@@ -1535,7 +1551,7 @@ function frameBody(now) {
   }
   drawFront(ctx, sim.game, view);
   drawFortOverlay(ctx, world, view, fortView, dig);
-  drawNight(ctx, world, sim, view, 1 - daylight(sim.time));
+  drawNight(ctx, world, sim, view, 1 - daylight(sim.tod()));
   if (fog) drawFog(ctx, sim, view, fog);
   drawZones(ctx, sim.game, view);
   drawPrep(ctx, sim.game, view, controlSide);
@@ -1556,7 +1572,7 @@ function frameBody(now) {
   uiTimer += dtReal;
   if (uiTimer > 0.25) {
     uiTimer = 0;
-    $('clock').textContent = fmtTime(sim.time);
+    $('clock').textContent = fmtTime(sim.tod());
     if (sim.units.some((u) => u.dead && ui.selected.has(u.id))) { for (const u of sim.units) if (u.dead) ui.selected.delete(u.id); buildCard(); }
     updateCard();
     updateRoster();
