@@ -190,9 +190,12 @@ export class DroneWarAI {
     if (T.recon) want[T.recon.k] = 5;
     for (const [k, d] of Object.entries(DW_DRONES)) if (d.side === side && d.cls === 'hunter' && R.droneOk(side, k)) want[k] = 3;
     const list = Object.entries(want).map(([k, w]) => [k, w - R.stock(side, k) - R.queued(side, k)]).filter(([, gap]) => gap > 0).sort((a, b) => b[1] - a[1]);
+    // минимальный запас ударных держим всегда (даже «экономист» не остаётся без дронов)
+    const strikeStock = T.strike.reduce((q, d) => q + R.stock(side, d.k) + R.queued(side, d.k), 0);
     for (const [k, gap] of list) {
       const n = Math.min(4, Math.ceil(gap)), cost = g.droneCost(side, k) * n;
-      if (!this.can('off', cost)) break;
+      const must = strikeStock < 8 && DW_DRONES[k].cls === 'strike' && S.points - cost >= (this.reserve ?? 30);
+      if (!must && !this.can('off', cost)) break;
       if (!R.order(side, k, n)) this.pay('off', cost);
     }
   }
@@ -539,7 +542,7 @@ export class DroneWarAI {
     if (!G) return;
     if (S.points - (this.reserve - G.cost * 0.8) < G.cost) return;
     const err = G.act === 'upgrade' ? g.upgrade(this.side, G.id) : g.buildCivil(this.side, G.kind, G.x, G.y);
-    if (!err) { this.fund.def -= G.cost * 0.4; this.fund.off -= G.cost * 0.6; if (G.kind === 'launch') this.launchShort = 0; }
+    if (!err) { const o = this.doctrine.off; this.fund.def = Math.max(0, this.fund.def - G.cost * (1 - o)); this.fund.off = Math.max(0, this.fund.off - G.cost * o); if (G.kind === 'launch') this.launchShort = 0; }
     this.goal = null;
   }
   // Маршрут в обход известных позиций ПВО: одна-две точки сбоку
