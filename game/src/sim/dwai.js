@@ -15,9 +15,9 @@ const DOCTRINES = {
   balanced: { name: 'взвешенный', roi: 0.7, off: 0.55, cover: 1, projects: ['highway', 'airshield', 'agroholding', 'technopark', 'powerbridge'], tech: ['economy', 'military', 'energy'] },
 };
 
-const VALUE = { refinery: 7, railterm: 4, port: 4, coalmine: 4, cement: 3, decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, launch: 5, hub: 5, wpp: 3, spp: 3 };
-const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
-const TARGET_COMPS = { refinery: ['tank', 'shop', 'dryer'], railterm: ['rack', 'hall'], port: ['rack', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const VALUE = { refinery: 7, railterm: 4, port: 4, coalmine: 4, cement: 3, decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, workshop: 5, launch: 5, hub: 5, wpp: 3, spp: 3 };
+const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, workshop: 1.5, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
+const TARGET_COMPS = { refinery: ['tank', 'shop', 'dryer'], railterm: ['rack', 'hall'], port: ['rack', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], workshop: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 const D_RANGE = (D) => D.range || 99999;
 
@@ -65,10 +65,11 @@ export class DroneWarAI {
     // Копим на выгодную стройку: удары и новые позиции — только из того, что сверх цели
     if (this.goal && !this.finishing()) this.reserve += this.goal.cost * 0.8;
     if (t > this.next.plan) { this.next.plan = t + 30; this.plan(); this.govern(); }
+    if (t > (this.next.prod ?? 0)) { this.next.prod = t + 12; this.produce(); }
     this.doGoal();
     this.defense();
     if (t > this.next.shelter) { this.next.shelter = t + 90; this.shelters(); }
-    if (t > this.next.recon) { this.next.recon = t + 200 / this.k + this.sim.rng.float(0, 80); this.recon(); }
+    if (t > this.next.recon) { const few = g.objects.filter((o) => o.side === this.enemy && g.known(this.side, o)).length < 25; this.next.recon = t + (few ? 70 : 200) / this.k + this.sim.rng.float(0, 60); this.recon(); }
     if (!g.prep && t > this.next.loiter) { this.next.loiter = t + 70; this.loiter(); }
     if (!g.prep && t > (this.next.hunt ?? t + 150)) { this.next.hunt = t + 170 / this.k + this.sim.rng.float(0, 90); this.hunt(); }
     else if (this.next.hunt === undefined) this.next.hunt = t + 150;
@@ -107,7 +108,7 @@ export class DroneWarAI {
   defense() {
     const g = this.g, S = this.S, rng = this.sim.rng;
     const spend = () => Math.min(this.fund.def, S.points - this.reserve);
-    const put = (type, x, y) => { const c = g.adCost(this.side, type); if (!g.canPlace(this.side, type, x, y) && !g.placeAD(this.side, type, x, y)) this.pay('def', c); };
+    const put = (type, x, y) => { if (!g.res.adOk(this.side, type)) type = { icpt: 'mog', ewd: 'ew' }[type] || type; const c = g.adCost(this.side, type); if (!g.canPlace(this.side, type, x, y) && !g.placeAD(this.side, type, x, y)) this.pay('def', c); };
     const dir = this.side === 'blue' ? 1 : -1; // к фронту
     // Сеть акустических постов перед тылом
     const posts = g.ad.filter((a) => !a.dead && a.side === this.side && a.type === 'acoustic').length;
@@ -176,17 +177,55 @@ export class DroneWarAI {
     }
   }
 
+  // ---------- Производство и исследования ----------
+  // Держим запас каждого типа: не хватает — заказываем на заводе (платим сразу)
+  produce() {
+    const g = this.g, R = g.res, side = this.side, S = this.S, T = this.types();
+    if (g.winner) return;
+    const hawk = this.doctrine === DOCTRINES.hawk ? 1.5 : this.doctrine.off > 0.55 ? 1.25 : 1;
+    const want = {};
+    for (const d of T.strike) want[d.k] = (d.k === 'bober' ? 8 : d.k === 'geran3' || d.k === 'fp2' ? 4 : d.k === 'lyutyi' ? 6 : 16) * hawk;
+    for (const d of T.decoy) want[d.k] = 14 * hawk;
+    if (T.loiter) want[T.loiter.k] = 6;
+    if (T.recon) want[T.recon.k] = 5;
+    for (const [k, d] of Object.entries(DW_DRONES)) if (d.side === side && d.cls === 'hunter' && R.droneOk(side, k)) want[k] = 3;
+    const list = Object.entries(want).map(([k, w]) => [k, w - R.stock(side, k) - R.queued(side, k)]).filter(([, gap]) => gap > 0).sort((a, b) => b[1] - a[1]);
+    for (const [k, gap] of list) {
+      const n = Math.min(4, Math.ceil(gap)), cost = g.droneCost(side, k) * n;
+      if (!this.can('off', cost)) break;
+      if (!R.order(side, k, n)) this.pay('off', cost);
+    }
+  }
+  research() {
+    const g = this.g, R = g.res, side = this.side, S = this.S;
+    if (R.side[side].cur) return;
+    const order = ['loiter', 'sat', 'mass', 'energy', 'icpt', 'heavy', 'hunter', 'industry', 'export', 'robot', 'workshop', 'ewd', 'retail', 'reserve'];
+    for (const id of order) {
+      if (!R.available(side, id)) continue;
+      if (S.points - R.cost(side, id) >= 40) R.start(side, id);
+      return;
+    }
+  }
+
   // ---------- Разведка и удары ----------
   types() {
-    const t = Object.entries(DW_DRONES).filter(([, d]) => d.side === this.side).map(([k, d]) => ({ k, ...d }));
+    const t = Object.entries(DW_DRONES).filter(([k, d]) => d.side === this.side && this.g.res.droneOk(this.side, k)).map(([k, d]) => ({ k, ...d }));
     return { strike: t.filter((d) => d.cls === 'strike'), decoy: t.filter((d) => d.cls === 'decoy'), loiter: t.find((d) => d.cls === 'loiter'), recon: t.find((d) => d.cls === 'recon') };
   }
   recon() {
     const g = this.g, T = this.types();
-    if (!T.recon || !this.can('off', 10)) return;
-    const objs = g.objs(this.enemy).filter((o) => VALUE[o.kind] >= 5);
-    const o = objs[this.sim.rng.int(0, objs.length - 1)];
-    if (o && !g.launch(this.side, T.recon.k, 1, o.x + this.sim.rng.float(-1500, 1500), o.y + this.sim.rng.float(-1500, 1500))) this.pay('off', g.droneCost(this.side, T.recon.k));
+    if (!T.recon || g.res.stock(this.side, T.recon.k) < 1) return;
+    const rng = this.sim.rng, W = g.world.W, H = g.world.H, C = 5000;
+    // разведка по квадратам вражеской территории: сначала неразведанные, ближе к фронту
+    this.scouted = this.scouted || new Set();
+    let best = null, bs = -Infinity;
+    for (let k = 0; k < 24; k++) {
+      const x = this.side === 'blue' ? rng.float(g.frontX + 1500, W - 1500) : rng.float(1500, g.frontX - 1500), y = rng.float(1500, H - 1500);
+      const key = `${Math.floor(x / C)},${Math.floor(y / C)}`;
+      const s = (this.scouted.has(key) ? 0 : 10) - Math.abs(x - g.frontX) / 8000 + rng.float(0, 2);
+      if (s > bs) { bs = s; best = [x, y, key]; }
+    }
+    if (best && !g.launch(this.side, T.recon.k, 1, best[0], best[1])) this.scouted.add(best[2]);
   }
   loiter() {
     const g = this.g, T = this.types(), t = this.sim.time;
@@ -198,40 +237,40 @@ export class DroneWarAI {
     // Охота на снабжение: замеченные разведкой фуры и грузовики ПВО в досягаемости
     const trucks = g.logi.vehicles.filter((v) => !v.dead && v.side === this.enemy && (v.kind === 'supply' || v.kind === 'fura' || v.kind === 'tanker') && v.spotted[this.side] && t - v.spotted[this.side] < 60 && Math.abs(v.x - launchX) < T.loiter.range * 0.8);
     const tr = trucks[this.sim.rng.int(0, Math.max(0, trucks.length - 1))];
-    if (tr && this.sim.rng.chance(0.5) && !g.drones.some((d) => !d.dead && d.vehTarget === tr.id) && this.can('off', T.loiter.cost)) {
-      if (!g.launch(this.side, T.loiter.k, 1, tr.x, tr.y, { vehTarget: tr.id })) this.pay('off', g.droneCost(this.side, T.loiter.k));
+    if (tr && this.sim.rng.chance(0.5) && !g.drones.some((d) => !d.dead && d.vehTarget === tr.id) && g.res.stock(this.side, T.loiter.k) > 0) {
+      g.launch(this.side, T.loiter.k, 1, tr.x, tr.y, { vehTarget: tr.id });
     }
     for (const a of known.slice(0, 2)) {
       if (g.drones.some((d) => !d.dead && d.adTarget === a.id)) continue;
       const n = a.type === 'sam' || a.type === 'radar' ? 2 : 1;
-      if (!this.can('off', T.loiter.cost * n)) return;
-      if (!g.launch(this.side, T.loiter.k, n, a.x, a.y, { adTarget: a.id })) this.pay('off', g.droneCost(this.side, T.loiter.k) * n);
+      if (g.res.stock(this.side, T.loiter.k) < 1) return;
+      g.launch(this.side, T.loiter.k, n, a.x, a.y, { adTarget: a.id });
     }
   }
   // Охотники с ИИ — на дороги противника: у распредцентра, погранперехода, нефтебазы, АЗС
   hunt() {
     const g = this.g, rng = this.sim.rng;
-    const types = Object.entries(DW_DRONES).filter(([, d]) => d.side === this.side && d.cls === 'hunter');
+    const types = Object.entries(DW_DRONES).filter(([k, d]) => d.side === this.side && d.cls === 'hunter' && g.res.droneOk(this.side, k) && g.res.stock(this.side, k) > 0);
     if (!types.length) return;
     const L = g.logi.side[this.enemy];
-    const areas = [L.hub, L.border, L.oilDepot, ...L.fuels].filter(Boolean);
+    const areas = [L.hub, L.border, L.oilDepot, ...L.fuels].filter((o) => o && g.known(this.side, o));
+    if (!areas.length) return;
     const o = areas[rng.int(0, areas.length - 1)];
     const p = g.logi.gate(o);
     const front = types.find(([, d]) => d.front);
     const [k, D] = front && Math.abs(p[0] - g.frontX) < D_RANGE(front[1]) - 1500 && rng.chance(0.6) ? front : types.find(([, d]) => !d.front) || types[0];
     const n = D.cost < 10 ? 3 : 1 + (rng.chance(0.4) ? 1 : 0);
-    if (!this.can('off', g.droneCost(this.side, k) * n)) return;
-    if (!g.launch(this.side, k, n, p[0] + rng.float(-800, 800), p[1] + rng.float(-800, 800))) this.pay('off', g.droneCost(this.side, k) * n);
+    g.launch(this.side, k, n, p[0] + rng.float(-800, 800), p[1] + rng.float(-800, 800));
   }
   strike() {
     const g = this.g, S = this.S, T = this.types(), rng = this.sim.rng;
-    const budget = Math.min(this.fund.off, S.points - this.reserve) * 0.9;
-    if (budget < 50) return;
+    const budget = 1e9; // дроны оплачены при заказе: удар ограничен запасом и пусковыми
     // Ценность цели / известная защита
     const knownAD = g.ad.filter((a) => !a.dead && a.side === this.enemy && a.spotted[this.side]);
     let best = null, bs = -1;
     const dir = g.directive[this.side];
     for (const o of g.objs(this.enemy)) {
+      if (!g.known(this.side, o)) continue; // бьём только по разведанному
       let v = VALUE[o.kind];
       if (v && dir && !dir.done && dir.oid === o.id) v *= 4; // директива штаба
       if (!v) continue;
@@ -255,8 +294,8 @@ export class DroneWarAI {
       for (const a of guards.slice(0, 3)) {
         if (Math.abs(a.x - launchX) > T.loiter.range || g.drones.some((d) => !d.dead && d.adTarget === a.id)) continue;
         const n = a.type === 'sam' || a.type === 'radar' ? 2 : 1;
-        if (!this.can('off', T.loiter.cost * n)) break;
-        if (!g.launch(this.side, T.loiter.k, n, a.x, a.y, { adTarget: a.id })) { this.pay('off', g.droneCost(this.side, T.loiter.k) * n); sent++; }
+        if (g.res.stock(this.side, T.loiter.k) < 1) break;
+        if (!g.launch(this.side, T.loiter.k, n, a.x, a.y, { adTarget: a.id })) sent++;
       }
       if (sent) { this.sead = { oid: best.id, until: t + 150 }; this.intent = `готовит удар по «${best.name}»: сначала подавляет ПВО`; this.next.strike = t + 150; return; }
     }
@@ -264,9 +303,11 @@ export class DroneWarAI {
     const aims = best.comps.filter((c) => TARGET_COMPS[best.kind].includes(c.k) && c.state === 'ok');
     // Состав волны
     const heavy = best.kind === 'bridge' || best.kind === 'factory';
-    const main = this.side === 'red'
+    let main = this.side === 'red'
       ? (heavy || rng.chance(0.15) ? T.strike.find((d) => d.k === 'geran3') : null) || T.strike.find((d) => d.k === 'shahed')
-      : heavy ? T.strike.find((d) => d.k === 'fp2') : rng.chance(0.5) ? T.strike.find((d) => d.k === 'lyutyi') : T.strike.find((d) => d.k === (best.kind === 'ps110' || best.kind === 'launch' ? 'bober' : 'fp1'));
+      : (heavy ? T.strike.find((d) => d.k === 'fp2') : rng.chance(0.5) ? T.strike.find((d) => d.k === 'lyutyi') : T.strike.find((d) => d.k === (best.kind === 'ps110' || best.kind === 'launch' ? 'bober' : 'fp1'))) || T.strike.find((d) => d.k === 'fp1');
+    if (!main || g.res.stock(this.side, main.k) < 2) main = T.strike.filter((d) => d.k !== 'bober' && g.res.stock(this.side, d.k) >= 2).sort((a, b) => g.res.stock(this.side, b.k) - g.res.stock(this.side, a.k))[0];
+    if (!main) return;
     const unit = g.droneCost(this.side, main.k);
     const rich = Math.min(3, 1 + Math.max(0, S.points - 800) / 1500);
     let n = Math.max(2, Math.min(Math.round(12 * this.k * rich), Math.floor((budget * 0.8) / unit)));
@@ -274,7 +315,7 @@ export class DroneWarAI {
     // Пропускная способность стартовых позиций: 300 дронов разом не поднять
     const free = g.econ.launchFree(this.side);
     if (free < 4) { this.launchShort++; return; }
-    n = Math.min(n, Math.max(2, Math.floor(free * 0.55)));
+    n = Math.min(n, Math.max(2, Math.floor(free * 0.55)), g.res.stock(this.side, main.k));
     if (n < 2) return;
     let slots = free - n;
     const route = this.route(best, knownAD);
@@ -286,13 +327,13 @@ export class DroneWarAI {
       if (bob && nb > 1 && rng.chance(0.5)) {
         slots -= nb;
         const c = aims[rng.int(0, aims.length - 1)];
-        if (!g.launch(this.side, 'bober', nb, c.x, c.y, { route, oid: best.id, cid: c.id })) this.pay('off', g.droneCost(this.side, 'bober') * nb);
+        g.launch(this.side, 'bober', nb, c.x, c.y, { route, oid: best.id, cid: c.id });
       }
     }
     if (T.decoy.length) {
       const dec = T.decoy[0];
       const nd = Math.min(Math.round(n * 1.2), slots, Math.floor((budget - n * unit) / g.droneCost(this.side, dec.k)));
-      if (nd > 0 && !g.launch(this.side, dec.k, nd, best.x + rng.float(-300, 300), best.y + rng.float(-300, 300), { route, oid: best.id })) this.pay('off', g.droneCost(this.side, dec.k) * nd);
+      if (nd > 0) g.launch(this.side, dec.k, nd, best.x + rng.float(-300, 300), best.y + rng.float(-300, 300), { route, oid: best.id });
     }
     // Ударные — по отдельным узлам
     let left = n;
@@ -300,7 +341,7 @@ export class DroneWarAI {
     while (left > 0) {
       const c = aims[i % aims.length];
       const k = Math.min(left, Math.max(1, Math.ceil(n / aims.length)));
-      if (!g.launch(this.side, main.k, k, c.x, c.y, { route, oid: best.id, cid: c.id })) this.pay('off', unit * k);
+      g.launch(this.side, main.k, k, c.x, c.y, { route, oid: best.id, cid: c.id });
       left -= k; i++;
     }
   }
@@ -434,6 +475,7 @@ export class DroneWarAI {
     const g = this.g, S = this.S, side = this.side, St = g.state, T = St.side[side], D = this.doctrine;
     const mor = S.morale ?? 100, sum = g.econ.summary(side);
     const law = (id, on) => { if (!!T.laws[id] !== on && !St.cooldown(T)) St.setLaw(side, id, on); };
+    this.research();
     // новые объекты — сразу к сети (без подключения они не работают)
     for (const o of g.objs(side)) {
       if (!g.econ.needsGrid(o) || o.grid) continue;

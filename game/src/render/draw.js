@@ -114,7 +114,11 @@ export function drawChunk(ctx, world, b, ppm) {
   drawAreas(ctx, world, b, q, ppm);
   drawLowFreq(ctx, world, b, ppm);
   if (ppm >= 2) drawMicro(ctx, world, b, ppm);
+  const season = world.season;
+  if (season === 'autumn') { ctx.fillStyle = 'rgba(160,110,40,0.2)'; ctx.fillRect(b.x0, b.y0, size, size); } // пожухлая трава и стерня
+  else if (season === 'spring') { ctx.fillStyle = 'rgba(70,150,50,0.1)'; ctx.fillRect(b.x0, b.y0, size, size); } // молодая зелень
   drawWater(ctx, world, b, q, ppm);
+  if (season === 'winter') drawSnow(ctx, world, b, size, ppm); // снег на полях и лёд на реке, дороги расчищены
   const scars = world.scars.query(q);
   for (const s of scars) if (s.kind === 'burn') drawBurn(ctx, s);
   for (const s of scars) if (s.kind === 'tracks') drawTracks(ctx, s, ppm);
@@ -127,6 +131,8 @@ export function drawChunk(ctx, world, b, ppm) {
   drawBuildings(ctx, world, q, ppm);
   drawPowerGround(ctx, world, q, ppm);
   drawTrees(ctx, world, b, ppm);
+  if (season === 'winter') { ctx.fillStyle = 'rgba(236,240,246,0.22)'; ctx.fillRect(b.x0, b.y0, size, size); } // иней на крышах и кронах
+  else if (season === 'autumn') drawAutumnLeaves(ctx, world, b, ppm);
   drawPowerLines(ctx, world, q, ppm);
 
   // Зерно снимка — в пиксельных координатах, со сдвигом, чтобы чанки стыковались
@@ -136,6 +142,25 @@ export function drawChunk(ctx, world, b, ppm) {
   pat.setTransform(new DOMMatrix([1, 0, 0, 1, -ox, -oy]));
   ctx.fillStyle = pat;
   ctx.fillRect(0, 0, size * ppm, size * ppm);
+}
+
+// ---------- Времена года ----------
+// Зима: снежный покров (сквозь него едва читаются борозды полей и пятна степи), лёд на реках
+function drawSnow(ctx, world, b, size, ppm) {
+  ctx.fillStyle = 'rgba(236,240,245,0.8)';
+  ctx.fillRect(b.x0, b.y0, size, size);
+  // лёд на реках и прудах — голубоватый, с тёмными промоинами у середины
+  for (const w of world.water.query({ x0: b.x0 - 10, y0: b.y0 - 10, x1: b.x1 + 10, y1: b.y1 + 10 })) {
+    if (w.line) { strokeLine(ctx, w.line, (w.width || 20) * 0.9, 'rgba(196,214,228,0.55)'); if (w.width > 30) strokeLine(ctx, w.line, w.width * 0.12, 'rgba(70,96,120,0.35)'); }
+    else if (w.poly) { ctx.beginPath(); pathPoly(ctx, w.poly); ctx.fillStyle = 'rgba(196,214,228,0.55)'; ctx.fill(); }
+  }
+}
+// Осень: жёлто-рыжие пятна крон в лесополосах
+function drawAutumnLeaves(ctx, world, b, ppm) {
+  if (ppm < 0.3) return;
+  for (const belt of world.belts.query({ x0: b.x0 - 20, y0: b.y0 - 20, x1: b.x1 + 20, y1: b.y1 + 20 })) {
+    strokeLine(ctx, belt.line, belt.width * 0.9, 'rgba(200,130,40,0.28)');
+  }
 }
 
 // ---------- Фон степи: пятна травы разной сухости ----------
@@ -353,8 +378,14 @@ function drawAreas(ctx, world, b, q, ppm) {
   for (const kind of AREA_ORDER) {
     const items = byKind[kind];
     if (!items) continue;
-    for (const a of items) drawArea(ctx, a, b, ppm);
+    for (const a of items) if (!(kind === 'dwsite' && fogHidden(world, a.side, a.oid))) drawArea(ctx, a, b, ppm);
   }
+}
+// Туман войны «Войны дронов»: объект противника, ещё не найденный разведкой, на карте не виден
+export function fogHidden(world, side, oid) {
+  const F = world.fog;
+  if (!F || !F.on || side === undefined || side === F.side || oid === undefined || oid === null) return false;
+  return !F.known.has(oid);
 }
 
 function drawArea(ctx, a, b, ppm) {
@@ -1939,6 +1970,9 @@ function drawPowerLines(ctx, world, q, ppm) {
   // три фазы (у 330 кВ — расщеплённые) и их тени; на концах — порталы ОРУ
   const SH = [0.3, 0.34]; // смещение тени на метр высоты (солнце с северо-запада)
   for (const ln of p.lines || []) {
+    // линии противника видны, когда найдены оба конца (или конец — межсистемная связь)
+    const hid = (id) => id !== 'import' && id != null && fogHidden(world, ln.side, id);
+    if (ln.feed ? hid(ln.a) : hid(ln.a) || hid(ln.b)) continue;
     const pl = ln.pylons, big = ln.kv >= 330;
     const sp = big ? 7.5 : 4, Hw = big ? 30 : 20, Ht = big ? 40 : 28;
     for (let i = 1; i < pl.length; i++) {
@@ -2022,6 +2056,7 @@ function drawPowerLines(ctx, world, q, ppm) {
   // под землю кабель уходит только в застроенной части города (на пустырях у окраин — опоры)
   const inCity = (x, y) => world.mask.has(x, y, M.CITY | M.CITYZONE) && world.mask.near(x, y, 45, M.BUILD);
   for (const tp of [...p.tps, ...(p.feeds || [])]) {
+    if (tp.oid !== undefined ? fogHidden(world, tp.side, tp.oid) : p.mains?.[tp.main] && fogHidden(world, p.mains[tp.main].side, p.mains[tp.main].infraId)) continue;
     const pts = tp.poles;
     const runs = [];
     let cur = null;

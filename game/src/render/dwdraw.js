@@ -185,7 +185,7 @@ export function drawDW(ctx, sim, view, side, ui) {
 
   // ---------- Объекты ----------
   for (const o of g.objects) {
-    if (o.kind === 'import' || !inView(o.x, o.y, Math.max(o.w, o.h))) continue;
+    if (o.kind === 'import' || !inView(o.x, o.y, Math.max(o.w, o.h)) || !g.known(side, o)) continue;
     if (o.build && !o.build.up && !o.build.grid) { construction(ctx, o, toS, z, dpr, 1 - (o.build.until - t) / o.build.total); continue; }
     // крупные объекты (ТЭС, ГЭС, подстанции) видны в объёме и издали — пока на экране больше ~60 px
     if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
@@ -589,7 +589,7 @@ export function drawDW(ctx, sim, view, side, ui) {
   // ---------- Значки объектов (обзорный масштаб) и подписи ----------
   const labels = z < 0.9;
   for (const o of g.objects) {
-    if (o.kind === 'import' || !inView(o.x, o.y, 300)) continue;
+    if (o.kind === 'import' || !inView(o.x, o.y, 300) || !g.known(side, o)) continue;
     const [sx, sy] = toS(o.x, o.y);
     const bad = o.comps.filter((c) => c.state !== 'ok').length;
     const dead = o.comps.filter((c) => c.state === 'destroyed').length;

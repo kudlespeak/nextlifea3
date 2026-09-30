@@ -21,6 +21,7 @@ import { DWLogistics, VEH } from './dwlogi.js';
 import { DWEconomy } from './dwecon.js';
 import { DWState } from './dwstate.js';
 import { DWInfra } from './dwinfra.js';
+import { DWResearch } from './dwres.js';
 
 // ---------------------------------------------------------------- Дроны
 export const DW_DRONES = {
@@ -113,7 +114,7 @@ export const SHELTER = [null, { name: 'Габионы и мешки (защит�
 // Сетка над пролётом моста: лёгкие дроны (до 25 кг БЧ: «Бобёр», «Ланцет», Warmate) рвутся на ней
 export const NET = [null, { name: 'Антидроновая сетка над пролётом', cost: 30, time: 150 }];
 export const shelterDef = (c, level) => (COMP[c.k]?.net ? NET[level] : SHELTER[level]);
-export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', oldfactory: 'Цеха (оборудование вывезено)', decoy: 'Макет подстанции', refinery: 'НПЗ', watertower: 'Водонапорная станция', railterm: 'Ж/д терминал', port: 'Речной порт', coalmine: 'Угольная шахта', cement: 'Цементный завод', agro: 'Мехдвор', housing: 'Жилой квартал', hospital: 'Больница', school: 'Школа', mill: 'Мелькомбинат', dairy: 'Молочная ферма', solar: 'Солнечная станция', bess: 'Накопитель энергии', pontoon: 'Понтонная переправа', autopark: 'Автобаза', reserve: 'Госрезерв', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
+export const KIND_NAME = { fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС', tpp: 'ТЭС', ps330: 'ПС 330 кВ', ps110: 'ПС 110 кВ', bridge: 'Мост', oil: 'Нефтебаза', ammo: 'Арсенал', factory: 'Завод БПЛА', workshop: 'Сборочный цех БПЛА', launch: 'Стартовая позиция', import: 'Импорт', hub: 'Распределительный центр', border: 'Погранпереход', elevator: 'Элеватор', oldfactory: 'Цеха (оборудование вывезено)', decoy: 'Макет подстанции', refinery: 'НПЗ', watertower: 'Водонапорная станция', railterm: 'Ж/д терминал', port: 'Речной порт', coalmine: 'Угольная шахта', cement: 'Цементный завод', agro: 'Мехдвор', housing: 'Жилой квартал', hospital: 'Больница', school: 'Школа', mill: 'Мелькомбинат', dairy: 'Молочная ферма', solar: 'Солнечная станция', bess: 'Накопитель энергии', pontoon: 'Понтонная переправа', autopark: 'Автобаза', reserve: 'Госрезерв', mall: 'Торговый центр', market: 'Супермаркет', store: 'Магазин', firest: 'Пожарная часть', rembase: 'Ремонтная база' };
 
 // Западные образцы ПВО точнее, у Кардагора — массовость и ложные цели
 const AD_EFF = { blue: 1.05, red: 1.0 };
@@ -179,6 +180,12 @@ export class DroneWar {
     this.econ = new DWEconomy(this);
     this.state = new DWState(this);
     this.infra = new DWInfra(this);
+    this.res = new DWResearch(this);
+    // Туман войны: объекты противника неизвестны, пока их не найдёт разведка (мосты — на любой карте)
+    this.fog = cfg.fog !== false;
+    this.intel = { blue: new Set(), red: new Set() };
+    this.satT = { blue: 0, red: 0 };
+    this.intelTick(true);
     this.deployStart();
     this.flow(true);
   }
@@ -206,6 +213,29 @@ export class DroneWar {
     this.byId = new Map(this.objects.map((o) => [o.id, o]));
   }
   obj(id) { return this.byId.get(id); }
+  known(side, o) { return !this.fog || !o || o.side === side || o.kind === 'bridge' || o.kind === 'import' || this.intel[side].has(o.id); }
+  reveal(side, o, how) {
+    if (this.known(side, o)) return;
+    this.intel[side].add(o.id);
+    this.sim.events.push({ type: 'intel', side, oid: o.id });
+    if (how) this.sim.msg(`Разведка: обнаружен объект «${o.name}» (${how})`, side);
+  }
+  // Объекты у линии фронта видны с передовой; спутниковые снимки (исследование) — раз в 8 минут
+  intelTick(init = false) {
+    for (const o of this.objects) {
+      if (o.kind === 'bridge' || o.kind === 'import') continue;
+      const enemy = o.side === 'blue' ? 'red' : 'blue';
+      if (Math.abs(o.x - this.frontX) < 5000) this.reveal(enemy, o, init ? null : 'видно с передовой');
+    }
+    if (init) return;
+    for (const side of ['blue', 'red']) {
+      if (!this.res.has(side, 'sat') || this.sim.time < this.satT[side]) continue;
+      this.satT[side] = this.sim.time + 480;
+      const enemy = side === 'blue' ? 'red' : 'blue';
+      const hidden = this.objects.filter((o) => o.side === enemy && !this.known(side, o) && !CIVIL.has(o.kind));
+      if (hidden.length) this.reveal(side, hidden[this.sim.rng.int(0, hidden.length - 1)], 'спутниковый снимок');
+    }
+  }
   objs(side, kind) { return this.objects.filter((o) => o.side === side && (!kind || o.kind === kind)); }
   compOk(c) { return c.state === 'ok' && c.fire <= 0; }
   lineAlive(a, b) {
@@ -238,6 +268,7 @@ export class DroneWar {
     if (x < 100 || y < 100 || x > W - 100 || y > this.world.H - 100) return 'За краем карты';
     if (side === 'blue' ? x > this.frontX - 700 : x < this.frontX + 700) return 'Только на своей территории (не ближе 700 м к линии фронта)';
     if (this.world.mask.has(x, y, M.WATER)) return 'В воде нельзя';
+    if (this.res && !this.res.adOk(side, type)) return `Нужно исследование «${this.res.needFor('ad', type)}»`;
     const cost = this.adCost(side, type);
     if (this.sides[side].points < cost) return `Не хватает очков: нужно ${cost}`;
     return null;
@@ -292,8 +323,10 @@ export class DroneWar {
     if (this.prep && D.cls !== 'recon') return 'Идёт развёртывание — удары после окончания подготовки';
     if (opts.oid && CIVIL.has(this.obj(opts.oid)?.kind)) return 'Удары по гражданским объектам (магазины, ТЦ, погранпереход, пожарные, ремонтники) не наносятся';
     const S = this.sides[side];
-    const cost = Math.round(this.droneCost(side, type) * count);
-    if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
+    if (this.res && !this.res.droneOk(side, type)) return `${D.short}: нужно исследование «${this.res.needFor('drone', type)}»`;
+    const have = this.res ? this.res.stock(side, type) : count;
+    if (have <= 0) return `${D.short}: в запасе нет — закажите на заводе (вкладка «Удары»)`;
+    count = Math.min(count, have);
     const sites = this.launchPoints(side, D);
     if (!sites.length) return 'Нет исправных стартовых позиций';
     // Пропускная способность стартовых позиций: пусковых и расчётов мало — больше за раз не поднять
@@ -303,10 +336,7 @@ export class DroneWar {
       if (count > free) return free > 0 ? `Стартовые позиции загружены: сейчас можно поднять не больше ${free} (лимит ${this.econ.launchCap(side)} за 5 мин — стройте и улучшайте стартовые позиции)` : `Стартовые позиции загружены: все пусковые заняты (лимит ${this.econ.launchCap(side)} за 5 мин)`;
       this.econ.useLaunch(side, count);
     }
-    this.econ.useParts(side, cost);
-    S.points -= cost;
-    S.stats.spent += cost;
-    S.stats.mil += cost;
+    this.res?.take(side, type, count);
     const rng = this.sim.rng;
     const strike = D.cls === 'strike' || D.cls === 'decoy';
     let tDep = 0;
@@ -337,7 +367,7 @@ export class DroneWar {
     }
     S.stats.launched += count;
     const tgt = opts.oid ? this.obj(opts.oid)?.name : opts.adTarget ? 'позиция ПВО' : opts.vehTarget ? 'транспорт на дороге' : D.cls === 'hunter' ? `охота на дорогах у точки ${Math.round(tx)}, ${Math.round(ty)}` : `точка ${Math.round(tx)}, ${Math.round(ty)}`;
-    this.sim.msg(`Пуск: ${D.short} ×${count} → ${tgt} (−${cost} оч.)`, side);
+    this.sim.msg(`Пуск: ${D.short} ×${count} → ${tgt} (в запасе ещё ${this.res ? this.res.stock(side, type) : '—'})`, side);
     return null;
   }
   droneCost(side, type) {
@@ -436,6 +466,9 @@ export class DroneWar {
   takeCredit(side, kind) { return this.state.takeCredit(side, kind); }
   acceptContract(side, id) { return this.state.acceptContract(side, id); }
   upgrade(side, id) { return this.econ.upgrade(side, id); }
+  orderDrones(side, k, n) { return this.res.order(side, k, n); }
+  cancelOrder(side, i) { return this.res.cancel(side, i); }
+  startLab(side, id) { return this.res.start(side, id); }
   gridConnect(side, id) { return this.econ.gridConnect(side, id); }
   buyCrew(side) {
     const S = this.sides[side];
@@ -478,6 +511,7 @@ export class DroneWar {
     this.econ.update(dt);
     this.state.update(dt);
     this.infra.update(dt);
+    this.res.update(dt);
     this.updateRepairs(dt);
     this.flowTimer -= dt;
     if (this.flowTimer <= 0) { this.flowTimer = 2; this.flow(); }
@@ -1440,6 +1474,19 @@ export class DroneWar {
   detect() {
     const sim = this.sim;
     const night = 1 - daylight(sim.time);
+    if (this.fog) {
+      if ((this.intelT = (this.intelT || 0) - 1) <= 0) { this.intelT = 5; this.intelTick(); }
+      for (const d of this.drones) {
+        if (d.dead || d.state === 'wait') continue;
+        const D = DW_DRONES[d.type];
+        if (D.cls === 'interceptor') continue;
+        const R = (D.spot || (D.cls === 'strike' || D.cls === 'loiter' ? 700 : 500)) * (1 - night * 0.25);
+        for (const o of this.objects) {
+          if (o.side === d.side || this.intel[d.side].has(o.id) || o.kind === 'bridge' || o.kind === 'import') continue;
+          if (Math.abs(o.x - d.x) < R + o.w / 2 && Math.abs(o.y - d.y) < R + o.w / 2 && hyp(o.x - d.x, o.y - d.y) < R + Math.max(o.w, o.h) / 2) this.reveal(d.side, o, D.short);
+        }
+      }
+    }
     for (const d of this.drones) {
       if (d.dead || d.state === 'wait') continue;
       const D = DW_DRONES[d.type];
@@ -1514,6 +1561,8 @@ DroneWar.prototype.snapshot = function () {
     eco: this.econ.snap(),
     gv: this.state.snap(),
     inf: this.infra.snap(),
+    rs: this.res.snap(),
+    it: this.fog ? [[...this.intel.blue], [...this.intel.red]] : 0,
     ls: ['blue', 'red'].map((sd) => { const L = this.logi.side[sd]; return [L.stats.imports, L.stats.deliveries, L.stats.sold, L.stats.lostTrucks, L.stats.trade]; }),
   };
 };
@@ -1522,6 +1571,9 @@ DroneWar.prototype.applySnapshot = function (s) {
   if (s.eco) this.econ.applySnap(s.eco); // сначала — построенные объекты (индексы остальных массивов)
   if (s.gv) this.state.applySnap(s.gv);
   if (s.inf) this.infra.applySnap(s.inf);
+  if (s.rs) this.res.applySnap(s.rs);
+  if (s.it) ['blue', 'red'].forEach((sd, i) => { for (const id of s.it[i]) if (!this.intel[sd].has(id)) { this.intel[sd].add(id); this.sim.events.push({ type: 'intel', side: sd, oid: id }); } });
+  this.fog = !!s.it;
   const old = new Map(this.drones.map((d) => [d.id, d]));
   this.drones = s.d.map((q) => {
     const o = old.get(q[0]);

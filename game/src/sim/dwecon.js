@@ -45,6 +45,7 @@ export const BUILD = {
   agro: { name: 'Мехдвор', cost: 100, time: 150, desc: '+1 трактор и +1 комбайн ближайшей агрофирме (за уровень)' },
   launch: { name: 'Стартовая позиция', cost: 240, time: 300, mil: true, desc: `+${LAUNCH_PER * 4} пусков за 5 мин; содержание ${LAUNCH_UPKEEP} оч/мин` },
   factory: { name: 'Завод БПЛА', cost: 300, time: 600, hidden: true, desc: 'место для эвакуированного завода' },
+  workshop: { name: 'Сборочный цех БПЛА', cost: 260, time: 360, mil: true, desc: '+2 линии сборки дронов (за уровень); нужен свет. Производство не зависит от одного завода' },
   decoy: { name: 'Макет подстанции', cost: 70, time: 120, mil: true, desc: 'ложная цель: противник видит обычную ПС 110 кВ и тратит на неё дроны; удар по макету не бьёт по тылу' },
   // ----- развитие страны -----
   housing: { name: 'Жилой квартал', cost: 150, time: 360, near: 'city', desc: '+30 тыс. жителей ближайшему городу (налоги, рабочие руки); у города, не дальше 4 км' },
@@ -64,8 +65,8 @@ export const BUILD = {
   cement: { name: 'Цементный завод', cost: 220, time: 300, desc: 'стройматериалы +3 в минуту (нужен свет): стройка и ремонт на 20% дешевле, пока есть запас' },
   reserve: { name: 'Госрезерв', cost: 200, time: 240, desc: '+2 резервных автотрансформатора; запас топлива, если нефтебаза разрушена' },
 };
-export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy', 'cement']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'refinery', 'coalmine', 'reserve', 'pontoon']], ['Военное', ['launch', 'decoy']]];
-const UPG = new Set(['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery']);
+export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy', 'cement']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'refinery', 'coalmine', 'reserve', 'pontoon']], ['Военное', ['launch', 'workshop', 'decoy']]];
+const UPG = new Set(['workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery']);
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
 
@@ -392,6 +393,7 @@ export class DWEconomy {
   siteFor(side, kind, x, y) {
     const W = this.world, R = this.logi.roads;
     if (!BUILD[kind]) return { err: 'Такой объект не строится' };
+    if (this.g.res && !this.g.res.buildOk(side, kind)) return { err: `Нужно исследование «${this.g.res.needFor('build', kind)}»` };
     if (x < 300 || y < 300 || x > W.W - 300 || y > W.H - 300) return { err: 'За краем карты' };
     if (!this.territoryOk(side, x)) return { err: 'Только на своей территории, не ближе 1,5 км к фронту' };
     const B = BUILD[kind];
@@ -491,8 +493,8 @@ export class DWEconomy {
     if (d.kind === 'agro' && d.farm === undefined) { let best = null, bd = 6000; for (const f of this.farms) { if (f.side !== d.side) continue; const q = Math.hypot(f.x - d.x, f.y - d.y); if (q < bd) { bd = q; best = f; } } obj.farm = best ? best.id : -1; }
     for (const st of this.world.settlements) st._ps = null;
     if (remote) return obj; // у гостя площадку добавляет событие мира от хоста
-    const bbox = addSite(this.world, { kind: d.kind, x: d.x, y: d.y, angle: d.angle, gateQ: d.gateQ, drive: d.drive, L: d.L });
-    this.sim.events.push({ type: 'net', ev: { k: 'site', s: { kind: d.kind, x: d.x, y: d.y, angle: d.angle, gateQ: d.gateQ, drive: d.drive, L: d.L } } });
+    const bbox = addSite(this.world, { kind: d.kind, oid: d.id, side: d.side, x: d.x, y: d.y, angle: d.angle, gateQ: d.gateQ, drive: d.drive, L: d.L });
+    this.sim.events.push({ type: 'net', ev: { k: 'site', s: { kind: d.kind, oid: d.id, side: d.side, x: d.x, y: d.y, angle: d.angle, gateQ: d.gateQ, drive: d.drive, L: d.L } } });
     this.sim.events.push({ type: 'forts', bbox });
     return obj;
   }

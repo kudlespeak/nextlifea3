@@ -1,4 +1,4 @@
-import { generateWorld, MAIN_SEED } from './mapgen.js';
+import { generateWorld, MAIN_SEED, applyEconEvent } from './mapgen.js';
 import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
 import { Sim, SIDES, POSES, UNIT_TYPES, unitDef } from './sim/units.js';
@@ -196,6 +196,7 @@ function startGame(c) {
     sim = new Sim(world);
     sim.setupGame(c);
     if (role === 'guest') { sim.puppet = true; sim.ais = []; }
+    if (c.mode === 'drones') { const fe = { k: 'fog', side: controlSide, on: sim.game.fog, reset: true, ids: [...sim.game.intel[controlSide]] }; chunks.worldEvent(fe); applyEconEvent(world, fe); }
     digRng = new Rng(c.seed ^ 0xd16);
     if (c.multiplayer) { timeScale = 1; setSpeed(1); document.querySelector('.timebox').classList.add('mp'); for (const b of document.querySelectorAll('[data-speed]')) b.style.display = 'none'; }
     $('info').textContent = `seed ${c.seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.genTime.toFixed(0)} мс`;
@@ -272,6 +273,17 @@ function focus(x, y, zoom) { cam.x = x; cam.y = y; if (zoom) cam.zoom = Math.max
 
 const view = { cam, canvas, get dpr() { return dpr; } };
 const selectedUnits = () => (sim ? sim.units.filter((u) => ui.selected.has(u.id) && !u.dead && u.side === controlSide) : []);
+// Найден объект противника: перерисовать его площадку и ЛЭП/отпайки, что к нему ведут
+function fogBoxes(sim, oid) {
+  const o = sim.game.obj(oid), out = [];
+  if (o) out.push({ x0: o.x - Math.max(o.w, o.h) - 200, y0: o.y - Math.max(o.w, o.h) - 200, x1: o.x + Math.max(o.w, o.h) + 200, y1: o.y + Math.max(o.w, o.h) + 200 });
+  const P = sim.world.power;
+  const box = (pts) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const p of pts) { const x = p.x ?? p[0], y = p.y ?? p[1]; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); } out.push({ x0: x0 - 80, y0: y0 - 80, x1: x1 + 80, y1: y1 + 80 }); };
+  for (const l of P.lines || []) if (l.a === oid || l.b === oid) box(l.pylons);
+  for (const f of P.feeds || []) if (f.oid === oid) box(f.poles);
+  P.mains?.forEach((m, i) => { if (m.infraId === oid) for (const tp of P.tps) if (tp.main === i) box(tp.poles); });
+  return out;
+}
 const fogSide = () => (cfg?.fog ? controlSide : null);
 
 // ================= Приказы (единый диспетчер: локально или по сети) =================
@@ -364,7 +376,7 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerup', (e) => {
   if (!drag || drag.id !== e.pointerId) return;
   if (drag.box) { boxSelect(ui.box, e.ctrlKey || e.metaKey); ui.box = null; }
-  else if (drag.moved < 6) { if (dwui) dwui.click(e.clientX, e.clientY, drag.shift); else clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch); }
+  else if (drag.moved < 6) { if (dwui) dwui.click(e.clientX, e.clientY, drag.shift, e.ctrlKey || e.metaKey); else clickAt(e.clientX, e.clientY, e.ctrlKey || e.metaKey, drag.touch); }
   drag = null;
 });
 canvas.addEventListener('pointerleave', () => { mouse = null; $('hint').style.display = 'none'; });
@@ -1262,7 +1274,7 @@ function drawMinimap() {
     mctx.strokeStyle = 'rgba(255,90,70,0.6)'; mctx.lineWidth = 1;
     mctx.beginPath(); mctx.moveTo(g.frontX * miniScale, 0); mctx.lineTo(g.frontX * miniScale, mini.height); mctx.stroke();
     for (const o of g.objects) {
-      if (o.kind === 'import' || o.kind === 'bridge') continue;
+      if (o.kind === 'import' || o.kind === 'bridge' || !g.known(controlSide, o)) continue;
       const bad = o.comps.some((c) => c.state !== 'ok');
       mctx.fillStyle = bad ? (o.comps.some((c) => c.state === 'destroyed') ? '#ef5a4a' : '#f0c34a') : SIDES[o.side].fill;
       mctx.strokeStyle = '#000';
@@ -1427,12 +1439,19 @@ function frameBody(now) {
     else if (ev.type === 'msg') {
       if (!ev.side || ev.side === controlSide) log(ev.text);
       if (role === 'host' && (!ev.side || ev.side !== controlSide)) net.send({ t: 'msg', text: ev.text, side: ev.side });
+    } else if (ev.type === 'intel') {
+      if (ev.side === controlSide) { const fe = { k: 'fog', ids: [ev.oid] }; chunks.worldEvent(fe); applyEconEvent(sim.world, fe); for (const b of fogBoxes(sim, ev.oid)) chunks.invalidate(b); }
     } else if (ev.type === 'net') {
       chunks.worldEvent(ev.ev); // фоновая отрисовка карты повторяет изменение мира
       if (role === 'host') netEvents.push(ev.ev);
     }
   }
   sim.events.length = 0;
+  // Смена времени года — перерисовать карту (снег, осенние краски)
+  if (sim.game?.infra) {
+    const sid = sim.game.infra.season().id;
+    if (sid !== world.season) { const se = { k: 'season', id: sid }; applyEconEvent(world, se); chunks.worldEvent(se); chunks.invalidate({ x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 }); }
+  }
   if (role === 'host') {
     if (netEvents.length) net.send({ t: 'ev', list: netEvents });
     netTimer += dtReal;

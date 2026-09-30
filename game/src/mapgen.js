@@ -268,7 +268,14 @@ export const DW_NAMES = {
 };
 
 // Узлы объектов (локальные координаты: u — вдоль оси объекта, v — поперёк; размеры в метрах)
+// ТЭС и завод БПЛА — в реальную величину (промплощадка сотни метров)
+const LAYOUT_SCALE = { tpp: 1.5, factory: 1.5 };
 export function infraLayout(kind, L = 0) {
+  const l = infraLayout0(kind, L), k = LAYOUT_SCALE[kind];
+  if (!k) return l;
+  return { ...l, w: l.w * k, h: l.h * k, comps: l.comps.map((q) => ({ ...q, u: q.u * k, v: q.v * k, w: q.w * k, h: q.h * k })) };
+}
+function infraLayout0(kind, L = 0) {
   const c = (k, u, v, w, h, extra = {}) => ({ k, u, v, w, h, ...extra });
   switch (kind) {
     case 'tpp': return { w: 440, h: 320, comps: [
@@ -344,6 +351,7 @@ export function infraLayout(kind, L = 0) {
     case 'elevator': return { w: 300, h: 160, comps: [c('silo', -70, -30, 110, 40, { n: 'Силосный корпус №1' }), c('silo', 60, -30, 110, 40, { n: 'Силосный корпус №2' }), c('dryer', 135, -30, 20, 20, { n: 'Зерносушилка' }), c('hall', -50, 45, 150, 34, { n: 'Склад напольного хранения' }), c('ctrl', 90, 50, 28, 16, { n: 'Весовая' })] };
     case 'agro': return { w: 120, h: 80, comps: [c('garage', -22, -14, 64, 24, { n: 'Гараж сельхозтехники' }), c('canopy', 26, 16, 44, 20, { n: 'Навес для комбайнов' }), c('tank', 44, -20, 9, 9, { n: 'Ёмкость ГСМ' })] };
     case 'decoy': return infraLayout('ps110');
+    case 'workshop': return { w: 260, h: 150, comps: [c('shop', -60, -25, 110, 50, { n: 'Сборочный цех №1' }), c('shop', 70, -25, 110, 50, { n: 'Сборочный цех №2' }), c('hall', -30, 45, 150, 30, { n: 'Склад комплектующих' }), c('ctrl', 90, 50, 30, 16, { n: 'Испытательная станция' })] };
     case 'refinery': {
       // НПЗ в реальную величину: резервуарный парк, установки, колонны, факел, эстакада налива
       const cs = [];
@@ -556,7 +564,7 @@ function generateDroneWarWorld(seed) {
     const poly = rectCorners(o.x, o.y, lay.w + 16, lay.h + 16, angle);
     const apron = rectCorners(o.x, o.y, lay.w + pad * 2, lay.h + pad * 2, angle);
     mask.stampPoly(apron, M.BUILD);
-    const site = addItem(world.areas, { kind: 'dwsite', poly, apron, site: kind, x: o.x, y: o.y, angle, w: lay.w + 16, h: lay.h + 16, pad, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
+    const site = addItem(world.areas, { kind: 'dwsite', oid: o.id, side, poly, apron, site: kind, x: o.x, y: o.y, angle, w: lay.w + 16, h: lay.h + 16, pad, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
     // Подъездная дорога: от ворот (сторона, обращённая к дороге) к ближайшей дороге так, чтобы
     // не пройти сквозь чужие площадки, дома и воду; перебираем несколько точек примыкания
     const gates = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((q) => {
@@ -1064,7 +1072,7 @@ export function addSite(world, s) {
     let cx = 0, cy = 0; for (const [x, y] of f.poly) { cx += x; cy += y; } cx /= f.poly.length; cy /= f.poly.length;
     if (pointInPoly(cx, cy, apron) || apron.some(([x, y]) => pointInPoly(x, y, f.poly))) { f.removed = true; out.x0 = Math.min(out.x0, f.bbox.x0); out.y0 = Math.min(out.y0, f.bbox.y0); out.x1 = Math.max(out.x1, f.bbox.x1); out.y1 = Math.max(out.y1, f.bbox.y1); }
   }
-  addItem(world.areas, { kind: 'dwsite', poly, apron, site: s.kind, x: s.x, y: s.y, angle: s.angle, w: lay.w + 16, h: lay.h + 16, pad, gateQ: s.gateQ, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
+  addItem(world.areas, { kind: 'dwsite', oid: s.oid, side: s.side, poly, apron, site: s.kind, x: s.x, y: s.y, angle: s.angle, w: lay.w + 16, h: lay.h + 16, pad, gateQ: s.gateQ, fp: lay.comps.map((c) => [c.u, c.v, c.w, c.h, c.k]) });
   if (s.drive && s.drive.length > 1) {
     const line = cutAtRoad(world, resample(s.drive, 8), apron);
     addItem(world.roads, { kind: 'road', type: 'dirt', line, width: ROAD_STYLE.dirt.width, built: true }, ROAD_STYLE.dirt.width + 6);
@@ -1075,7 +1083,7 @@ export function addSite(world, s) {
 
 // ---------------------------------------------------------------- Подключение объектов к сети
 // Кому нужна отпайка 10 кВ (генерация и подстанции соединены магистральными ЛЭП, мост и импорт — не потребители)
-export const FEED_KINDS = new Set(['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'factory', 'oil', 'ammo', 'rembase', 'firest', 'border',
+export const FEED_KINDS = new Set(['workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'factory', 'oil', 'ammo', 'rembase', 'firest', 'border',
   'housing', 'hospital', 'school', 'mill', 'dairy', 'autopark', 'refinery', 'watertower', 'railterm', 'port', 'coalmine', 'cement', 'reserve', 'launch']);
 export const FEED110 = new Set(['solar', 'bess', 'decoy']);
 // Портал ОРУ нужного напряжения со стороны, обращённой к другому концу; into — середина шин (туда заходят провода)
@@ -1133,6 +1141,13 @@ export function gridFeed(world, o, maxPs = 9000) {
 // Возвращает список рамок, которые надо перерисовать.
 export function applyEconEvent(world, ev) {
   if (ev.k === 'site') return [addSite(world, ev.s)];
+  if (ev.k === 'season') { world.season = ev.id; return null; }
+  if (ev.k === 'fog') {
+    // туман войны для фоновой отрисовки: какие объекты противника зритель уже нашёл
+    if (!world.fog || ev.reset) world.fog = { side: ev.side, on: ev.on !== false, known: new Set() };
+    for (const id of ev.ids || []) world.fog.known.add(id);
+    return null;
+  }
   if (ev.k === 'pave') {
     const r = world.roadList[ev.i];
     if (!r) return null;
