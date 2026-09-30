@@ -5,6 +5,7 @@
 // строительство новых ЛЭП 110 кВ и эвакуация завода БПЛА вглубь тыла.
 
 import { CYCLE } from './dwecon.js';
+import { portalOf } from '../mapgen.js';
 
 export const SEASONS = [
   { id: 'spring', name: 'весна', to: 0.2, eff: { demand: 1.03, solar: 1 } },
@@ -285,9 +286,13 @@ export class DWInfra {
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.matPrice(side, q.cost, true);
     S.points -= cost; S.stats.spent += cost;
-    const n = Math.max(2, Math.ceil(q.L / 250));
+    // от портала ОРУ одного объекта к порталу другого, провода заходят на шины
+    const pa = portalOf(q.a, 110, [q.b.x, q.b.y]), pb = portalOf(q.b, 110, [q.a.x, q.a.y]);
+    const A = pa.pt, B = pb.pt, n = Math.max(2, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1]) / 250));
     const pylons = [];
-    for (let i = 0; i <= n; i++) pylons.push({ x: q.a.x + ((q.b.x - q.a.x) * i) / n, y: q.a.y + ((q.b.y - q.a.y) * i) / n, portal: i === 0 || i === n });
+    for (let i = 0; i <= n; i++) pylons.push({ x: A[0] + ((B[0] - A[0]) * i) / n, y: A[1] + ((B[1] - A[1]) * i) / n, portal: i === 0 || i === n });
+    if (pa.into) pylons[0].into = pa.into;
+    if (pb.into) pylons[n].into = pb.into;
     this.newLines.push({ side, a: q.a.id, b: q.b.id, kv: 110, pylons, until: this.sim.time + LINE.time, total: LINE.time, name: `${q.a.name} — ${q.b.name}` });
     this.sim.msg(`Стройка ЛЭП 110 кВ «${q.a.name} — ${q.b.name}» (${(q.L / 1000).toFixed(1)} км, −${cost} оч., ${Math.round(LINE.time / 60)} мин)`, side);
     return null;

@@ -1090,7 +1090,7 @@ export const FEED110 = new Set(['solar', 'bess', 'decoy']);
 export function portalOf(o, kv, toward) {
   if (!o.comps) return { pt: [o.x, o.y], into: null };
   const orus = o.comps.filter((q) => q.k === 'oru');
-  const oru = orus.find((q) => q.n.includes(String(kv))) || orus[0];
+  const oru = orus.find((q) => (q.n || q.name || '').includes(String(kv))) || orus[0];
   if (!oru) return { pt: edgeOf(o, toward), into: null };
   const c = Math.cos(o.angle), s = Math.sin(o.angle);
   const lx = (toward[0] - o.x) * c + (toward[1] - o.y) * s - oru.u, ly = -(toward[0] - o.x) * s + (toward[1] - o.y) * c - oru.v;
