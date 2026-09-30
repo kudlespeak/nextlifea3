@@ -742,12 +742,12 @@ export class DroneWar {
   // ---------- Кампания: фазы эскалации и директивы штаба ----------
   phase() { return this.phaseNo; }
   incomeK() { return PHASES[this.phaseNo].inc; }
-  drainK() { return this.endless ? [0.2, 0.32, 0.6][this.phaseNo] : PHASES[this.phaseNo].drain; }
+  drainK() { return this.endless ? [0.3, 0.45, 0.75][this.phaseNo] : PHASES[this.phaseNo].drain; }
   updateCampaign() {
     const sim = this.sim, t = sim.time;
     // Без ограничения — фазы по прошедшему времени (20 мин, час); иначе — трети партии
     const el = t - this.startAt;
-    const ph = this.endless ? (el < 5400 ? 0 : el < 10800 ? 1 : 2) : Math.min(2, Math.floor((el / (this.endAt - this.startAt)) * 3));
+    const ph = this.endless ? (el < 4500 ? 0 : el < 9000 ? 1 : 2) : Math.min(2, Math.floor((el / (this.endAt - this.startAt)) * 3));
     if (ph !== this.phaseNo) {
       this.phaseNo = ph;
       sim.msg(`${PHASES[ph].name}: доход ×${PHASES[ph].inc}, удары по тылу болезненнее${this.endless ? '' : ` (×${this.drainK()})`}`);
