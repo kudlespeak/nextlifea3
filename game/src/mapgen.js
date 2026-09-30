@@ -1,6 +1,7 @@
 // Процедурная генерация карты: степь, поля с лесополосами, река, балка,
 // трасса, железная дорога, город и сёла. Всё детерминировано по seed.
 
+import { checkWorld } from './mapcheck.js';
 import { Rng, fbm } from './rng.js';
 import {
   bboxOf, catmullRom, resample, offsetLine, tangents, pointInPoly,
@@ -57,6 +58,10 @@ function newWorld(seed, W, H, res = 4) {
     roadList: [],
   };
 }
+
+// Основная карта «Войны дронов»: выверенный seed (проверка и починка — mapcheck.js, связность дорог —
+// connectRoadNet); случайные карты проходят те же проверки
+export const MAIN_SEED = 1337;
 
 export function generateWorld(seed, layout = 'front') {
   if (layout === 'dronewar') return generateDroneWarWorld(seed);
@@ -658,6 +663,7 @@ function generateDroneWarWorld(seed) {
   }
   world.power = { lines };
 
+  connectRoadNet(world, rng);
   // ---------- Мосты: где дороги и ж/д пересекают реки ----------
   const bridges = [];
   const scan = (ln, type) => {
@@ -722,6 +728,7 @@ function generateDroneWarWorld(seed) {
   }
   const frontX = seedWarScars(world, rng, W * 0.5 + rng.float(-200, 200));
   world.frontX = frontX;
+  world.mapFix = checkWorld(world, true); // починка: дома на дорогах и внахлёст, поля поперёк дорог, деревья на асфальте
   finishBuildings(world, new Rng((seed ^ 0x1e7) >>> 0), false);
   buildPowerGridDW(world, new Rng((seed ^ 0x9092) >>> 0));
   refreshCanopy(world, { x0: 0, y0: 0, x1: W, y1: H });
@@ -957,6 +964,69 @@ function buildFields(world, rng, keep = null) {
   // Сначала дороги (чтобы в полосах остались проезды), потом деревья
   for (const line of dirtLines) addRoad(world, line, 'dirt');
   for (const [a, b, bw] of beltSegs) segsBelt(world, rng, a, b, avoid, bw);
+}
+
+// ---------- Связность дорожной сети ----------
+// Каждый остров дорог (село или район, чья дорога оборвалась) соединяем с основной сетью новой
+// дорогой к ближайшей точке: не через застройку и ж/д; через реку — только узким местом (будет мост)
+function connectRoadNet(world, rng) {
+  const { mask } = world;
+  const xs = [], ys = [], rid = [];
+  world.roadList.forEach((r, ri) => { for (const [x, y] of resample(r.line, 40)) { xs.push(x); ys.push(y); rid.push(ri); } });
+  const n = xs.length, par = new Int32Array(n).map((_, i) => i);
+  const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+  const uni = (a, b) => { a = find(a); b = find(b); if (a !== b) par[a] = b; };
+  const C = 100, bins = new Map();
+  for (let i = 0; i < n; i++) { const k = Math.floor(xs[i] / C) * 100003 + Math.floor(ys[i] / C); (bins.get(k) || bins.set(k, []).get(k)).push(i); }
+  const near = (x, y, r, fn) => { for (let cx = Math.floor((x - r) / C); cx <= Math.floor((x + r) / C); cx++) for (let cy = Math.floor((y - r) / C); cy <= Math.floor((y + r) / C); cy++) for (const j of bins.get(cx * 100003 + cy) || []) fn(j); };
+  for (let i = 1; i < n; i++) if (rid[i] === rid[i - 1]) uni(i, i - 1);
+  for (let i = 0; i < n; i++) near(xs[i], ys[i], 45, (j) => { if (rid[j] !== rid[i] && Math.hypot(xs[j] - xs[i], ys[j] - ys[i]) < 45) uni(i, j); });
+  // концы дорог — к ближайшему узлу в 90 м (как в дорожном графе логистики)
+  for (let i = 0; i < n; i++) {
+    if (i > 0 && rid[i - 1] === rid[i] && i + 1 < n && rid[i + 1] === rid[i]) continue;
+    near(xs[i], ys[i], 90, (j) => { if (rid[j] !== rid[i] && Math.hypot(xs[j] - xs[i], ys[j] - ys[i]) < 90) uni(i, j); });
+  }
+  const passable = (a, b) => {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let wet = 0, wetMax = 0;
+    for (let t = 20; t < L - 20; t += 10) {
+      const x = a[0] + ((b[0] - a[0]) * t) / L, y = a[1] + ((b[1] - a[1]) * t) / L;
+      if (mask.has(x, y, M.BUILD | M.RAIL | M.CITY)) return false;
+      if (mask.has(x, y, M.WATER)) { wet += 10; wetMax = Math.max(wetMax, wet); } else wet = 0;
+    }
+    return wetMax < 200;
+  };
+  for (let pass = 0; pass < 40; pass++) {
+    const size = new Map();
+    for (let i = 0; i < n; i++) { const r = find(i); size.set(r, (size.get(r) || 0) + 1); }
+    const main = [...size.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const islands = [...size.entries()].filter(([r, k]) => r !== main && k >= 8).sort((a, b) => b[1] - a[1]);
+    if (!islands.length) break;
+    let linked = false;
+    for (const [root] of islands) {
+      const cand = [];
+      for (let i = 0; i < n; i += 2) {
+        if (find(i) !== root) continue;
+        for (const R of [400, 1200, 3000]) {
+          let best = -1, bd = R;
+          near(xs[i], ys[i], R, (j) => { if (find(j) !== main) return; const d = Math.hypot(xs[j] - xs[i], ys[j] - ys[i]); if (d < bd) { bd = d; best = j; } });
+          if (best >= 0) { cand.push([bd, i, best]); break; }
+        }
+      }
+      cand.sort((a, b) => a[0] - b[0]);
+      for (const [, i, j] of cand.slice(0, 40)) {
+        const a = [xs[i], ys[i]], b = [xs[j], ys[j]];
+        if (!passable(a, b)) continue;
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L, o = rng.float(-0.06, 0.06) * L;
+        const mid = [(a[0] + b[0]) / 2 + nx * o, (a[1] + b[1]) / 2 + ny * o];
+        const line = L > 300 && passable(a, mid) && passable(mid, b) ? resample(catmullRom([a, mid, b], 8), 12) : resample([a, b], 12);
+        addRoad(world, line, L > 1500 ? 'local' : 'village');
+        uni(i, j); linked = true;
+        break;
+      }
+    }
+    if (!linked) break;
+  }
 }
 
 // ---------- Поля «Войны дронов» ----------
@@ -1637,34 +1707,53 @@ function buildCityDW(world, rng, C, rail, river, extraGrowth = [], sc = 1) {
   const has = new Set(cells.map((q) => `${q.i},${q.j}`));
   const cellAt = (i, j) => has.has(`${i},${j}`);
   // Улицы по линиям сетки: непрерывные куски там, где рядом есть кварталы
+  const mine = [];
   const road = (pts, type) => {
     // через реку идут только проспекты (мост), улицы обрываются у берега
     if (type === 'avenue') {
       let wetRun = 0, maxRun = 0;
       for (const p of pts) { if (mask.has(p[0], p[1], M.WATER)) { wetRun++; maxRun = Math.max(maxRun, wetRun); } else wetRun = 0; }
-      if (maxRun * 12 < 240) { addRoad(world, pts, type); return; }
+      if (maxRun * 12 < 240) { mine.push(addRoad(world, pts, type)); return; }
     }
     let run = [];
     for (const p of pts) {
-      if (mask.has(p[0], p[1], M.WATER)) { if (run.length > 2) addRoad(world, run, type); run = []; } else run.push(p);
+      if (mask.has(p[0], p[1], M.WATER)) { if (run.length > 2) mine.push(addRoad(world, run, type)); run = []; } else run.push(p);
     }
-    if (run.length > 2) addRoad(world, run, type);
+    if (run.length > 2) mine.push(addRoad(world, run, type));
   };
   const seg = (u0, v0, u1, v1, step = 12) => { const L = Math.hypot(u1 - u0, v1 - v0), n = Math.max(2, Math.ceil(L / step)); const out = []; for (let k = 0; k <= n; k++) out.push(toW(u0 + ((u1 - u0) * k) / n, v0 + ((v1 - v0) * k) / n)); return out; };
+  // Проспекты продолжаются через реку мостом: разрыв в 1–3 квартала, где линия идёт по воде,
+  // а по обе стороны есть город, заполняем (иначе части города на разных берегах не связаны)
+  const bridgeFill = (on, wetAt) => {
+    for (let a = 0; a < on.length; a++) {
+      if (on[a] || !a || !on[a - 1]) continue;
+      let b = a;
+      while (b < on.length && !on[b]) b++;
+      if (b < on.length && b - a <= 3) { let w = false; for (let k = a; k < b; k++) w = w || wetAt(k); if (w) for (let k = a; k < b; k++) on[k] = true; }
+      a = b;
+    }
+  };
+  const wetLine = (u0, v0, u1, v1) => { for (let k = 0; k <= 8; k++) if (wet(u0 + ((u1 - u0) * k) / 8, v0 + ((v1 - v0) * k) / 8)) return true; return false; };
   for (let i = 0; i < us.length; i++) {
+    const main = us[i] === 0 || Math.abs(us[i]) < R * 0.3;
+    const on = []; for (let j = 0; j < vs.length - 1; j++) on.push(cellAt(i - 1, j) || cellAt(i, j));
+    if (main) bridgeFill(on, (j) => wetLine(us[i], vs[j], us[i], vs[j + 1]));
+    on.push(false);
     let start = null;
     for (let j = 0; j <= vs.length - 1; j++) {
-      const on = j < vs.length - 1 && (cellAt(i - 1, j) || cellAt(i, j));
-      if (on && start === null) start = j;
-      if (!on && start !== null) { const main = us[i] === 0 || Math.abs(us[i]) < R * 0.3; road(seg(us[i], vs[start], us[i], vs[j]), main ? 'avenue' : 'street'); start = null; }
+      if (on[j] && start === null) start = j;
+      if (!on[j] && start !== null) { road(seg(us[i], vs[start], us[i], vs[j]), main ? 'avenue' : 'street'); start = null; }
     }
   }
   for (let j = 0; j < vs.length; j++) {
+    const main = vs[j] === 0 || Math.abs(vs[j]) < R * 0.3;
+    const on = []; for (let i = 0; i < us.length - 1; i++) on.push(cellAt(i, j - 1) || cellAt(i, j));
+    if (main) bridgeFill(on, (i) => wetLine(us[i], vs[j], us[i + 1], vs[j]));
+    on.push(false);
     let start = null;
     for (let i = 0; i <= us.length - 1; i++) {
-      const on = i < us.length - 1 && (cellAt(i, j - 1) || cellAt(i, j));
-      if (on && start === null) start = i;
-      if (!on && start !== null) { const main = vs[j] === 0 || Math.abs(vs[j]) < R * 0.3; road(seg(us[start], vs[j], us[i], vs[j]), main ? 'avenue' : 'street'); start = null; }
+      if (on[i] && start === null) start = i;
+      if (!on[i] && start !== null) { road(seg(us[start], vs[j], us[i], vs[j]), main ? 'avenue' : 'street'); start = null; }
     }
   }
   const mkBlk = (u0, u1, v0, v1, d, core) => {
@@ -1744,6 +1833,33 @@ function buildCityDW(world, rng, C, rail, river, extraGrowth = [], sc = 1) {
       }
     }
     blocks.push(q);
+  }
+  // Улицы без домов вдоль (краевые клетки, куда застройка не дошла) убираем — не бывает «рамок»
+  // из улиц вокруг пустыря. Проспекты оставляем: они связывают город и идут по мостам
+  const served = ([x, y]) => { for (const b of world.buildings.query({ x0: x - 60, y0: y - 60, x1: x + 60, y1: y + 60 })) if (Math.hypot(b.x - x, b.y - y) < 40 + Math.max(b.w || 0, b.h || 0) / 2) return true; return false; };
+  const drop = new Set();
+  for (const r of mine) {
+    if (r.type === 'avenue') continue;
+    const pts = resample(r.line, 10);
+    const ok = pts.map(served);
+    // короткие разрывы (перекрёсток, сквер) не рвут улицу
+    for (let i = 0; i < ok.length; i++) if (!ok[i]) { let j = i; while (j < ok.length && !ok[j]) j++; if (i > 0 && j < ok.length && j - i <= 6) for (let k = i; k < j; k++) ok[k] = true; i = j; }
+    if (ok.every(Boolean)) continue;
+    drop.add(r);
+    let run = [];
+    for (let i = 0; i <= pts.length; i++) {
+      if (i < pts.length && ok[i]) run.push(pts[i]);
+      else { if (run.length >= 6) addRoad(world, run, r.type); run = []; }
+    }
+  }
+  if (drop.size) {
+    world.roadList = world.roadList.filter((r) => !drop.has(r));
+    const old = world.roads;
+    world.roads = new SpatialIndex(world.W, world.H, old.cell);
+    for (const r of old.items) if (!drop.has(r)) world.roads.insert(r);
+    const bb = { x0: C[0] - R * 1.4, y0: C[1] - R * 1.4, x1: C[0] + R * 1.4, y1: C[1] + R * 1.4 };
+    mask.clearRect(bb, M.ROAD);
+    for (const r of world.roadList) if (r.line.some(([x, y]) => x > bb.x0 - 40 && x < bb.x1 + 40 && y > bb.y0 - 40 && y < bb.y1 + 40)) mask.stampLine(r.line, ROAD_STYLE[r.type].stamp, M.ROAD);
   }
   // обрезанные загородные дороги примыкают к ближайшей городской улице
   const streetPts = [];

@@ -1,4 +1,4 @@
-import { generateWorld } from './mapgen.js';
+import { generateWorld, MAIN_SEED } from './mapgen.js';
 import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
 import { Sim, SIDES, POSES, UNIT_TYPES, unitDef } from './sim/units.js';
@@ -60,6 +60,7 @@ let digRng = new Rng(1);
 const menu = {
   side: 'blue', mode: 'zones', role: 'defend', startHour: 5, fog: true, difficulty: 'normal', duration: 3600, prep: 300,
   seed: Number(params.get('seed')) || Math.floor(Math.random() * 1e6), tab: 'single',
+  map: params.get('seed') ? 'random' : 'main', // «Война дронов»: основная выверенная карта или случайная
 };
 
 function buildMenu() {
@@ -109,7 +110,12 @@ function buildMenu() {
   const preps = menu.mode === 'drones' ? [[0, 'Нет'], [60, '1 мин'], [120, '2 мин'], [180, '3 мин']] : [[0, 'Нет'], [180, '3 мин'], [300, '5 мин'], [600, '10 мин']];
   if (!preps.some(([v]) => v === menu.prep)) menu.prep = menu.mode === 'drones' ? 120 : 300;
   opts('opt-prep', 'Подготовка', preps, 'prep');
-  $('opt-seed').value = menu.seed;
+  $('opt-map').style.display = menu.mode === 'drones' ? 'flex' : 'none';
+  opts('opt-map', 'Карта', [['main', 'Основная (выверенная)'], ['random', 'Случайная']], 'map');
+  const fixed = menu.mode === 'drones' && menu.map === 'main';
+  $('opt-seed').value = fixed ? MAIN_SEED : menu.seed;
+  $('opt-seed').disabled = fixed;
+  $('seed-rnd').disabled = fixed;
   $('opt-diff').style.display = menu.tab === 'single' ? 'flex' : 'none';
   $('mp-card').style.display = menu.tab === 'mp' ? 'block' : 'none';
   $('tab-single').classList.toggle('active', menu.tab === 'single');
@@ -121,14 +127,14 @@ function buildMenu() {
 }
 $('tab-single').onclick = () => { menu.tab = 'single'; buildMenu(); };
 $('tab-mp').onclick = () => { menu.tab = 'mp'; buildMenu(); };
-$('opt-seed').onchange = (e) => { menu.seed = Number(e.target.value) || 1; };
+$('opt-seed').onchange = (e) => { menu.seed = Number(e.target.value) || 1; menu.map = 'random'; };
 $('seed-rnd').onclick = () => { menu.seed = Math.floor(Math.random() * 1e6); buildMenu(); };
 $('mp-url').value = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host || 'localhost:8080'}/ws`;
 
 function gameConfig() {
   const enemy = menu.side === 'blue' ? 'red' : 'blue';
   return {
-    seed: menu.seed, mode: menu.mode, attacker: menu.role === 'attack' ? menu.side : enemy, startHour: menu.startHour, fog: menu.fog,
+    seed: menu.mode === 'drones' && menu.map === 'main' ? MAIN_SEED : menu.seed, mode: menu.mode, attacker: menu.role === 'attack' ? menu.side : enemy, startHour: menu.startHour, fog: menu.fog,
     difficulty: menu.difficulty, duration: menu.duration, prep: menu.prep, playerSide: menu.side,
     aiSides: menu.tab === 'single' ? [enemy] : [], multiplayer: menu.tab === 'mp',
   };
