@@ -1010,6 +1010,47 @@ function drawRoads(ctx, world, b, q, ppm) {
     }
   }
   drawOverpasses(ctx, world, q, ppm);
+  if (ppm >= 1.5) drawZebras(ctx, world, q);
+}
+
+// Пешеходные переходы («зебры») на всех рукавах перекрёстков проспектов в городе
+function cityCrossings(world) {
+  if (world._cityX) return world._cityX;
+  const out = [];
+  const list = world.roadList.filter((r) => r.type === 'avenue');
+  for (const A of list)
+    for (const B of world.roads.query(A.bbox)) {
+      if (B === A || (B.type !== 'street' && B.type !== 'avenue') || (B.type === 'avenue' && B._order < A._order)) continue;
+      for (let i = 1; i < A.line.length; i++) for (let j = 1; j < B.line.length; j++) {
+        const a0 = A.line[i - 1], a1 = A.line[i], b0 = B.line[j - 1], b1 = B.line[j];
+        const r0 = a1[0] - a0[0], r1 = a1[1] - a0[1], s0 = b1[0] - b0[0], s1 = b1[1] - b0[1], den = r0 * s1 - r1 * s0;
+        if (Math.abs(den) < 1e-9) continue;
+        const t = ((b0[0] - a0[0]) * s1 - (b0[1] - a0[1]) * s0) / den, u = ((b0[0] - a0[0]) * r1 - (b0[1] - a0[1]) * r0) / den;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        const La = Math.hypot(r0, r1) || 1, Lb = Math.hypot(s0, s1) || 1;
+        out.push({ x: a0[0] + r0 * t, y: a0[1] + r1 * t, ta: [r0 / La, r1 / La], tb: [s0 / Lb, s1 / Lb], wa: A.width, wb: B.width });
+      }
+    }
+  world._cityX = out;
+  return out;
+}
+function drawZebras(ctx, world, q) {
+  ctx.fillStyle = 'rgba(232,230,220,0.8)';
+  for (const c of cityCrossings(world)) {
+    if (!inQ(q, c.x, c.y, 30)) continue;
+    // рукава: вдоль ta (переход через проспект шириной wa на расстоянии wb/2 от центра) и вдоль tb
+    for (const [t, w, dist] of [[c.ta, c.wa, c.wb / 2 + 2.5], [c.tb, c.wb, c.wa / 2 + 2.5]])
+      for (const sg of [-1, 1]) {
+        const cx = c.x + t[0] * sg * dist, cy = c.y + t[1] * sg * dist, nx = -t[1], ny = t[0];
+        for (let k = -w / 2 + 0.6; k < w / 2 - 0.3; k += 1.1) {
+          const px = cx + nx * k, py = cy + ny * k;
+          ctx.beginPath();
+          ctx.moveTo(px - t[0] * 1.5, py - t[1] * 1.5); ctx.lineTo(px + t[0] * 1.5, py + t[1] * 1.5);
+          ctx.lineTo(px + t[0] * 1.5 + nx * 0.55, py + t[1] * 1.5 + ny * 0.55); ctx.lineTo(px - t[0] * 1.5 + nx * 0.55, py - t[1] * 1.5 + ny * 0.55);
+          ctx.fill();
+        }
+      }
+  }
 }
 
 // Узлы сети для отрисовки: примыкания (конец второстепенной у главной) и перекрёстки «иксом»

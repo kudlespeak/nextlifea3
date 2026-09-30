@@ -1847,24 +1847,48 @@ function buildFieldsDW(world, rng, massifs) {
   }
   // Полевые дороги вдоль лесополос; концы примыкают к ближайшей дороге, если до неё недалеко и
   // съезд не режет поле. В дорожный граф логистики не входят (только для вида и сельхозтехники)
+  // Концы, не дотянутые до дороги, цепляются к соседней грунтовке (сеть полевых дорог); грунтовка,
+  // ни одним концом ни к чему не примыкающая, — лишняя, её нет
   world.fieldTracks = [];
-  for (const line of tracks) {
-    const a = line[0], b = line[line.length - 1];
-    for (const [e, tail] of [[a, true], [b, false]]) {
-      const nr = nearRoad(e[0], e[1], 320);
-      if (!nr) continue;
-      const d = Math.hypot(nr.x - e[0], nr.y - e[1]);
-      let ok = d > 8;
-      for (let t = 12; t < d - 12 && ok; t += 10) {
-        const x = e[0] + ((nr.x - e[0]) * t) / d, y = e[1] + ((nr.y - e[1]) * t) / d;
-        if (inField(x, y) || mask.has(x, y, M.WATER | M.BUILD | M.RAIL | M.VILLAGE)) ok = false;
-      }
-      if (!ok) continue;
-      if (tail) line.unshift([nr.x, nr.y]); else line.push([nr.x, nr.y]);
+  const clearTo = (e, p) => {
+    const d = Math.hypot(p[0] - e[0], p[1] - e[1]);
+    if (d <= 8) return true;
+    for (let t = 12; t < d - 12; t += 10) {
+      const x = e[0] + ((p[0] - e[0]) * t) / d, y = e[1] + ((p[1] - e[1]) * t) / d;
+      if (inField(x, y) || mask.has(x, y, M.WATER | M.BUILD | M.RAIL | M.VILLAGE)) return false;
     }
-    const tr = addItem(world.roads, { kind: 'road', type: 'dirt', track: true, line, width: 3.5 }, 10);
+    return true;
+  };
+  const tk = tracks.map((line) => ({ line, hooked: [false, false] }));
+  for (const T of tk) {
+    const L = T.line;
+    [[L[0], 0], [L[L.length - 1], 1]].forEach(([e, k]) => {
+      const nr = nearRoad(e[0], e[1], 320);
+      if (!nr || !clearTo(e, [nr.x, nr.y])) return;
+      if (Math.hypot(nr.x - e[0], nr.y - e[1]) > 8) { if (k) L.push([nr.x, nr.y]); else L.unshift([nr.x, nr.y]); }
+      T.hooked[k] = true;
+    });
+  }
+  for (let pass = 0; pass < 2; pass++)
+    for (const T of tk) {
+      for (const k of [0, 1]) {
+        if (T.hooked[k]) continue;
+        const L = T.line, e = k ? L[L.length - 1] : L[0];
+        let best = null, bd = 250;
+        for (const O of tk) {
+          if (O === T || !(O.hooked[0] || O.hooked[1])) continue;
+          for (let i = 0; i < O.line.length; i += 2) { const d = Math.hypot(O.line[i][0] - e[0], O.line[i][1] - e[1]); if (d < bd && clearTo(e, O.line[i])) { bd = d; best = O.line[i]; } }
+        }
+        if (!best) continue;
+        if (bd > 8) { if (k) L.push(best.slice()); else L.unshift(best.slice()); }
+        T.hooked[k] = true;
+      }
+    }
+  for (const T of tk) {
+    if (!T.hooked[0] && !T.hooked[1]) continue;
+    const tr = addItem(world.roads, { kind: 'road', type: 'dirt', track: true, line: T.line, width: 3.5 }, 10);
     world.fieldTracks.push(tr);
-    world.mask.stampLine(line, 5, M.ROAD);
+    world.mask.stampLine(T.line, 5, M.ROAD);
   }
   // Степь: пятна залежи, выгоревшей травы и сырых понижений (мягкие края)
   for (let i = 0; i < Math.round((W * H) / 5.5e6); i++) {
