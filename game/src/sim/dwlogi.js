@@ -412,7 +412,7 @@ export class DWLogistics {
       if (v.state === 'idle') continue;
       // по грунтовкам и узким сельским дорогам — медленнее (асфальт дорожников это исправляет)
       const narrow = !v.offroad && v.ws && (v.ws[v.pi] ?? 8) < 7 ? 0.7 : 1;
-      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * narrow * dt;
+      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * narrow * g.holeSlow(v.x, v.y) * dt; // у ямы — объезд по обочине
       while (step > 0 && v.pi < v.path.length) {
         const [tx, ty] = v.path[v.pi];
         const dx = tx - v.x, dy = ty - v.y, d = Math.hypot(dx, dy);

@@ -22,6 +22,8 @@ import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, a
 
 import { DWUI } from './dwui.js';
 import { drawDW, drawDWPreview } from './render/dwdraw.js';
+import { drawWeatherLayer } from './render/dwextra.js';
+import { WX } from './sim/dronewar.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -1561,11 +1563,14 @@ function frameBody(now) {
     drawDWPreview(ctx, sim, view, controlSide, dwui.state, mouse ? screenToWorld(mouse[0], mouse[1]) : null);
     drawDW(ctx, sim, view, controlSide, dwui.state);
     drawArtillery(ctx, sim, view);
+    drawWeatherLayer(ctx, sim.game, view, performance.now(), sim.time);
     drawLabels();
     uiTimer += dtReal;
     if (uiTimer > 0.25) {
       uiTimer = 0;
       $('clock').textContent = fmtTime(sim.tod());
+      const wk = sim.game.weather?.kind || 'clear';
+      $('clock').title = `Погода: ${WX[wk].name}${WX[wk].note ? ' — ' + WX[wk].note : ''}`;
       dwui.update();
       drawMinimap();
       updateScale();

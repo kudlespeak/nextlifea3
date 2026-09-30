@@ -31,7 +31,7 @@ const FUEL_HA = 90; // га обработки на единицу топлив�
 const FARM_CAP = 15000; // т на току агрофирмы (уборка у всех в одно время — нужен запас)
 const ELEV_CAP = 40000; // т на элеваторе (1-й уровень)
 const TAX = 0.075; // оч/мин с 1000 жителей при полном довольстве
-export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04 };
+export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04, dummy: 0.02 };
 const CREW_SIZE = { mog: 4, spaag: 4, sam: 12, radar: 6, ew: 3, ewd: 5, icpt: 5, acoustic: 2 };
 const LAUNCH_UPKEEP = 0.8;
 export const LAUNCH_PER = 6; // пусков на исправную пусковую за 5 минут
@@ -153,6 +153,12 @@ export class DWEconomy {
       let bonus = 0;
       for (const o of this.g.objs(side)) {
         if ((o.kind !== 'hospital' && o.kind !== 'school') || !this.ready(o)) continue;
+        // больница без света работает на резервном дизеле, пока есть солярка; школа — нет
+        if (o.kind === 'hospital' || o.kind === 'school') {
+          const ops = o._ps || (o._ps = this.nearestPS(side, o.x, o.y));
+          const lit = !ops || (ops.supply ?? 1) > 0.3;
+          if (!lit && (o.kind === 'school' || (this.g.sides[side].oil ?? 1) < 0.2)) continue;
+        }
         const d = Math.hypot(o.x - s.x, o.y - s.y);
         if (o.kind === 'hospital' && d < 8000) { bonus += 0.06; s.fear *= Math.exp(-dt / 300); }
         if (o.kind === 'school' && d < 6000) bonus += 0.03;

@@ -138,11 +138,12 @@ export class DroneWarAI {
     else if (have('sam') < (this.k > 1 ? 3 : 2) && spend() > DW_AD.sam.cost + 100 && ['tpp', 'ps330'].includes(worst.kind)) type = 'sam';
     else if (have('spaag') < 4 && spend() > DW_AD.spaag.cost + 60 && ['tpp', 'ps330', 'factory'].includes(worst.kind)) type = 'spaag';
     else if (['tpp', 'ps330', 'ps110'].includes(worst.kind) && !g.ad.some((a) => !a.dead && a.side === this.side && a.type === 'ew' && Math.hypot(a.x - worst.x, a.y - worst.y) < 2000) && spend() > DW_AD.ew.cost) type = 'ew';
+    else if (have('dummy') < 2 && have('sam') >= 1 && rng.chance(0.5)) type = 'dummy'; // макеты рядом с настоящими ЗРК
     else if (have('icpt') < 4 && spend() > DW_AD.icpt.cost && rng.chance(0.6)) type = 'icpt';
     else if (S.points > 1200 && ['tpp', 'ps330', 'factory'].includes(worst.kind) && !g.ad.some((a) => !a.dead && a.side === this.side && a.type === 'ewd' && Math.hypot(a.x - worst.x, a.y - worst.y) < 3000)) type = 'ewd';
     if (spend() < g.adCost(this.side, type)) return;
     // Со стороны фронта, откуда идут дроны
-    const r = type === 'ew' ? rng.float(200, 700) : type === 'sam' ? rng.float(1500, 3500) : rng.float(500, 1600);
+    const r = type === 'ew' ? rng.float(200, 700) : type === 'sam' || type === 'dummy' ? rng.float(1500, 3500) : rng.float(500, 1600);
     const a = rng.float(-1.2, 1.2);
     const x = worst.x + dir * Math.cos(a) * r, y = worst.y + Math.sin(a) * r;
     put(type, x, y);

@@ -57,6 +57,7 @@ export const DW_AD = {
   acoustic: { cost: 6, name: { blue: 'Акустический пост «Небесная крепость»', red: 'Акустический пост' }, sub: { blue: 'микрофоны, 3 км', red: 'микрофоны, 3 км' }, range: 3000, mobile: 0, deploy: 10, desc: 'Слышит низколетящие винтовые дроны и наводит мобильные группы' },
   radar: { cost: 90, name: { blue: 'РЛС «Малахит»', red: 'РЛС «Каста-2Е2»' }, sub: { blue: 'обнаружение 16 км', red: 'обнаружение 16 км' }, range: 16000, mobile: 7, deploy: 60, radar: 16000, desc: 'Видит цели далеко, но хуже — на малой высоте' },
   ewd: { cost: 180, name: { blue: 'Купол РЭБ «Лима»', red: 'Купол РЭБ «Красуха»' }, sub: { blue: 'стационарный, подавление ГНСС 6 км', red: 'стационарный, подавление ГНСС 6 км' }, range: 6000, mobile: 0, deploy: 120, desc: 'Стационарный купол над промзоной или городом: большой радиус, но дорогое содержание (1,2 оч/мин)' },
+  dummy: { cost: 10, name: { blue: 'Макет ЗРК', red: 'Макет ЗРК' }, sub: { blue: 'надувной макет с имитатором РЛС', red: 'надувной макет с имитатором РЛС' }, range: 0, mobile: 0, deploy: 20, desc: 'Разведка противника видит его как настоящий ЗРК: макет отвлекает удары и барражирующие боеприпасы на себя. Сам не стреляет' },
   icpt: { cost: 45, name: { blue: 'Расчёт перехватчиков «Стинг»', red: 'Расчёт перехватчиков «Ёлка»' }, sub: { blue: '8 перехватчиков, 9 км', red: '8 перехватчиков, 9 км' }, range: 9000, maxAlt: 3000, mobile: 14, deploy: 30, stock: 8, desc: 'Дроны-перехватчики: 3 очка за штуку, хороши против «Шахедов», бессильны против реактивных' },
 };
 
@@ -122,6 +123,14 @@ const AD_EFF = { blue: 0.97, red: 1.0 };
 const DEMAND = { 0: 260, 1: 200, 2: 200 }; // МВт на одну ПС 110 кВ (столицу питают две)
 const TR_CAP = { 0: 170, 1: 130, 2: 130 }; // МВт на трансформатор 110/10 кВ
 // Генерация по типам: МВт на агрегат
+// Погода: vis — визуальное обнаружение, ad — огонь оптических средств, sun — выработка СЭС,
+// sat — спутниковая съёмка возможна, spd — скорость дронов
+export const WX = {
+  clear: { name: 'Ясно', vis: 1, ad: 1, sun: 1, sat: 1, spd: 1 },
+  cloud: { name: 'Облачно', note: 'спутниковая съёмка невозможна, СЭС дают меньше', vis: 0.95, ad: 0.95, sun: 0.6, sat: 0, spd: 1 },
+  rain: { name: 'Дождь', note: 'дроны медленнее, пулемётчикам хуже видно', vis: 0.8, ad: 0.85, sun: 0.35, sat: 0, spd: 0.9 },
+  fog: { name: 'Туман', note: 'визуальные посты почти слепы, работают только РЛС', vis: 0.5, ad: 0.75, sun: 0.5, sat: 0, spd: 1 },
+};
 const GEN = { tpp: 250, hpp: 55, chp: 70, wt: 4.5, pv: 7.5, import: 250, gtu: 25 }; // солнечные станции игрока: 3 поля × 7,5 МВт
 // Мобильная газотурбинная установка: подключается к шинам 10 кВ подстанции 110 кВ
 export const GTU = { cost: 220, deploy: 150, max: 2, name: 'Мобильная ГТУ 25 МВт' };
@@ -230,11 +239,15 @@ export class DroneWar {
     }
     if (init) return;
     for (const side of ['blue', 'red']) {
+      // снимки в обработке: объект открывается через 2–5 минут после съёмки
+      for (const q of (this.satQ ||= []).filter((q) => q.side === side && this.sim.time >= q.at)) { const o = this.obj(q.oid); if (o && !this.known(side, o)) this.reveal(side, o, 'спутниковый снимок'); q.done = true; }
+      this.satQ = this.satQ.filter((q) => !q.done);
       if (!this.res.has(side, 'sat') || this.sim.time < this.satT[side]) continue;
       this.satT[side] = this.sim.time + 480;
+      if (!this.wx('sat')) { this.satT[side] = this.sim.time + 150; this.sim.msg(`Спутник: снимок сорван — ${WX[this.weather.kind].name.toLowerCase()} над районом, повтор через 2,5 мин`, side); continue; }
       const enemy = side === 'blue' ? 'red' : 'blue';
-      const hidden = this.objects.filter((o) => o.side === enemy && !this.known(side, o) && !CIVIL.has(o.kind));
-      if (hidden.length) this.reveal(side, hidden[this.sim.rng.int(0, hidden.length - 1)], 'спутниковый снимок');
+      const hidden = this.objects.filter((o) => o.side === enemy && !this.known(side, o) && !CIVIL.has(o.kind) && !this.satQ.some((q) => q.oid === o.id));
+      if (hidden.length) { const o = hidden[this.sim.rng.int(0, hidden.length - 1)]; this.satQ.push({ side, oid: o.id, at: this.sim.time + this.sim.rng.float(120, 300) }); this.sim.msg('Спутник: снимок получен, дешифровка займёт несколько минут', side); }
     }
   }
   objs(side, kind) { return this.objects.filter((o) => o.side === side && (!kind || o.kind === kind)); }
@@ -296,7 +309,7 @@ export class DroneWar {
       ammo: T.ammo || 0, missiles: typeof T.missiles === 'object' ? T.missiles[side] : T.missiles || 0, stock: T.stock || 0,
       mMax: typeof T.missiles === 'object' ? T.missiles[side] : T.missiles || 0,
       cd: 0, target: null, roe: type === 'sam' ? 'threat' : 'all', spotted: {}, fireT: -99, kills: 0, aim: 0,
-      name: T.name[side],
+      name: type === 'dummy' ? DW_AD.sam.name[side] : T.name[side], decoy: type === 'dummy',
     };
     this.ad.push(a);
     if (!free) this.sim.msg(`${a.name}: развёртывание${T.deploy ? ` (${T.deploy} с)` : ''}`, side);
@@ -502,6 +515,8 @@ export class DroneWar {
     }
     if (!this.prep) this.updateCampaign();
     for (const gt of this.gens) if (gt.state === 'deploying' && sim.time >= gt.until && !gt.dead) { gt.state = 'ready'; this.flowTimer = 0; sim.msg(`${GTU.name}: подключена к ${this.obj(gt.ps)?.name}`, gt.side); }
+    this.updateWeather();
+    this.updateRoadHoles(dt);
     this.updateAD(dt);
     this.updateDrones(dt);
     this.updateMissiles(dt);
@@ -522,6 +537,48 @@ export class DroneWar {
     const LIFE = { tracer: 0.5, airburst: 5, fall: 6, money: 3, impact: 30 };
     if (this.fx.length > 60) this.fx = this.fx.filter((f) => sim.time - f.t0 < (LIFE[f.t] ?? 5));
     if (this.fx.length > 600) this.fx.splice(0, this.fx.length - 600);
+  }
+
+  // ---------- Погода ----------
+  // Ясно, облачно, дождь, туман — меняются каждые 20–70 минут, вероятности по сезону. Туман и дождь
+  // ухудшают визуальное обнаружение и огонь оптических средств, облачность срывает спутниковые снимки
+  // и снижает выработку СЭС, в дождь дроны медленнее; ветер (он же для ВЭС) — попутный или встречный
+  wx(key) { return (WX[this.weather?.kind] || WX.clear)[key]; }
+  // скорость дрона: погода и ветер (попутный — быстрее, встречный — медленнее, до ±10%)
+  vK(d) { return this.wx('spd') * (1 + 0.1 * (this.wind ?? 0.6) * Math.cos((d.heading || 0) - (this.weather?.dir || 0))); }
+  updateWeather() {
+    const sim = this.sim, w = (this.weather ||= { kind: 'clear', until: sim.time + 1800, dir: sim.rng.float(0, 6.28) });
+    if (sim.puppet || this.puppet || sim.time < w.until) return;
+    const sid = this.infra?.season().id || 'summer';
+    const P = { summer: [['clear', 55], ['cloud', 25], ['rain', 12], ['fog', 8]], autumn: [['clear', 30], ['cloud', 30], ['rain', 25], ['fog', 15]], winter: [['clear', 30], ['cloud', 35], ['rain', 15], ['fog', 20]], spring: [['clear', 40], ['cloud', 30], ['rain', 20], ['fog', 10]] }[sid] || [['clear', 1]];
+    const kind = sim.rng.weighted(P);
+    w.until = sim.time + sim.rng.float(1200, 4200);
+    w.dir = (w.dir + sim.rng.float(-1, 1)) % 6.283;
+    if (kind !== w.kind) { w.kind = kind; sim.msg(`Погода: ${WX[kind].name}${WX[kind].note ? ' — ' + WX[kind].note : ''}`); }
+  }
+  // ---------- Ямы на дорогах ----------
+  // Прилёт по полотну — яма: машины объезжают её по обочине медленно; дорожная бригада стороны
+  // засыпает ямы по очереди (3 мин на яму, 3 очка)
+  updateRoadHoles(dt) {
+    if (!this.roadHoles?.length) return;
+    const t = this.sim.time;
+    for (const side of ['blue', 'red']) {
+      const own = this.roadHoles.filter((h) => h.side === side && !h.fixed);
+      if (!own.length) continue;
+      const cur = own.find((h) => h.fixAt) || own[0];
+      if (!cur.fixAt) { cur.fixAt = t + 180; continue; }
+      if (t >= cur.fixAt) {
+        cur.fixed = true;
+        const S = this.sides[side]; S.points -= 3; S.stats.spent += 3;
+        this.sim.msg('Дорожники засыпали яму на дороге — движение восстановлено', side);
+      }
+    }
+    this.roadHoles = this.roadHoles.filter((h) => !h.fixed);
+  }
+  holeSlow(x, y) {
+    if (!this.roadHoles?.length) return 1;
+    for (const h of this.roadHoles) if (Math.abs(h.x - x) < 25 && Math.abs(h.y - y) < 25) return 0.35;
+    return 1;
   }
 
   // ---------- Энергосистема ----------
@@ -552,7 +609,7 @@ export class DroneWar {
         return all('unit').reduce((a, u, i) => a + (this.compOk(u) && gsus[i] && this.compOk(gsus[i]) ? GEN.chp : 0), 0) * (0.5 + 0.5 * frac('chimney')) * ctrl;
       }
       case 'wpp': return ok('gsu').length ? ok('wt').length * GEN.wt * this.wind : 0;
-      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(this.sim.tod()) * (0.3 + 0.7 * frac('inv')) * (this.infra?.season().eff.solar ?? 1);
+      case 'spp': case 'solar': return ok('pv').length * GEN.pv * daylight(this.sim.tod()) * (0.3 + 0.7 * frac('inv')) * (this.infra?.season().eff.solar ?? 1) * this.wx('sun');
     }
     return 0;
   }
@@ -664,7 +721,9 @@ export class DroneWar {
         if (S.autoShed) {
           let need = 0;
           while (need < 4 && D[i] * (1 - 0.2 * need) > avail * 1.01 + 1) need++;
-          need = Math.min(4, need);
+          // первая категория: подстанция питает больницу или водоканал — эти фидеры отключаются
+          // последними (не больше 3 очередей)
+          need = Math.min(this.critical(ps) ? 3 : 4, need);
           ps.autoT = (ps.autoT || 0) + dtF;
           if (need > L && ps.autoT >= 12) { ps.shed = need; ps.autoT = 0; }
           else if (need < L && ps.autoT >= 60) { ps.shed = L - 1; ps.autoT = 0; }
@@ -689,6 +748,12 @@ export class DroneWar {
       S.supply = dem ? del / dem : 1;
       S.powerLoss = dem ? lostW / dem : 0; // для устойчивости тыла: плановые отключения переносятся легче
     }
+  }
+  critical(ps) {
+    if (ps._critT !== undefined && this.sim.time - ps._critT < 30) return ps._crit;
+    ps._critT = this.sim.time;
+    ps._crit = this.objs(ps.side).some((o) => (o.kind === 'hospital' || o.kind === 'watertower') && !o.build && this.econ.nearestPS(ps.side, o.x, o.y) === ps);
+    return ps._crit;
   }
   setShed(side, psId, level) {
     const ps = this.obj(psId);
@@ -1054,7 +1119,7 @@ export class DroneWar {
       }
       if (a.state !== 'ready') continue;
       a.cd -= dt;
-      if (a.type === 'ew' || a.type === 'ewd' || a.type === 'acoustic' || a.type === 'radar') continue;
+      if (a.type === 'ew' || a.type === 'ewd' || a.type === 'acoustic' || a.type === 'radar' || a.type === 'dummy') continue;
       this.engage(a, T, dt);
     }
     this.ad = this.ad.filter((a) => !a.dead || sim.time - a.deadAt < 600);
@@ -1088,14 +1153,16 @@ export class DroneWar {
     const dist = hyp(d.x - a.x, d.y - a.y);
     a.aim = Math.atan2(d.y - a.y, d.x - a.x);
     a.target = d.id;
-    const cued = sim.time - (d.cued?.[a.side] || -99) < 30;
+    // наводка от РЛС и постов — только по радиосети: огневая группа в 25 км от живой РЛС
+    // (или в 6 км от акустического поста); РЛС выбита — сектор «слепнет»
+    const cued = sim.time - (d.cued?.[a.side] || -99) < 30 && this.linked(a);
     if (a.type === 'mog') {
       if (dist > T.range || a.ammo <= 0) return;
       a.ammo -= dt;
       // Пулемёт с прожектором и тепловизором: хорош по медленным низким целям
       const fs = Math.max(0.2, Math.min(1.1, 55 / D.speed));
       const fa = d.alt < 400 ? 1 : d.alt < 900 ? 0.6 : 0.3;
-      const fn = 1 - night * 0.2;
+      const fn = (1 - night * 0.2) * this.wx('ad');
       const p = 0.022 * PACE * AD_EFF[a.side] * this.state.k(a.side, 'adEff') * fs * fa * fn * (cued ? 1 : 0.55) * (1 - dist / (T.range * 1.3));
       a.fireT = sim.time;
       this.fx.push({ t: 'tracer', x0: a.x, y0: a.y, x1: d.x + sim.rng.float(-25, 25), y1: d.y + sim.rng.float(-25, 25), alt: d.alt, t0: sim.time, side: a.side });
@@ -1104,7 +1171,7 @@ export class DroneWar {
       if (a.missiles > 0 && dist > T.range && a.cd <= 0) { this.fireMissile(a, d, T.mCost); a.missiles--; a.cd = 4; return; }
       if (dist > T.range || a.ammo <= 0) return;
       const fs = Math.max(0.35, Math.min(1, 80 / D.speed));
-      const p = 0.034 * PACE * AD_EFF[a.side] * this.state.k(a.side, 'adEff') * fs * (1 - dist / (T.range * 1.2));
+      const p = 0.034 * PACE * AD_EFF[a.side] * this.state.k(a.side, 'adEff') * fs * (1 - dist / (T.range * 1.2)) * (0.5 + 0.5 * this.wx('ad'));
       a.fireT = sim.time;
       a.ammo -= dt;
       this.fx.push({ t: 'tracer', x0: a.x, y0: a.y, x1: d.x, y1: d.y, alt: d.alt, t0: sim.time, side: a.side, heavy: true });
@@ -1125,6 +1192,14 @@ export class DroneWar {
       });
       void D;
     }
+  }
+
+  linked(a) {
+    const t = this.sim.time;
+    if (a._linkT !== undefined && t - a._linkT < 3) return a._link;
+    a._linkT = t;
+    a._link = this.ad.some((q) => !q.dead && q.side === a.side && q.state === 'ready' && ((DW_AD[q.type].radar && hyp(q.x - a.x, q.y - a.y) < 25000) || (q.type === 'acoustic' && hyp(q.x - a.x, q.y - a.y) < 6000)));
+    return a._link;
   }
 
   fireMissile(a, d, cost) {
@@ -1221,7 +1296,7 @@ export class DroneWar {
       }
       const wp = d.route.length ? d.route[0] : { x: d.aimX + d.drift[0], y: d.aimY + d.drift[1] };
       const dx = wp.x - d.x, dy = wp.y - d.y, dist = hyp(dx, dy);
-      let v = D.speed * PACE;
+      let v = D.speed * PACE * this.vK(d);
       // Профиль высоты: набор после старта, крейсер, пикирование на последних 1.5 км
       const toTarget = hyp(d.aimX + d.drift[0] - d.x, d.aimY + d.drift[1] - d.y);
       let wantAlt = d.cruise;
@@ -1261,7 +1336,7 @@ export class DroneWar {
     const lead = dist / Math.max(20, D.speed * PACE);
     const px = t.x + Math.cos(t.heading) * t.speed * lead, py = t.y + Math.sin(t.heading) * t.speed * lead;
     d.heading = Math.atan2(py - d.y, px - d.x);
-    d.x += Math.cos(d.heading) * D.speed * PACE * dt; d.y += Math.sin(d.heading) * D.speed * PACE * dt;
+    d.x += Math.cos(d.heading) * D.speed * PACE * this.vK(d) * dt; d.y += Math.sin(d.heading) * D.speed * PACE * this.vK(d) * dt;
     d.alt += Math.max(-25 * dt, Math.min(25 * dt, dz));
     d.trail.push([d.x, d.y]); if (d.trail.length > 25) d.trail.shift();
     if (hyp(t.x - d.x, t.y - d.y, t.alt - d.alt) < 30) {
@@ -1292,7 +1367,7 @@ export class DroneWar {
     const want = Math.atan2(d.wp[1] - d.y, d.wp[0] - d.x);
     const dh = Math.atan2(Math.sin(want - d.heading), Math.cos(want - d.heading));
     d.heading += Math.max(-0.6 * dt, Math.min(0.6 * dt, dh));
-    const v = D.speed * PACE * (d.state === 'loiter' ? 0.8 : 1);
+    const v = D.speed * PACE * this.vK(d) * (d.state === 'loiter' ? 0.8 : 1);
     d.x += Math.cos(d.heading) * v * dt; d.y += Math.sin(d.heading) * v * dt; d.speed = v;
     d.alt += Math.max(-20 * dt, Math.min(12 * dt, d.cruise - d.alt));
     d.trail.push([d.x, d.y]); if (d.trail.length > 40) d.trail.shift();
@@ -1329,7 +1404,7 @@ export class DroneWar {
     const want = Math.atan2(dy, dx);
     const dh = Math.atan2(Math.sin(want - d.heading), Math.cos(want - d.heading));
     d.heading += Math.max(-0.4 * dt, Math.min(0.4 * dt, dh));
-    d.x += Math.cos(d.heading) * D.speed * PACE * dt; d.y += Math.sin(d.heading) * D.speed * PACE * dt;
+    d.x += Math.cos(d.heading) * D.speed * PACE * this.vK(d) * dt; d.y += Math.sin(d.heading) * D.speed * PACE * this.vK(d) * dt;
     d.alt += Math.max(-20 * dt, Math.min(8 * dt, d.cruise - d.alt));
     d.trail.push([d.x, d.y]); if (d.trail.length > 40) d.trail.shift();
     if (d.state === 'rtb' && dist < 150) { d.dead = true; d.deadAt = sim.time; }
@@ -1386,6 +1461,9 @@ export class DroneWar {
     this.fx.push({ t: 'impact', x, y, wh, t0: sim.time });
     if (wh > 0) { this.econ?.onImpact(x, y, wh); this.state?.onImpact(d.side, x, y); this.infra?.onImpact(x, y, wh); }
     this.maybeFieldFire(x, y, wh);
+    if (wh >= 15 && this.world.mask.has(x, y, M.ROAD) && !this.objects.some((o) => o.kind === 'bridge' && hyp(o.x - x, o.y - y) < o.w / 2 + 10)) {
+      (this.roadHoles ||= []).push({ x, y, side: x < this.frontX ? 'blue' : 'red', t0: this.sim.time });
+    }
     // Радиусы: сплошного поражения и осколочный
     const rl = 3 + wh * 0.13, rf = 8 + wh * 0.45;
     const enemy = d.side === 'blue' ? 'red' : 'blue';
@@ -1455,7 +1533,7 @@ export class DroneWar {
       if (a.dead || a.side === d.side) continue;
       const dd = hyp(a.x - x, a.y - y);
       const kill = D.cls === 'loiter' ? (dd < 8 ? 0.85 : dd < 20 ? 0.3 : 0) : dd < rl * 1.3 ? 0.9 : dd < rf ? 0.35 * (1 - dd / rf) : 0;
-      if (kill && sim.rng.chance(kill)) { a.dead = true; a.deadAt = sim.time; this.sides[a.side].stats.lostAD++; sim.msg(`Потеряна позиция: ${a.name}`, a.side); sim.msg(`${D.short}: поражена позиция ПВО противника (${a.name})`, d.side); }
+      if (kill && sim.rng.chance(kill)) { a.dead = true; a.deadAt = sim.time; this.sides[a.side].stats.lostAD++; sim.msg(`Потеряна позиция: ${a.name}`, a.side); sim.msg(`${D.short}: поражена позиция ПВО противника (${a.decoy ? 'оказалась макетом ЗРК' : a.name})`, d.side); if (a.decoy) sim.msg(`Макет ЗРК принял удар на себя: противник потратил ${D.short}`, a.side); }
     }
     if (!debris) {
       const S = this.sides[d.side];
@@ -1531,8 +1609,8 @@ export class DroneWar {
           if (dist < R) { seen = true; cue = true; }
         }
         if (a.type === 'acoustic' && dist < T.range && d.alt < 2200 && D.noise > 0.5) { seen = true; cue = true; }
-        if (!T.radar && a.type !== 'acoustic' && a.type !== 'ew' && a.type !== 'ewd') {
-          const vis = (T.visual || 1200) * (1 - night * 0.35) * (d.alt < 1500 ? 1 : 0.6);
+        if (!T.radar && a.type !== 'acoustic' && a.type !== 'ew' && a.type !== 'ewd' && a.type !== 'dummy') {
+          const vis = (T.visual || 1200) * (1 - night * 0.35) * (d.alt < 1500 ? 1 : 0.6) * this.wx('vis');
           if (dist < vis) seen = true;
         }
       }
@@ -1575,6 +1653,8 @@ DroneWar.prototype.snapshot = function () {
     c: this.objects.map((o) => o.comps.map((c) => [Math.round(c.hp * 100), STI.indexOf(c.state), Math.round(c.fire), c.shelter, c.burned ? 1 : 0])),
     ps: this.objects.map((o) => (o.supply === undefined ? -1 : Math.round(o.supply * 1000) / 1000)),
     ff: (this.fieldFires || []).map((f) => [Math.round(f.x), Math.round(f.y), Math.round(f.r)]),
+    wx: this.weather ? [this.weather.kind, Math.round(this.weather.dir * 100) / 100] : null,
+    rh: (this.roadHoles || []).map((h) => [Math.round(h.x), Math.round(h.y), h.fixAt ? 1 : 0]),
     l: this.lines.map((l) => (l.cut ? [Math.round(l.cut.x), Math.round(l.cut.y)] : 0)),
     m: this.missiles.map((m) => [R1(m.x), R1(m.y), Math.round(m.alt), m.side]),
     f: this.fx.filter((f) => t - f.t0 < 0.3 || (f.t !== 'tracer' && t - f.t0 < 0.3)).map((f) => [f.t, R1(f.x ?? f.x0), R1(f.y ?? f.y0), R1(f.x1 ?? 0), R1(f.y1 ?? 0), Math.round(f.alt || 0), f.side || '', f.heavy ? 1 : 0, f.small ? 1 : 0, f.wh || 0, f.v || 0]),
@@ -1670,6 +1750,8 @@ DroneWar.prototype.applySnapshot = function (s) {
   if (s.gn) this.gens = s.gn.map((q) => ({ id: q[0], side: q[1], ps: q[2], x: q[3], y: q[4], angle: q[5], state: q[6], dead: !!q[7] }));
   if (s.tp) { const P = this.world.power; let ch = false; P.tps.forEach((q, i) => { const a = s.tp[i] === '1'; if (q.alive !== a) { q.alive = a; ch = true; } }); if (ch) P.version++; }
   if (s.ff) this.fieldFires = s.ff.map(([x, y, r]) => ({ x, y, r }));
+  if (s.wx) this.weather = { kind: s.wx[0], dir: s.wx[1], until: Infinity };
+  if (s.rh) this.roadHoles = s.rh.map(([x, y, f]) => ({ x, y, fixAt: f ? 1 : 0 }));
   if (s.pw) this.objects.forEach((o, i) => { const q = s.pw[i]; if (Array.isArray(q)) [o.shed, o.unstable, o.overT, o.avail, o.demand, o.trCap] = [q[0], !!q[1], q[2], q[3], q[4], q[5]]; else if (q) o.gen = q; });
   if (s.en) { this.wind = s.en[0]; ['blue', 'red'].forEach((sd, i) => { const S = this.sides[sd]; [S.autoShed, S.powerLoss, S.genBy] = [!!s.en[1][i][0], s.en[1][i][1], s.en[1][i][2]]; }); }
   if (s.n) this.nets = s.n.map((q) => { const xs = q[3].map((p) => p[0]), ys = q[3].map((p) => p[1]); const m = q[3][Math.floor(q[3].length / 2)]; return { id: q[0], side: q[1], done: !!q[2], line: q[3], w: q[4], x: m[0], y: m[1], bb: { x0: Math.min(...xs) - 12, y0: Math.min(...ys) - 12, x1: Math.max(...xs) + 12, y1: Math.max(...ys) + 12 } }; });

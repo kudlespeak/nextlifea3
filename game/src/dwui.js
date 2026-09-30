@@ -1,7 +1,7 @@
 // Интерфейс режима «Война дронов»: левая панель (энергосистема, ПВО, удары, ремонт),
 // карточка выбранного объекта / позиции ПВО, клики по карте, подсказки.
 
-import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef, GTU, PACE } from './sim/dronewar.js';
+import { DW_DRONES, DW_AD, COMP, KIND_NAME, CIVIL, dronesOf, shelterDef, GTU, PACE, WX } from './sim/dronewar.js';
 import { VEH } from './sim/dwlogi.js';
 import { BUILD, BUILD_GROUPS, STAGE_NAME, upgradeCost, UPKEEP, LAUNCH_PER } from './sim/dwecon.js';
 import { LAWS, TAXES, MOBIL, PROJECTS, TECH } from './sim/dwstate.js';
@@ -12,7 +12,7 @@ const CREW_ST = { travel: 'едет к объекту', waitfire: 'ждёт, п�
 
 const $ = (id) => document.getElementById(id);
 const TAB_TITLE = { grid: 'Обзор', ad: 'ПВО', strike: 'Дроны и удары', repair: 'Ремонт', econ: 'Стройка', res: 'Исследования', state: 'Страна' };
-const AD_ICON = { mog: 'mog', spaag: 'spaag', sam: 'sam', ew: 'ew', acoustic: 'acoustic', radar: 'radar', ewd: 'ewd', icpt: 'icpt' };
+const AD_ICON = { mog: 'mog', spaag: 'spaag', sam: 'sam', ew: 'ew', acoustic: 'acoustic', radar: 'radar', ewd: 'ewd', icpt: 'icpt', dummy: 'decoyps' };
 const DRONE_ICON = { strike: 'strike', decoy: 'decoy', recon: 'recon', loiter: 'loiter', hunter: 'hunter' };
 const GROUP_ICON = ['market', 'mill', 'railterm', 'housing', 'bolt', 'shield'];
 const GROUP_SHORT = ['торговля', 'агро', 'экспорт', 'люди', 'энергия', 'военное'];
@@ -168,7 +168,7 @@ export class DWUI {
     const hhmm = (s) => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`;
     const PH = ['пробные удары', 'массированные удары', 'удар возмездия'];
     let h = bar('Ваш тыл', S.morale ?? 100, 'Устойчивость тыла: упадёт до нуля — поражение. Бьют отключения света, разрушения, пожары, пустые магазины') + bar('Тыл врага', E.morale ?? 100, 'Устойчивость тыла противника');
-    h += `<div class="dw-phase"><span>${g.prep ? 'подготовка' : `фаза ${(g.phaseNo || 0) + 1}: ${PH[g.phaseNo || 0]}`}${g.infra ? ` · ${g.infra.season().name}` : ''}</span><span>${g.endless ? (g.prep ? '' : `в бою ${hhmm(real(t - (g.startAt || t)))}`) : `осталось ${hhmm(real(g.endAt - t))}`}</span></div>`;
+    h += `<div class="dw-phase"><span>${g.prep ? 'подготовка' : `фаза ${(g.phaseNo || 0) + 1}: ${PH[g.phaseNo || 0]}`}${g.infra ? ` · ${g.infra.season().name}` : ''}${g.weather ? ` · <span title="${esc(WX[g.weather.kind]?.note || '')}">${esc(WX[g.weather.kind]?.name.toLowerCase() || '')}</span>` : ''}</span><span>${g.endless ? (g.prep ? '' : `в бою ${hhmm(real(t - (g.startAt || t)))}`) : `осталось ${hhmm(real(g.endAt - t))}`}</span></div>`;
     $('dw-status').innerHTML = h;
   }
 

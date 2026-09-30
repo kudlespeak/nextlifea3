@@ -192,6 +192,41 @@ function drawBypass(ctx, g, toS, inView, z, dpr) {
   }
 }
 
+// ---------- Погода на экране: тени облаков, туман, дождь ----------
+function drawWeather(ctx, g, view, toS, now, t) {
+  const kind = g.weather?.kind || 'clear';
+  const { canvas, cam, dpr } = view, W = canvas.width, H = canvas.height, z = cam.zoom;
+  if (kind === 'cloud' || kind === 'rain') {
+    // тени облаков плывут по ветру (в мировых координатах, 1,5 км)
+    const dir = g.weather?.dir || 0, drift = t * 6, S = 1500;
+    const ox = Math.cos(dir) * drift, oy = Math.sin(dir) * drift;
+    const x0 = cam.x - W / 2 / z - S, y0 = cam.y - H / 2 / z - S, x1 = cam.x + W / 2 / z + S, y1 = cam.y + H / 2 / z + S;
+    ctx.fillStyle = `rgba(20,24,30,${kind === 'rain' ? 0.16 : 0.1})`;
+    for (let gx = Math.floor((x0 - ox) / S); gx <= (x1 - ox) / S; gx++)
+      for (let gy = Math.floor((y0 - oy) / S); gy <= (y1 - oy) / S; gy++) {
+        if (hash(gx * 131 + gy * 17) > 0.55) continue;
+        const cx = gx * S + ox + hash(gx + gy * 7) * S * 0.5, cy = gy * S + oy + hash(gy + gx * 3) * S * 0.5;
+        const [sx, sy] = toS(cx, cy), r = S * (0.35 + hash(gx * gy + 5) * 0.3) * z;
+        ctx.beginPath(); ctx.ellipse(sx, sy, r, r * 0.6, hash(gx - gy) * 3, 0, Math.PI * 2); ctx.fill();
+      }
+  }
+  if (kind === 'fog') {
+    const gr = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.15, W / 2, H / 2, Math.max(W, H) * 0.7);
+    gr.addColorStop(0, 'rgba(210,214,216,0.18)'); gr.addColorStop(1, 'rgba(210,214,216,0.5)');
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  }
+  if (kind === 'rain') {
+    ctx.strokeStyle = 'rgba(200,210,225,0.28)'; ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    const n = Math.round((W * H) / (9000 * dpr * dpr));
+    for (let k = 0; k < n; k++) {
+      const x = (hash(k * 3.1) * W + now * 0.05) % W, y = (hash(k * 7.7) * H + now * 0.9) % H;
+      ctx.moveTo(x, y); ctx.lineTo(x - 3 * dpr, y + 12 * dpr);
+    }
+    ctx.stroke();
+  }
+}
+
 export function drawExtras(ctx, g, sim, view, side, toS, inView, now, t, night, fireFn) {
   const { cam, dpr } = view, z = cam.zoom;
   drawTrains(ctx, g, toS, inView, z, dpr, t);
@@ -201,5 +236,13 @@ export function drawExtras(ctx, g, sim, view, side, toS, inView, now, t, night, 
   drawFieldFires(ctx, g, toS, inView, z, dpr, now, fireFn);
   drawBypass(ctx, g, toS, inView, z, dpr);
   drawHeadlights(ctx, vehicles, toS, inView, z, dpr, night);
+}
+// погода — поверх всего кадра (вызывается в конце отрисовки)
+export function drawWeatherLayer(ctx, g, view, now, t) {
+  const { cam, canvas } = view, z = cam.zoom;
+  const toS = (x, y) => [(x - cam.x) * z + canvas.width / 2, (y - cam.y) * z + canvas.height / 2];
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawWeather(ctx, g, view, toS, now, t);
+  ctx.restore();
 }
 void lineLen;

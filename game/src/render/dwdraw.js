@@ -15,7 +15,7 @@ const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
 const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
-const AD_GLYPH = { mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
+const AD_GLYPH = { dummy: 'МАК', mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
 export const dispH = (alt) => (alt <= 0 ? 0 : 12 + Math.min(alt, 3000) / 3000 * 110);
@@ -609,15 +609,17 @@ export function drawDW(ctx, sim, view, side, ui) {
       ctx.beginPath(); ctx.arc(sx, sy, Math.max(3 * dpr, 3 * z), 0, Math.PI * 2); ctx.fill();
       continue;
     }
+    // макет ЗРК выглядит как настоящий ЗРК (у своих подписан «МАК»)
+    const vt = a.type === 'dummy' ? 'sam' : a.type;
     if (z >= 1.3) {
       const heading = a.state === 'moving' ? a.heading : a.heading;
-      const hk = a.type === 'sam' ? `sam:${a.side}:hull` : `dwad:${a.type}:${a.side}:hull`;
-      const hb = a.type === 'sam' ? MODELS[hk] : () => buildAD(a.type, a.side, 'hull');
+      const hk = vt === 'sam' ? `sam:${a.side}:hull` : `dwad:${a.type}:${a.side}:hull`;
+      const hb = vt === 'sam' ? MODELS[hk] : () => buildAD(a.type, a.side, 'hull');
       const r = spriteFor(hk, hb, heading, z, undefined, now);
       if (r) drawSprite(ctx, r, sx, sy, z, r.residual);
-      const turret = a.type === 'sam' ? `sam:${a.side}:turret` : a.type === 'mog' || a.type === 'spaag' || a.type === 'radar' ? `dwad:${a.type}:${a.side}:turret` : null;
+      const turret = vt === 'sam' ? `sam:${a.side}:turret` : a.type === 'mog' || a.type === 'spaag' || a.type === 'radar' ? `dwad:${a.type}:${a.side}:turret` : null;
       if (turret) {
-        const tb = a.type === 'sam' ? MODELS[turret] : () => buildAD(a.type, a.side, 'turret');
+        const tb = vt === 'sam' ? MODELS[turret] : () => buildAD(a.type, a.side, 'turret');
         const ta = a.type === 'radar' ? (now / 1400) % (Math.PI * 2) : a.target ? a.aim : heading;
         const piv = a.type === 'sam' ? -1.4 : a.type === 'mog' ? -1.5 : a.type === 'radar' ? -2 : a.type === 'spaag' && a.side === 'red' ? -2 : 0;
         const rt = spriteFor(turret, tb, ta, z, undefined, now);
@@ -625,7 +627,7 @@ export function drawDW(ctx, sim, view, side, ui) {
       }
       if (a.state === 'deploying') ring(ctx, sx, sy - 8 * dpr, 7 * dpr, 1 - (a.until - t) / DW_AD[a.type].deploy, '#ffd36b', dpr);
     } else {
-      badge(ctx, sx, sy, AD_GLYPH[a.type], own ? SIDE_COL[a.side] : '#ff7d72', dpr, sel, !own);
+      badge(ctx, sx, sy, a.type === 'dummy' && own ? 'МАК' : AD_GLYPH[vt], own ? SIDE_COL[a.side] : '#ff7d72', dpr, sel, !own);
       if (a.state === 'deploying') ring(ctx, sx, sy, 11 * dpr, 1 - (a.until - t) / DW_AD[a.type].deploy, '#ffd36b', dpr);
     }
     if (a.state === 'moving' && own && a.dest) {
@@ -818,6 +820,13 @@ export function drawDW(ctx, sim, view, side, ui) {
     if (ui.selVeh === v.id) { ctx.strokeStyle = '#fff27a'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.arc(sx, sy, Math.max(8 * dpr, 6 * z), 0, Math.PI * 2); ctx.stroke(); }
   }
 
+  // ---------- Ямы на дорогах: дорожная бригада засыпает (кольцо — ход работ) ----------
+  for (const h of g.roadHoles || []) {
+    if (!inView(h.x, h.y, 30)) continue;
+    const [sx, sy] = toS(h.x, h.y);
+    if (h.fixAt > 1) ring(ctx, sx, sy - 10 * dpr, 7 * dpr, 1 - (h.fixAt - t) / 180, '#ffd36b', dpr);
+    if (z > 0.4) { ctx.fillStyle = '#e0b030'; ctx.fillRect(sx + 6 * z, sy - 2 * z, Math.max(3 * dpr, 4 * z), Math.max(2 * dpr, 2 * z)); } // конус / каток
+  }
   // ---------- Поезда, люди, пыль, фары, пожары на полях, временные обходы ЛЭП ----------
   drawExtras(ctx, g, sim, view, side, toS, inView, now, t, night, fire);
 
