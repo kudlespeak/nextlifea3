@@ -860,7 +860,7 @@ function drawRailCrossings(ctx, world, b, q, ppm) {
       const mx = (a[0] + c[0]) / 2, my = (a[1] + c[1]) / 2;
       if (!world.mask.has(mx, my, M.ROAD)) continue;
       const road = roads.find((rd) => distToLine(mx, my, rd.line) < rd.width / 2 + 2);
-      if (!road) continue;
+      if (!road || road.type === 'highway' || road.type === 'avenue') continue; // там путепровод
       const seg = [a, c];
       strokeLine(ctx, seg, Math.min(road.width, 6), road.type === 'dirt' ? '#a0907a' : road.type === 'village' ? '#5f5e59' : '#555653'); // покрытие дороги на переезде
       const w = Math.max(0.18, 0.6 / ppm);
@@ -877,7 +877,9 @@ function bridgeRuns(world, road) {
   let cur = null;
   for (let i = 0; i < road.line.length; i++) {
     const [x, y] = road.line[i];
-    const wet = world.mask.has(x, y, M.WATER) && world.mask.near(x, y, 6, M.WATER);
+    // вода — мост; железная дорога под трассой или проспектом — путепровод (не переезд)
+    const over = (road.type === 'highway' || road.type === 'avenue') && world.mask.has(x, y, M.RAIL);
+    const wet = over || (world.mask.has(x, y, M.WATER) && world.mask.near(x, y, 6, M.WATER));
     if (wet) {
       if (!cur) {
         cur = i > 0 ? [road.line[i - 1]] : [];
@@ -939,9 +941,14 @@ function drawRoads(ctx, world, b, q, ppm) {
           strokeLine(ctx, p, 2.6, '#6c7447'); // разделительный газон
           break;
         }
-        case 'village':
-          strokeLine(ctx, p, r.width, '#5f5e59');
+        case 'village': {
+          // улица в селе — асфальт; перемычка в поле — щебёнка
+          const m = p[Math.floor(p.length / 2)];
+          const gravel = !world.mask.has(m[0], m[1], M.VILLAGE | M.CITY | M.CITYZONE);
+          strokeLine(ctx, p, r.width, gravel ? '#7f796c' : '#5f5e59');
+          if (gravel && ppm >= 1.5) strokeLine(ctx, p, r.width * 0.8, 'rgba(160,150,130,0.35)', [0.3, 0.9]);
           break;
+        }
         default:
           strokeLine(ctx, p, r.width, r.type === 'local' ? '#555653' : '#535350');
       }
@@ -954,6 +961,8 @@ function drawRoads(ctx, world, b, q, ppm) {
   const nodes = junctionNodes(world).filter((n) => inQ(q, n.x, n.y, 120));
   for (const n of nodes) if (n.main.type === 'highway' && n.sub.type !== 'dirt') speedLanes(ctx, n, ppm);
   for (const n of nodes) fillets(ctx, n);
+  drawRoundabouts(ctx, world, q, ppm);
+  if (ppm >= 0.9) drawBusStops(ctx, world, q, ppm);
 
   // 3) разметка (путепроводы — после неё, поверх трассы): у примыканий разметка второстепенной дороги обрывается стоп-линией, а краевая
   // линия главной — разрывается (второстепенная дорога не «прорезает» трассу и разделительный газон)
@@ -1011,6 +1020,59 @@ function drawRoads(ctx, world, b, q, ppm) {
   }
   drawOverpasses(ctx, world, q, ppm);
   if (ppm >= 1.5) drawZebras(ctx, world, q);
+  if (ppm >= 2) drawSigns(ctx, nodes, world, q);
+}
+
+// Круговая развязка: асфальтовое кольцо, центральный островок с газоном и бордюром, разметка
+function drawRoundabouts(ctx, world, q, ppm) {
+  for (const c of world.roundabouts || []) {
+    if (!inQ(q, c.x, c.y, c.r + 20)) continue;
+    const disc = (r, col) => { ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill(); };
+    disc(c.r + 3, '#9c9580');
+    disc(c.r, '#555653');
+    disc(c.r * 0.5 + 1, '#b7b3a8'); // бордюр
+    disc(c.r * 0.5, '#6f7d48'); // газон
+    if (ppm >= 0.9) {
+      ctx.beginPath(); ctx.arc(c.x, c.y, c.r * 0.75, 0, Math.PI * 2);
+      ctx.setLineDash([2, 3]); ctx.lineWidth = 0.18; ctx.strokeStyle = 'rgba(225,222,210,0.8)'; ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#4f6a3a'; for (let k = 0; k < 5; k++) { const a = k * 1.3; ctx.beginPath(); ctx.arc(c.x + Math.cos(a) * c.r * 0.22, c.y + Math.sin(a) * c.r * 0.22, 1.4, 0, Math.PI * 2); ctx.fill(); } // кусты на островке
+    }
+  }
+}
+// Остановка: карман у обочины и павильон со стороны села
+function drawBusStops(ctx, world, q, ppm) {
+  for (const st of world.stops || []) {
+    if (!inQ(q, st.x, st.y, 40)) continue;
+    const nx = -st.ty * st.side, ny = st.tx * st.side;
+    const P = (d, o) => [st.x + st.tx * d + nx * (st.w + o), st.y + st.ty * d + ny * (st.w + o)];
+    ctx.beginPath(); pathPoly(ctx, [P(-22, 0), P(-12, 3.2), P(12, 3.2), P(22, 0)]); ctx.fillStyle = '#555653'; ctx.fill();
+    if (ppm >= 1.5) { ctx.strokeStyle = 'rgba(225,222,210,0.8)'; ctx.lineWidth = 0.15; ctx.beginPath(); const a = P(-12, 0.1), b = P(12, 0.1); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.setLineDash([1, 1]); ctx.stroke(); ctx.setLineDash([]); }
+    // павильон: тень, стенка, кровля
+    const box = (o0, o1, d0, d1) => [P(d0, o0), P(d1, o0), P(d1, o1), P(d0, o1)];
+    ctx.beginPath(); pathPoly(ctx, box(5.2, 6.8, -2.4, 2.4).map(([x, y]) => [x + 1.2, y + 1.4])); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill();
+    ctx.beginPath(); pathPoly(ctx, box(5.2, 6.8, -2.4, 2.4)); ctx.fillStyle = '#4f7fa8'; ctx.fill();
+    ctx.beginPath(); pathPoly(ctx, box(6.4, 6.8, -2.4, 2.4)); ctx.fillStyle = '#2f3a44'; ctx.fill();
+  }
+}
+// Знаки у узлов: «Уступи дорогу» (треугольник) на второстепенной, указатель на трассе перед съездом
+function drawSigns(ctx, nodes, world, q) {
+  for (const n of nodes) {
+    if (!inQ(q, n.x, n.y, 60) || n.sub.type === 'dirt') continue;
+    const hwM = n.main.type === 'highway' ? 13 : n.main.width / 2, side = [-n.u[1], n.u[0]];
+    // справа по ходу к главной: направление движения к перекрёстку — −u, правая сторона — (−u) повернуть по часовой
+    const rx = n.u[1], ry = -n.u[0];
+    const sx = n.x + n.u[0] * (hwM + 5) + rx * (n.sub.width / 2 + 1.6), sy = n.y + n.u[1] * (hwM + 5) + ry * (n.sub.width / 2 + 1.6);
+    void side;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(sx + 0.4, sy + 0.5, 0.9, 0.2);
+    ctx.fillStyle = '#e8e6de'; ctx.beginPath(); ctx.moveTo(sx, sy - 0.75); ctx.lineTo(sx + 0.7, sy + 0.5); ctx.lineTo(sx - 0.7, sy + 0.5); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#c0302a'; ctx.lineWidth = 0.18; ctx.stroke();
+    if (n.main.type === 'highway' && !n.cross) {
+      // указатель направления — синий щит за 80 м до съезда
+      const d = 80, bx = n.x - n.t[0] * d + (n.x + n.u[0] - n.x) * (hwM + 3), by = n.y - n.t[1] * d + n.u[1] * (hwM + 3);
+      ctx.fillStyle = '#2f5d9e'; ctx.fillRect(bx - 1.2, by - 0.35, 2.4, 0.7);
+      ctx.fillStyle = 'rgba(240,240,235,0.8)'; ctx.fillRect(bx - 0.9, by - 0.1, 1.8, 0.15);
+    }
+  }
 }
 
 // Пешеходные переходы («зебры») на всех рукавах перекрёстков проспектов в городе

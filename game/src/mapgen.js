@@ -651,6 +651,8 @@ function generateDroneWarWorld(seed) {
   setBuildStyle(null);
 
   trimStubs(world); // дороги не торчат «хвостами» за перекрёсток
+  for (const S of Object.values(sides)) buildRingRoad(world, rng, S.cities[0].c, 1650 * 1.38);
+  buildStreams(world, rng, sides);
 
   // ---------- Объекты инфраструктуры ----------
   const FORBID = M.WATER | M.BUILD | M.ROAD | M.RAIL | M.CITY | M.SETTLE | M.BALKA | M.VILLAGE | M.CITYZONE;
@@ -816,6 +818,7 @@ function generateDroneWarWorld(seed) {
   snapRoadEnds(world);
   connectRoadNet(world, rng);
   fixCrossings(world);
+  placeBusStops(world);
   // ---------- Мосты: где дороги и ж/д пересекают реки ----------
   const bridges = [];
   const scan = (ln, type) => {
@@ -827,6 +830,8 @@ function generateDroneWarWorld(seed) {
         const a = ln[Math.max(0, run.i0 - 1)], b = ln[i];
         const x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2;
         const L = Math.hypot(b[0] - a[0], b[1] - a[1]) + 24;
+        // через ручей — водопропускная труба под насыпью, не мост-объект
+        if (world.water.query({ x0: x - 20, y0: y - 20, x1: x + 20, y1: y + 20 }).some((w) => w.stream && distToLine(x, y, w.line) < 20)) { run = null; continue; }
         if (L < 260 && !bridges.some((q) => Math.hypot(q.x - x, q.y - y) < 80)) bridges.push({ x, y, L, angle: Math.atan2(b[1] - a[1], b[0] - a[0]), type });
         run = null;
       }
@@ -853,6 +858,7 @@ function generateDroneWarWorld(seed) {
     if (rng.chance(0.08)) continue;
     massifs.push({ x: x + rng.float(-600, 600), y: y + rng.float(-600, 600), r: rng.float(2000, 2600) });
   }
+  roadsideBelts(world, rng, highway);
   buildFieldsDW(world, rng, massifs);
   // Редкие рощи и одиночные деревья в степи
   for (let i = 0; i < 480; i++) {
@@ -1089,6 +1095,130 @@ function snapRoadEnds(world) {
   world.roadsSnapped = n;
 }
 
+// ---------- Объездная столицы ----------
+// Кольцо вокруг столицы за краем застройки: куски между сёлами, водой и застройкой; там, где кольцо
+// встречает радиальную дорогу, — круговая развязка (world.roundabouts)
+function buildRingRoad(world, rng, C, R) {
+  const { mask } = world;
+  world.roundabouts = world.roundabouts || [];
+  const ph = rng.float(0, 6.28), pts = [];
+  for (let k = 0; k < 96; k++) {
+    const a = (k / 96) * Math.PI * 2, r = R * (1 + 0.07 * Math.sin(3 * a + ph) + 0.04 * Math.sin(5 * a + ph * 2));
+    pts.push([C[0] + Math.cos(a) * r, C[1] + Math.sin(a) * r]);
+  }
+  const line = resample(catmullRom([...pts, pts[0], pts[1], pts[2]], 6), 10);
+  const bad = (p) => p[0] < 300 || p[1] < 300 || p[0] > world.W - 300 || p[1] > world.H - 300 || mask.near(p[0], p[1], 14, M.CITY | M.BUILD | M.VILLAGE | M.SETTLE | M.RAIL);
+  // ищем начало в «плохой» точке, чтобы куски не рвались на стыке замыкания
+  let start = line.findIndex(bad);
+  if (start < 0) start = 0;
+  const ring = [...line.slice(start), ...line.slice(0, start)];
+  const runs = [];
+  let cur = [];
+  for (const p of ring) { if (bad(p)) { if (cur.length) runs.push(cur); cur = []; } else cur.push(p); }
+  if (cur.length) runs.push(cur);
+  const made = [];
+  for (const run of runs) {
+    if (lineLen(run) < 700) continue;
+    // широкая вода — не переходим (узкую перекроет мост)
+    let wet = 0, ok = true;
+    for (const p of run) { if (mask.has(p[0], p[1], M.WATER)) { wet += 10; if (wet > 200) { ok = false; break; } } else wet = 0; }
+    if (!ok) continue;
+    const r = addRoad(world, run, 'local');
+    r.ring = true;
+    made.push(r);
+  }
+  // круговые развязки: пересечения кольца с трассой и загородными дорогами
+  for (const r of made)
+    for (const o of world.roadList) {
+      if (o === r || o.ring || (o.type !== 'highway' && o.type !== 'local')) continue;
+      if (o.bbox.x0 > r.bbox.x1 || o.bbox.x1 < r.bbox.x0 || o.bbox.y0 > r.bbox.y1 || o.bbox.y1 < r.bbox.y0) continue;
+      for (let i = 1; i < r.line.length; i++) for (let j = 1; j < o.line.length; j++) {
+        const a = r.line[i - 1], b = r.line[i], c = o.line[j - 1], d = o.line[j];
+        if (Math.max(c[0], d[0]) < Math.min(a[0], b[0]) || Math.min(c[0], d[0]) > Math.max(a[0], b[0]) || Math.max(c[1], d[1]) < Math.min(a[1], b[1]) || Math.min(c[1], d[1]) > Math.max(a[1], b[1])) continue;
+        const t = segCross(r.line[i - 1], r.line[i], o.line[j - 1], o.line[j]);
+        if (t < 0) continue;
+        const x = r.line[i - 1][0] + (r.line[i][0] - r.line[i - 1][0]) * t, y = r.line[i - 1][1] + (r.line[i][1] - r.line[i - 1][1]) * t;
+        if (!world.roundabouts.some((q) => Math.hypot(q.x - x, q.y - y) < 80)) world.roundabouts.push({ x, y, r: o.type === 'highway' ? 26 : 18 });
+      }
+    }
+  for (const q of world.roundabouts) mask.stampDisc(q.x, q.y, q.r + 6, M.ROAD);
+}
+
+// ---------- Ручьи ----------
+// Несколько ручьёв в степи на каждой стороне: от истока в понижении — извилисто к реке. Дороги,
+// которые их пересекают, получают малые мосты (общий поиск мостов по воде)
+function buildStreams(world, rng, sides) {
+  const { mask } = world;
+  for (const S of Object.values(sides)) {
+    for (let n = 0; n < 4; n++) {
+      const src = [S.river[0][0] + S.dir * rng.float(2500, 9000) * (rng.chance(0.5) ? 1 : -1), rng.float(world.H * 0.1, world.H * 0.9)];
+      // ближайшая точка реки — устье
+      let mouth = S.river[0], md = Infinity;
+      for (const p of S.river) { const d = Math.hypot(p[0] - src[0], p[1] - src[1]); if (d < md) { md = d; mouth = p; } }
+      if (md < 1500 || md > 9000) continue;
+      const ctrl = [];
+      for (let k = 0; k <= 6; k++) {
+        const t = k / 6, off = k && k < 6 ? rng.float(-0.12, 0.12) * md : 0;
+        const nx = -(mouth[1] - src[1]) / md, ny = (mouth[0] - src[0]) / md;
+        ctrl.push([src[0] + (mouth[0] - src[0]) * t + nx * off, src[1] + (mouth[1] - src[1]) * t + ny * off]);
+      }
+      let line = resample(catmullRom(ctrl, 8), 12);
+      // исток — ниже последнего препятствия (город, село, объект, ж/д): ручей не течёт сквозь застройку
+      let cut = -1;
+      line.forEach(([x, y], i) => { if (mask.near(x, y, 20, M.CITY | M.CITYZONE | M.VILLAGE | M.SETTLE | M.BUILD | M.RAIL)) cut = i; });
+      line = line.slice(cut + 1);
+      if (lineLen(line) < 1200) continue;
+      addItem(world.water, { kind: 'river', line, width: 7, stream: true }, 30);
+      mask.stampLine(line, 9, M.WATER);
+      addItem(world.areas, { kind: 'floodplain', line, width: 60 }, 30);
+    }
+  }
+}
+
+// ---------- Придорожные лесополосы вдоль трассы ----------
+function roadsideBelts(world, rng, highway) {
+  const { mask } = world;
+  const block = M.ROAD | M.BUILD | M.WATER | M.CITY | M.CITYZONE | M.VILLAGE | M.SETTLE | M.RAIL;
+  for (const sg of [-1, 1]) {
+    const off = offsetLine(highway, sg * 30);
+    let run = [];
+    const flush = () => {
+      if (run.length > 6) {
+        for (let k = 0; k + 1 < run.length; k += 4) segsBelt(world, rng, run[k], run[Math.min(run.length - 1, k + 4)], 0, 11);
+        mask.stampLine(run, 16, M.GREEN);
+      }
+      run = [];
+    };
+    for (const p of off) { if (mask.near(p[0], p[1], 9, block)) flush(); else run.push(p); }
+    flush();
+  }
+}
+
+// ---------- Автобусные остановки ----------
+// У каждого села — остановка с карманом на ближайшей загородной дороге (не на трассе с разделителем
+// — там площадка за полосой разгона)
+function placeBusStops(world) {
+  world.stops = [];
+  for (const v of world.settlements) {
+    if (v.type !== 'village') continue;
+    let best = null, bd = 600;
+    for (const r of world.roads.query({ x0: v.x - 600, y0: v.y - 600, x1: v.x + 600, y1: v.y + 600 })) {
+      if (r.type !== 'local' && r.type !== 'highway') continue;
+      for (let i = 1; i < r.line.length; i++) {
+        const f = footOn([v.x, v.y], r.line[i - 1], r.line[i]), d = Math.hypot(f[0] - v.x, f[1] - v.y);
+        if (d < bd) { bd = d; const a = r.line[i - 1], b = r.line[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; best = { x: f[0], y: f[1], tx: (b[0] - a[0]) / L, ty: (b[1] - a[1]) / L, r }; }
+      }
+    }
+    if (!best) continue;
+    // карман — на стороне села
+    const side = Math.sign((v.x - best.x) * -best.ty + (v.y - best.y) * best.tx) || 1;
+    const w = best.r.type === 'highway' ? 13 : best.r.width / 2;
+    const bx = best.x - best.ty * side * (w + 4), by = best.y + best.tx * side * (w + 4);
+    if (world.mask.has(bx, by, M.WATER | M.BUILD | M.RAIL)) continue;
+    world.stops.push({ x: best.x, y: best.y, tx: best.tx, ty: best.ty, side, w, name: v.name });
+  }
+}
+
 // ---------- Перекрёстки и развязки ----------
 // Загородные дороги, пересекающиеся «иксом»: второстепенная на подходе доворачивает так, чтобы
 // пересечь главную под прямым углом (S-образный поворот, как при реконструкции перекрёстков).
@@ -1109,7 +1239,13 @@ function fixCrossings(world) {
       const A = rural[i], B = rural[j];
       const ba = A.bbox, bb = B.bbox;
       if (ba.x0 > bb.x1 || ba.x1 < bb.x0 || ba.y0 > bb.y1 || ba.y1 < bb.y0) continue;
-      for (let a = 1; a < A.line.length; a++) for (let b = 1; b < B.line.length; b++) {
+      for (let a = 1; a < A.line.length; a++) {
+        const p0 = A.line[a - 1], p1 = A.line[a];
+        const ax0 = Math.min(p0[0], p1[0]), ax1 = Math.max(p0[0], p1[0]), ay0 = Math.min(p0[1], p1[1]), ay1 = Math.max(p0[1], p1[1]);
+        if (ax1 < bb.x0 || ax0 > bb.x1 || ay1 < bb.y0 || ay0 > bb.y1) continue;
+        for (let b = 1; b < B.line.length; b++) {
+        const q0 = B.line[b - 1], q1 = B.line[b];
+        if (Math.max(q0[0], q1[0]) < ax0 || Math.min(q0[0], q1[0]) > ax1 || Math.max(q0[1], q1[1]) < ay0 || Math.min(q0[1], q1[1]) > ay1) continue;
         const t = segCross(A.line[a - 1], A.line[a], B.line[b - 1], B.line[b]);
         if (t < 0) continue;
         const P = [A.line[a - 1][0] + (A.line[a][0] - A.line[a - 1][0]) * t, A.line[a - 1][1] + (A.line[a][1] - A.line[a - 1][1]) * t];
@@ -1117,6 +1253,7 @@ function fixCrossings(world) {
         if (ed(A.line) < 30 || ed(B.line) < 30) continue;
         const main = XRANK[A.type] > XRANK[B.type] || (XRANK[A.type] === XRANK[B.type] && lineLen(A.line) >= lineLen(B.line)) ? A : B;
         out.push({ P, main, minor: main === A ? B : A });
+        }
       }
     }
     return out;
@@ -1127,6 +1264,7 @@ function fixCrossings(world) {
     for (const { P, main, minor } of find()) {
       const key = Math.round(P[0] / 20) + ':' + Math.round(P[1] / 20);
       if (done.has(key)) continue;
+      if ((world.roundabouts || []).some((q) => Math.hypot(q.x - P[0], q.y - P[1]) < 60)) { done.add(key); continue; } // там круговая развязка
       const m = along(main.line, P), n0 = along(minor.line, P);
       const t = tangentAt(main.line, m.i);
       let nx = -t[1], ny = t[0];
@@ -1609,7 +1747,7 @@ function connectRoadNet(world, rng) {
 // Лесополосы — только по части длинных границ. Между массивами — степь с пятнами залежи.
 function buildFieldsDW(world, rng, massifs) {
   const { mask, W, H } = world;
-  const avoid = M.SETTLE | M.CITY | M.CITYZONE | M.WATER | M.BALKA | M.VILLAGE | M.BUILD | M.RAIL;
+  const avoid = M.SETTLE | M.CITY | M.CITYZONE | M.WATER | M.BALKA | M.VILLAGE | M.BUILD | M.RAIL | M.GREEN;
   const G = 40, gw = Math.ceil(W / G), gh = Math.ceil(H / G);
   const taken = new Uint8Array(gw * gh);
   const cell = (x, y) => { const i = Math.floor(x / G), j = Math.floor(y / G); return i < 0 || j < 0 || i >= gw || j >= gh ? -1 : j * gw + i; };
