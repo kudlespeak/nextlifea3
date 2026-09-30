@@ -194,8 +194,10 @@ export class DroneWarAI {
     const strikeStock = T.strike.reduce((q, d) => q + R.stock(side, d.k) + R.queued(side, d.k), 0);
     for (const [k, gap] of list) {
       const n = Math.min(4, Math.ceil(gap)), cost = g.droneCost(side, k) * n;
-      const must = strikeStock < 8 && DW_DRONES[k].cls === 'strike' && S.points - cost >= (this.reserve ?? 30);
-      if (!must && !this.can('off', cost)) break;
+      // накопление на стройку не должно оставлять армию без дронов: для заказа хватает небольшого резерва на ремонт
+      const low = Math.min(this.reserve ?? 30, 60);
+      const must = strikeStock < 8 && DW_DRONES[k].cls === 'strike' && S.points - cost >= low;
+      if (!must && !(this.fund.off >= cost && S.points - cost >= low)) break;
       if (!R.order(side, k, n)) this.pay('off', cost);
     }
   }
