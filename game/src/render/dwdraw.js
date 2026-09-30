@@ -228,10 +228,11 @@ function drawLineEnds(ctx, g, world, side, toS, inView, z) {
   }
 }
 // ---------- Ограда объекта: бетонный забор у энергетики, военных и промышленных объектов,
-// сетчатый — у магазинов и АЗС; ворота со шлагбаумом и будкой охраны со стороны подъезда ----------
+// сетчатый — у пожарных частей, баз и прочего; магазины и АЗС открыты; ворота со шлагбаумом и будкой охраны со стороны подъезда ----------
+const OPEN_SITE = new Set(['store', 'kiosk', 'fuel', 'mall', 'market']);
 const HARD_FENCE = new Set(['tpp', 'hpp', 'chp', 'ps330', 'ps110', 'decoy', 'oil', 'ammo', 'factory', 'workshop', 'launch', 'refinery', 'coalmine', 'reserve', 'bess', 'spp', 'solar', 'hub', 'elevator', 'cement', 'railterm', 'port']);
 function drawFence(ctx, o, toS, z, dpr, part) {
-  if (o.kind === 'store' || o.kind === 'kiosk') return;
+  if (OPEN_SITE.has(o.kind)) return; // магазины, АЗС и ТЦ открыты с улицы — без ограды
   const hard = HARD_FENCE.has(o.kind), Hf = hard ? 2.6 : 1.8;
   const hw = o.w / 2 + 8, hh = o.h / 2 + 8, c = Math.cos(o.angle), s = Math.sin(o.angle);
   const W = (u, v) => [o.x + u * c - v * s, o.y + u * s + v * c];
@@ -308,55 +309,141 @@ function edgeToward(c, px, py, inset = 3) {
   return [c.x + u * cs - v * sn, c.y + u * sn + v * cs];
 }
 function nearestComp(list, c) { let b = null, bd = Infinity; for (const q of list) { const d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; b = q; } } return b; }
-function drawLinks(ctx, o, toS, z, dpr) {
+// Возвращает элементы {y, draw} — их рисуют вперемешку с сооружениями по глубине (y), чтобы
+// газоход уходил за трубу, а шины — за портал
+function linkItems(ctx, o, toS, z, dpr) {
+  const out = [];
   const alive = o.comps.filter((c) => c.state !== 'destroyed');
-  if (alive.length < 2) return;
+  if (alive.length < 2) return out;
   const by = (...k) => alive.filter((c) => k.includes(c.k));
   const SHX = 0.3, SHY = 0.34;
-  // провод/шина между точками a(h0) и b(h1): тень на земле, затем сам провод с провисом
-  const wire = (a, h0, b, h1, phases, gap, col, w, sag = 0.25) => {
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+  // локальная система площадки: u — вдоль длинной оси, v — поперёк; разводка идёт по осям
+  const cs = Math.cos(o.angle), sn = Math.sin(o.angle);
+  const Wp = (u, v) => [o.x + u * cs - v * sn, o.y + u * sn + v * cs];
+  const P = (u, v, h, shadow) => { const [x, y] = Wp(u, v); const [sx, sy] = toS(shadow ? x + SHX * h : x, shadow ? y + SHY * h : y); return [sx, sy - (shadow ? 0 : h * K3 * z)]; };
+  // Ортогональная трасса от края узла A к краю узла B: прямо, если узлы перекрываются по одной из
+  // осей, иначе — «Г» с поворотом у B. Возвращает точки (u, v)
+  const ortho = (A, B, inA = 0, inB = 0) => {
+    const ou0 = Math.max(A.u - A.w / 2, B.u - B.w / 2), ou1 = Math.min(A.u + A.w / 2, B.u + B.w / 2);
+    const ov0 = Math.max(A.v - A.h / 2, B.v - B.h / 2), ov1 = Math.min(A.v + A.h / 2, B.v + B.h / 2);
+    if (ou1 - ou0 > 1) {
+      const u = Math.max(ou0 + 0.5, Math.min(ou1 - 0.5, A.u)), sg = Math.sign(B.v - A.v) || 1;
+      return [[u, A.v + sg * (A.h / 2 - inA)], [u, B.v - sg * (B.h / 2 - inB)]];
+    }
+    if (ov1 - ov0 > 1) {
+      const v = Math.max(ov0 + 0.5, Math.min(ov1 - 0.5, A.v)), sg = Math.sign(B.u - A.u) || 1;
+      return [[A.u + sg * (A.w / 2 - inA), v], [B.u - sg * (B.w / 2 - inB), v]];
+    }
+    const sv = Math.sign(B.v - A.v) || 1, su = Math.sign(B.u - A.u) || 1;
+    return [[A.u, A.v + sv * (A.h / 2 - inA)], [A.u, B.v], [B.u - su * (B.w / 2 - inB), B.v]];
+  };
+  // провода (фазы) между двумя точками: тень на земле, затем провод с провисом
+  const depth = (pts) => { let y = -Infinity; for (let i = 0; i < pts.length; i++) y = Math.max(y, Wp(pts[i][0], pts[i][1])[1]); return y; };
+  const wire = (a, h0, b, h1, phases, gap, col, w, sag = 0.25) => out.push({ y: (Wp(...a)[1] + Wp(...b)[1]) / 2, draw: () => wire0(a, h0, b, h1, phases, gap, col, w, sag) });
+  const duct = (pts, h, wd, col, legs = 12) => { for (let i = 1; i < pts.length; i++) out.push({ y: depth([pts[i - 1], pts[i]]) - 0.5, draw: () => duct0([pts[i - 1], pts[i]], h, wd, col, legs, i > 1) }); };
+  const tray = (pts, w, col) => out.push({ y: -Infinity, draw: () => tray0(pts, w, col) });
+  const wire0 = (a, h0, b, h1, phases, gap, col, w, sag = 0.25) => {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nu = -(b[1] - a[1]) / L, nv = (b[0] - a[0]) / L;
     for (const pass of [0, 1]) {
       ctx.strokeStyle = pass ? col : 'rgba(0,0,0,0.18)';
       ctx.lineWidth = Math.max(pass ? 0.8 : 0.6, w * z);
       ctx.beginPath();
       for (let i = 0; i < phases; i++) {
         const o2 = (i - (phases - 1) / 2) * gap;
-        const ax = a[0] + nx * o2, ay = a[1] + ny * o2, bx = b[0] + nx * o2, by2 = b[1] + ny * o2;
+        const au = a[0] + nu * o2, av = a[1] + nv * o2, bu = b[0] + nu * o2, bv = b[1] + nv * o2;
         const hm = (h0 + h1) / 2 - L * sag * 0.08;
-        const P = (x, y, h) => { const [sx, sy] = toS(pass ? x : x + SHX * h, pass ? y : y + SHY * h); return [sx, sy - (pass ? h * K3 * z : 0)]; };
-        const A = P(ax, ay, h0), B = P(bx, by2, h1), M = P((ax + bx) / 2, (ay + by2) / 2, hm);
+        const A = P(au, av, h0, !pass), B = P(bu, bv, h1, !pass), M = P((au + bu) / 2, (av + bv) / 2, hm, !pass);
         ctx.moveTo(A[0], A[1]); ctx.quadraticCurveTo(2 * M[0] - (A[0] + B[0]) / 2, 2 * M[1] - (A[1] + B[1]) / 2, B[0], B[1]);
       }
       ctx.stroke();
     }
   };
+  // короб на эстакаде (газоход, закрытый токопровод, трубопровод): тень, опоры, боковина и верх
+  const duct0 = (pts, h, wd, col, legs, joint) => {
+    const dk = shade(col, 0.72);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const nu = (-(b[1] - a[1]) / L) * wd / 2, nv = ((b[0] - a[0]) / L) * wd / 2;
+      const quad = (hh, sh) => { const q = [P(a[0] + nu, a[1] + nv, hh, sh), P(b[0] + nu, b[1] + nv, hh, sh), P(b[0] - nu, b[1] - nv, hh, sh), P(a[0] - nu, a[1] - nv, hh, sh)]; ctx.beginPath(); q.forEach((p, k) => (k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); };
+      ctx.fillStyle = 'rgba(0,0,0,0.2)'; quad(h, true); ctx.fill();
+      if (legs && h > 2 && z > 0.35) {
+        ctx.strokeStyle = 'rgba(70,70,66,0.9)'; ctx.lineWidth = Math.max(0.6, 0.35 * z);
+        ctx.beginPath();
+        for (let t = 0; t <= L; t += legs) { const u = a[0] + ((b[0] - a[0]) * t) / L, v = a[1] + ((b[1] - a[1]) * t) / L; const G = P(u, v, 0), T = P(u, v, h - wd * 0.3); ctx.moveTo(G[0], G[1]); ctx.lineTo(T[0], T[1]); }
+        ctx.stroke();
+      }
+      // боковина (толщина короба) и крышка
+      const th = Math.min(wd, 4);
+      const s0 = [P(a[0] + nu, a[1] + nv, h, false), P(b[0] + nu, b[1] + nv, h, false), P(b[0] + nu, b[1] + nv, h - th, false), P(a[0] + nu, a[1] + nv, h - th, false)];
+      const s1 = [P(a[0] - nu, a[1] - nv, h, false), P(b[0] - nu, b[1] - nv, h, false), P(b[0] - nu, b[1] - nv, h - th, false), P(a[0] - nu, a[1] - nv, h - th, false)];
+      ctx.fillStyle = dk;
+      for (const q of [s0, s1]) { ctx.beginPath(); q.forEach((p, k) => (k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.fill(); }
+      ctx.fillStyle = col; quad(h, false); ctx.fill();
+    }
+    // стык на повороте — крышкой, чтобы короб не «ломался»
+    if (joint) { const [u, v] = pts[0], r = wd / 2; const q = [P(u - r, v - r, h), P(u + r, v - r, h), P(u + r, v + r, h), P(u - r, v + r, h)]; ctx.fillStyle = col; ctx.beginPath(); q.forEach((p, k) => (k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.fill(); }
+  };
+  // кабель в лотке по земле
+  const tray0 = (pts, w, col) => {
+    ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.7, w * z); ctx.lineJoin = 'round';
+    ctx.beginPath(); pts.forEach(([u, v], k) => { const p = P(u, v, 0.2, false); if (k) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }); ctx.stroke();
+  };
+  const near = (list, c) => nearestComp(list, c);
   const orus = by('oru');
-  // трансформаторы — к ОРУ: автотрансформатор к обоим напряжениям, остальные к ближнему
+  // трансформаторы → ОРУ: шины прямо к ячейке (автотрансформатор — к обоим напряжениям);
+  // несколько блочных трансформаторов к одному ОРУ — каждый на своей высоте, пучком
+  const toOru = new Map();
   for (const T of by('at', 'gsu', 'tr')) {
-    const targets = T.k === 'at' ? orus : orus.length ? [nearestComp(orus, T)] : [];
+    const targets = T.k === 'at' ? orus : orus.length ? [near(orus, T)] : [];
     for (const O of targets) {
-      const pO = edgeToward(O, T.x, T.y, 4), pT = edgeToward(T, O.x, O.y, T.w * 0.25);
-      wire(pT, T.k === 'tr' ? 4 : 6.5, pO, ORU_H(O), 3, T.k === 'tr' ? 1.2 : 2.2, 'rgba(70,72,68,0.95)', 0.35);
+      const k = toOru.get(O) || 0; toOru.set(O, k + 1);
+      const r = ortho(T, O, T.w * 0.2, 3);
+      const a = r[0], b = r[r.length - 1];
+      const hT = T.k === 'tr' ? 4 : 6.5, hO = ORU_H(O) - (T.k === 'gsu' ? k * 1.6 : 0);
+      if (r.length === 2) wire(a, hT, b, hO, 3, T.k === 'tr' ? 1.2 : 2.2, 'rgba(70,72,68,0.95)', 0.35);
+      else { wire(a, hT, r[1], hO, 3, 2.2, 'rgba(70,72,68,0.95)', 0.35); wire(r[1], hO, b, hO, 3, 2.2, 'rgba(70,72,68,0.95)', 0.35, 0.1); }
     }
   }
   // энергоблок / гидроагрегат → блочный трансформатор: закрытый токопровод
   const gsus = by('gsu');
-  for (const U of by('unit', 'hgen')) { const G = nearestComp(gsus, U); if (G) wire(edgeToward(U, G.x, G.y, 2), 9, edgeToward(G, U.x, U.y, 1), 6, 1, 0, '#8d8f88', 1.4, 0); }
-  // энергоблок → дымовая труба: газоход на эстакаде
+  for (const U of by('unit', 'hgen')) { const G = near(gsus, U); if (G) duct(ortho(U, G, 1, 1), 5, 2.4, '#8d8f88', 8); }
+  // энергоблок → дымовая труба: газоход коробом на эстакаде, входит в трубу сбоку
   const ch = by('chimney');
-  for (const U of by('unit')) { const C = nearestComp(ch, U); if (C) wire(edgeToward(U, C.x, C.y, 2), 22, [C.x, C.y], 24, 1, 0, '#8a857a', 4.5, 0); }
-  // солнечные поля → инверторная → ОРУ: кабельные трассы по земле
+  for (const U of by('unit')) { const C = near(ch, U); if (C) duct(ortho(U, C, 1, 1), 14, 5.5, '#8a857a', 14); }
+  // солнечные поля → инверторная → ОРУ: кабельные лотки
   const inv = by('inv');
-  for (const P of by('pv')) { const I = nearestComp(inv, P); if (I) wire(edgeToward(P, I.x, I.y, 1), 0.3, edgeToward(I, P.x, P.y, 1), 0.3, 1, 0, 'rgba(40,40,38,0.8)', 0.5, 0); }
-  for (const I of inv) { const O = nearestComp(orus, I); if (O) wire(edgeToward(I, O.x, O.y, 1), 0.3, edgeToward(O, I.x, I.y, 2), 0.3, 1, 0, 'rgba(40,40,38,0.8)', 0.6, 0); }
-  // накопитель → трансформатор
+  for (const Pv of by('pv')) { const I = near(inv, Pv); if (I) tray(ortho(Pv, I, 1, 1), 0.5, 'rgba(40,40,38,0.8)'); }
+  for (const I of inv) { const O = near(orus, I); if (O) tray(ortho(I, O, 1, 2), 0.6, 'rgba(40,40,38,0.8)'); }
   const trs = by('tr');
-  for (const B of by('bess')) { const T = nearestComp(trs, B); if (T) wire(edgeToward(B, T.x, T.y, 1), 0.3, edgeToward(T, B.x, B.y, 1), 0.3, 1, 0, 'rgba(40,40,38,0.8)', 0.6, 0); }
-  // резервуарный парк: трубопроводы на низких опорах к насосной или установке
-  const hubs = by('pump', 'shop', 'rack');
-  if (hubs.length) for (const Tk of by('tank')) { const H = nearestComp(hubs, Tk); if (H) wire(edgeToward(Tk, H.x, H.y, 0), 1.6, edgeToward(H, Tk.x, Tk.y, 1), 1.6, 2, 0.8, '#9c968b', 0.45, 0); }
+  for (const B of by('bess')) { const T = near(trs, B); if (T) tray(ortho(B, T, 1, 1), 0.6, 'rgba(40,40,38,0.8)'); }
+  // резервуарный парк: от каждого резервуара — отвод к коллектору вдоль ряда, коллекторы сходятся
+  // в магистраль к насосной и эстакаде налива (всё на низких опорах)
+  const hubs = by('pump', 'shop', 'rack', 'hall');
+  const tanks = by('tank');
+  if (hubs.length && tanks.length > 1) {
+    const rows = new Map();
+    for (const t of tanks) { const k = Math.round(t.v / 8); (rows.get(k) || rows.set(k, []).get(k)).push(t); }
+    const H0 = near(hubs, tanks[0]);
+    const su = Math.sign(H0.u - tanks[0].u) || 1;
+    const colU = H0.u - su * (H0.w / 2 + 6); // магистраль вдоль v у насосной
+    let v0 = Infinity, v1 = -Infinity;
+    const pc = '#9c968b';
+    for (const row of rows.values()) {
+      const vr = row[0].v + row[0].h / 2 + 5; // коллектор ряда — в проезде за резервуарами
+      const us = row.map((t) => t.u);
+      const far = su > 0 ? Math.min(...us) : Math.max(...us);
+      duct([[far, vr], [colU, vr]], 1.4, 0.9, pc, 6);
+      for (const t of row) duct([[t.u, t.v + t.h / 2], [t.u, vr]], 1.4, 0.7, pc, 0);
+      v0 = Math.min(v0, vr); v1 = Math.max(v1, vr);
+    }
+    for (const H of hubs) { v0 = Math.min(v0, H.v); v1 = Math.max(v1, H.v); }
+    duct([[colU, v0], [colU, v1]], 1.4, 1.1, pc, 6);
+    for (const H of hubs) duct([[colU, H.v], [H.u - su * (H.w / 2), H.v]], 1.4, 0.9, pc, 0);
+  }
+  return out;
 }
+// затемнить цвет #rrggbb
+function shade(hex, k) { const n = parseInt(hex.slice(1), 16); return `rgb(${((n >> 16) & 255) * k | 0},${((n >> 8) & 255) * k | 0},${(n & 255) * k | 0})`; }
 function hash(i) { const s = Math.sin(i * 127.1) * 43758.5453; return s - Math.floor(s); }
 
 export function drawDW(ctx, sim, view, side, ui) {
@@ -380,10 +467,11 @@ export function drawDW(ctx, sim, view, side, ui) {
     // крупные объекты (ТЭС, ГЭС, подстанции) видны в объёме и издали — пока на экране больше ~60 px
     if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
       // Сначала дальние узлы (по y экрана), чтобы высокие не перекрывались неверно
-      const comps = [...o.comps].sort((a, b) => a.y - b.y);
+      const items = [...o.comps, ...(z > 0.12 ? linkItems(ctx, o, toS, z, dpr) : [])].sort((a, b) => a.y - b.y);
       const fenced = z > 0.2 && o.kind !== 'bridge' && o.kind !== 'pontoon' && o.kind !== 'wpp';
       if (fenced) drawFence(ctx, o, toS, z, dpr, 'back');
-      for (const c of comps) {
+      for (const c of items) {
+        if (c.draw) { c.draw(); continue; }
         if (!inView(c.x, c.y, Math.max(c.w, c.h) + 40)) continue;
         const [sx, sy] = toS(c.x, c.y);
         if (c.k === 'span') { drawSpan(ctx, c, sx, sy, z, o); continue; }
@@ -399,7 +487,6 @@ export function drawDW(ctx, sim, view, side, ui) {
           ctx.beginPath(); ctx.ellipse(sx, sy, (c.w * 0.8 + 4) * z, (c.h * 0.8 + 4) * z, c.angle, 0, Math.PI * 2); ctx.fill();
         }
       }
-      if (z > 0.12) drawLinks(ctx, o, toS, z, dpr);
       if (fenced) drawFence(ctx, o, toS, z, dpr, 'front');
       // Пар градирен и дым труб — пока блоки работают
       const units = o.comps.filter((c) => c.k === 'unit' && c.state === 'ok').length;

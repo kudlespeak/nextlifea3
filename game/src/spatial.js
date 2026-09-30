@@ -26,8 +26,9 @@ export class SpatialIndex {
         bin.push(item);
       }
   }
-  // Возвращает объекты, чей bbox пересекает b, в порядке добавления
-  query(b) {
+  // Возвращает объекты, чей bbox пересекает b, в порядке добавления (sorted=false — в любом
+  // порядке, дешевле для больших выборок, где порядок не важен)
+  query(b, sorted = true) {
     const stamp = ++this.stamp;
     const out = [];
     const [cx0, cy0, cx1, cy1] = this._range(b);
@@ -42,7 +43,7 @@ export class SpatialIndex {
           if (bb.x0 <= b.x1 && bb.x1 >= b.x0 && bb.y0 <= b.y1 && bb.y1 >= b.y0) out.push(it);
         }
       }
-    out.sort((a, c) => a._order - c._order);
+    if (sorted) out.sort((a, c) => a._order - c._order);
     return out;
   }
 }

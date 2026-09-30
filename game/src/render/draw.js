@@ -411,6 +411,35 @@ export function fogHidden(world, side, oid) {
   return !F.known.has(oid);
 }
 
+// Свободные от сооружений полосы для внутренних проездов площадки (в её локальных координатах)
+function siteDrive(a) {
+  if (a._drive) return a._drive;
+  const hw = a.w / 2, hh = a.h / 2, fp = a.fp || [];
+  const hitsU = (v0, v1, u0 = -hw, u1 = hw) => fp.some(([u, v, w, h]) => v + h / 2 > v0 && v - h / 2 < v1 && u + w / 2 > u0 && u - w / 2 < u1);
+  let v = null;
+  for (let d = 0; d <= hh - 6 && v === null; d += 2) for (const s of [1, -1]) if (v === null && !hitsU(s * d - 4.5, s * d + 4.5)) v = s * d;
+  // от ворот: вдоль оси ворот со сдвигом, пока полоса не свободна — до продольного проезда или до центра
+  let g = null;
+  if (a.gateQ !== undefined) {
+    const gq = a.gateQ, along = Math.abs(Math.cos(gq)) > 0.5;
+    if (along) {
+      const sg = Math.cos(gq) > 0 ? 1 : -1, stop = 0;
+      for (let d = 0; d <= hh - 6 && !g; d += 2) for (const s of [1, -1]) {
+        const y = s * d, u0 = Math.min(sg * hw, stop), u1 = Math.max(sg * hw, stop);
+        if (!g && !hitsU(y - 3.5, y + 3.5, u0, u1)) g = [u0, y - 3.5, u1 - u0, 7];
+      }
+    } else {
+      const sg = Math.sin(gq) > 0 ? 1 : -1, stop = v ?? 0;
+      const v0 = Math.min(sg * hh, stop), v1 = Math.max(sg * hh, stop);
+      for (let d = 0; d <= hw - 6 && !g; d += 2) for (const s of [1, -1]) {
+        const x = s * d;
+        if (!g && !fp.some(([u, vv, w, h]) => u + w / 2 > x - 3.5 && u - w / 2 < x + 3.5 && vv + h / 2 > v0 && vv - h / 2 < v1)) g = [x - 3.5, v0, 7, v1 - v0];
+      }
+    }
+  }
+  return (a._drive = { v, g });
+}
+
 function drawArea(ctx, a, b, ppm) {
   switch (a.kind) {
     case 'hill': {
@@ -509,15 +538,14 @@ function drawArea(ctx, a, b, ppm) {
           const step = a.site === 'ps330' || a.site === 'ps110' ? 12 : 30;
           for (let u = -hw; u <= hw; u += step) { ctx.moveTo(u, -hh); ctx.lineTo(u, hh); }
           ctx.stroke();
-          ctx.fillStyle = 'rgba(70,70,66,0.55)';
-          ctx.fillRect(-hw, -4, a.w, 8); // внутренний проезд
         }
-        // проезд от ворот к центру площадки
-        if (a.gateQ !== undefined) {
-          const gq = a.gateQ, along = Math.abs(Math.cos(gq)) > 0.5;
+        // проезды не идут сквозь сооружения: продольный — по ближайшей к оси свободной полосе,
+        // от ворот — по свободной полосе до продольного
+        const band = siteDrive(a);
+        if (!paved && band.v !== null) { ctx.fillStyle = 'rgba(70,70,66,0.55)'; ctx.fillRect(-hw, band.v - 4, a.w, 8); }
+        if (a.gateQ !== undefined && band.g) {
           ctx.fillStyle = paved ? 'rgba(55,56,54,0.9)' : 'rgba(78,76,70,0.8)';
-          if (along) { const s0 = Math.cos(gq) > 0 ? 0 : -hw; ctx.fillRect(s0, -3.5, hw, 7); }
-          else { const s0 = Math.sin(gq) > 0 ? 0 : -hh; ctx.fillRect(-3.5, s0, 7, hh); }
+          const [x, y, w, h] = band.g; ctx.fillRect(x, y, w, h);
         }
         ctx.restore();
       }

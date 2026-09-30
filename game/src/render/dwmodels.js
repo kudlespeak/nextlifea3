@@ -203,9 +203,10 @@ function coalYard(M, w, h, st) {
   // Угольный склад: штабели-бурты вдоль склада, между ними рельсы роторного штабелеукладчика,
   // конвейерная галерея к котельной
   const burnt = st !== 'ok';
-  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.25, mat('#34322d', { fn(o, x, y) { mix(o, [20, 19, 17], vnoise(x * 0.3, y * 0.3, 0) * 0.5); } }));
+  // основание — утрамбованная площадка, серая от угольной пыли (светлее штабелей, иначе склад — «чёрная яма»)
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.25, mat('#6a675e', { fn(o, x, y) { mix(o, [45, 43, 38], vnoise(x * 0.3, y * 0.3, 0) * 0.55); } }));
   const piles = 2, gap = h / piles;
-  const coal = mat(burnt ? '#231f1b' : '#2c2a27', { fn(o, x, y, z) { mix(o, [70, 66, 58], vnoise(x * 0.4, y * 0.4, z * 0.5) * 0.35); if (z > 6) mix(o, [58, 56, 52], 0.25); } });
+  const coal = mat(burnt ? '#231f1b' : '#2f2d2a', { fn(o, x, y, z) { mix(o, [88, 84, 76], vnoise(x * 0.4, y * 0.4, z * 0.5) * 0.4); if (z > 6) mix(o, [75, 72, 66], 0.3); if (fr(x * 0.12 + z * 0.3) < 0.08) mix(o, [20, 19, 18], 0.4); } });
   for (let i = 0; i < piles; i++) {
     const y0 = -h / 2 + gap * i + 5, y1 = y0 + gap - 14, ym = (y0 + y1) / 2, Hp = burnt ? 4 : 11;
     // бурт — трапеция в разрезе, вытянутая вдоль склада
@@ -226,9 +227,11 @@ function coalYard(M, w, h, st) {
     M.seg([x, yr, 7], [x + 26, yr - gap * 0.45, 11], 1.4, 1.4, mat('#c9a431'));
     M.cylX(yr - gap * 0.45, 11, 2.6, 2.6, x + 25, x + 28, mat('#8a7a3a'), 10);
   }
-  // конвейерная галерея к котельной
-  M.seg([-w / 2, -h / 2 + 4, 6], [-w / 2 - 60, -h / 2 - 40, 26], 3, 3, mat('#8a877d'));
-  M.seg([-w / 2 + 6, -h / 2 + 4, 0], [-w / 2 + 6, -h / 2 + 4, 6], 1.2, 1.2, STEEL);
+  // конвейерная галерея к котельной: от узла пересыпки на краю склада — наклонно вверх до стены главного корпуса
+  const gal = mat('#8a877d', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.6 && fr(Math.hypot(x, y) * 0.25) < 0.1) mix(o, [60, 60, 56], 0.4); } });
+  M.box(-w / 2 - 4, -w / 2 + 6, -h / 2 - 2, -h / 2 + 8, 0, 10, CONCRETE); // узел пересыпки
+  M.seg([-w / 2 + 1, -h / 2 + 3, 10], [-w / 2 - 60, -h / 2 - 72, 32], 3.2, 3.2, gal);
+  for (const t of [0.35, 0.7]) { const x = -w / 2 + 1 + (-61) * t, y = -h / 2 + 3 + (-75) * t, zt = 10 + 22 * t; M.box(x - 1.2, x + 1.2, y - 1.2, y + 1.2, 0, zt - 1.5, STEEL); }
 }
 function oilTank(M, w, st) {
   const r = w / 2, H = 12;
@@ -383,7 +386,9 @@ function warehouse(M, w, h, st) {
 function canopy(M, w, h, st) {
   if (st === 'destroyed') { M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 1, SOOT); return; }
   for (const x of [-w / 2 + 2, 0, w / 2 - 2]) for (const y of [-h / 2 + 2, h / 2 - 2]) M.seg([x, y, 0], [x, y, 6.5], 0.5, 0.5, mat('#9aa0a2'));
-  M.box(-w / 2, w / 2, -h / 2, h / 2, 6.5, 7.4, mat('#e0e2de'), mat('#d8dcd6', { fn(o, x) { if (fr(x * 0.2) < 0.1) mix(o, [40, 90, 160], 0.6); } }));
+  // кровля навеса: светлый профлист со швами, по краю — синий фриз таможни
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 6.5, 7.6, mat('#2f5d9e'), mat('#bfc3c1', { fn(o, x, y) { if (fr(x * 0.33) < 0.06) mix(o, [120, 124, 124], 0.5); if (Math.abs(Math.abs(y) - h / 2) < 0.8 || Math.abs(Math.abs(x) - w / 2) < 0.8) set(o, [47, 93, 158]); } }));
+  for (let x = -w / 2 + 8; x < w / 2 - 4; x += 16) M.box(x - 1.2, x + 1.2, -0.9, 0.9, 0, 2.6, mat('#d8d6cc')); // будки досмотра между полосами
   for (const y of [-h / 4, h / 4]) M.box(-w / 2 + 4, w / 2 - 4, y - 0.6, y + 0.6, 0, 0.9, CONC_DK); // островки
 }
 // Навес АЗС: плоская кровля с фирменным фризом, колонки на островках
@@ -392,7 +397,9 @@ function fuelCanopy(M, w, h, st, side) {
   const brand = side === 'red' ? [200, 40, 36] : [30, 120, 70];
   const post = mat('#d8dad6');
   for (const x of [-w / 2 + 3, w / 2 - 3]) for (const y of [-h / 4, h / 4]) M.seg([x, y, 0], [x, y, 5.4], 0.35, 0.35, post);
-  M.box(-w / 2, w / 2, -h / 2, h / 2, 5.4, 6.4, mat('#e4e4e0', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5) set(o, brand); } }), mat('#eceae4', { fn(o, x, y) { if (Math.abs(y) < 0.6) set(o, brand); } }));
+  // кровля навеса сверху — серый профлист со швами и светильниками, по периметру — фирменный фриз
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 5.4, 6.6, mat('#e4e4e0', { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5) set(o, z > 6 ? brand : [236, 234, 228]); } }),
+    mat('#c3c5c1', { fn(o, x, y) { if (fr(x * 0.4) < 0.07) mix(o, [140, 142, 140], 0.5); if (Math.abs(Math.abs(y) - h / 2) < 0.7 || Math.abs(Math.abs(x) - w / 2) < 0.7) set(o, brand); if (fr(x * 0.16) > 0.9 && Math.abs(y) < h / 4 && fr(y * 0.2) < 0.3) mix(o, [250, 250, 240], 0.6); } }));
   for (let i = 0; i < 3; i++) {
     const x = -w / 2 + 6 + i * ((w - 12) / 2);
     M.box(x - 3, x + 3, -0.8, 0.8, 0, 0.25, CONC_DK); // островок

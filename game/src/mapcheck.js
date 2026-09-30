@@ -28,7 +28,7 @@ function rebuild(world, key, keep) {
 // Дорога на отрезке: ближе половины ширины (с запасом)
 function onRoad(world, x, y, pad) {
   if (!world.mask.has(x, y, M.ROAD)) return null;
-  for (const r of world.roads.query({ x0: x - 30, y0: y - 30, x1: x + 30, y1: y + 30 }))
+  for (const r of world.roads.query({ x0: x - 30, y0: y - 30, x1: x + 30, y1: y + 30 }, false))
     if (nearLine(x, y, r.line, r.width / 2 + pad)) return r;
   return null;
 }
@@ -67,7 +67,7 @@ export function checkWorld(world, fix = false) {
   }
   for (const b of world.buildings.items) {
     if (dropB.has(b) || !b.poly || ROUND(b)) continue;
-    for (const o of world.buildings.query(b.bbox)) {
+    for (const o of world.buildings.query(b.bbox, false)) {
       if (o === b || o._order < b._order || dropB.has(o) || !o.poly || ROUND(o) || (SMALL(b) && SMALL(o))) continue;
       if (convexOverlap(b.poly, o.poly)) { out.buildingOverlap++; dropB.add(o.w * o.h <= b.w * b.h ? o : b); if (dropB.has(b)) break; }
     }
@@ -82,7 +82,7 @@ export function checkWorld(world, fix = false) {
       const a = r.line[i - 1], c = r.line[i], L = Math.hypot(c[0] - a[0], c[1] - a[1]);
       for (let t = 0; t < L; t += 10) {
         const x = a[0] + ((c[0] - a[0]) * t) / L, y = a[1] + ((c[1] - a[1]) * t) / L;
-        for (const f of world.fields.query({ x0: x, y0: y, x1: x, y1: y })) {
+        for (const f of world.fields.query({ x0: x, y0: y, x1: x, y1: y }, false)) {
           if (f.kind !== 'field' || f.crop?.match?.(/^(dry|green|bare)$/) || !pointInPoly(x, y, f.poly)) continue;
           if (distToLine(x, y, [...f.poly, f.poly[0]]) > r.width / 2 + 2) hits.set(f, (hits.get(f) || 0) + 1);
         }

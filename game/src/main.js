@@ -1358,6 +1358,18 @@ function drawLevel(level, requestMissing, need) {
     }
 }
 
+// Экранные прямоугольники видимых чанков уровня, которых ещё нет в кэше
+function missingRects(level) {
+  const size = chunks.worldSize(level);
+  const r = visibleRange(level);
+  const sx = (wx) => Math.round((wx - cam.x) * cam.zoom + canvas.width / 2);
+  const sy = (wy) => Math.round((wy - cam.y) * cam.zoom + canvas.height / 2);
+  const out = [];
+  for (let cy = r.cy0; cy <= r.cy1; cy++)
+    for (let cx = r.cx0; cx <= r.cx1; cx++) if (!chunks.get(level, cx, cy)) out.push([sx(cx * size), sy(cy * size), sx((cx + 1) * size), sy((cy + 1) * size)]);
+  return out;
+}
+
 function drawArtyOverlay() {
   const guns = selectedUnits().filter((u) => u.def.caliber);
   if (!guns.length) return;
@@ -1492,9 +1504,21 @@ function frameBody(now) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   const L = pickLevel();
-  drawLevel(0, true, need);
-  for (let l = Math.max(1, L - 2); l < L; l++) drawLevel(l, false, need);
-  if (L > 0) drawLevel(L, true, need);
+  // Подложки грубее текущего масштаба рисуем только под ещё не готовыми чанками — иначе каждый
+  // кадр это 2–4 полноэкранных масштабирования картинки (главная цена кадра)
+  const holes = L > 0 ? missingRects(L) : [];
+  if (holes.length) {
+    ctx.save();
+    ctx.beginPath();
+    for (const [x0, y0, x1, y1] of holes) ctx.rect(x0, y0, x1 - x0, y1 - y0);
+    ctx.clip();
+    ctx.imageSmoothingQuality = 'low';
+    drawLevel(0, false, need);
+    for (let l = Math.max(1, L - 2); l < L; l++) drawLevel(l, false, need);
+    ctx.restore();
+    ctx.imageSmoothingQuality = 'high';
+  }
+  drawLevel(L, true, need);
   {
     const x0 = Math.round((0 - cam.x) * cam.zoom + canvas.width / 2), y0 = Math.round((0 - cam.y) * cam.zoom + canvas.height / 2);
     const x1 = Math.round((world.W - cam.x) * cam.zoom + canvas.width / 2), y1 = Math.round((world.H - cam.y) * cam.zoom + canvas.height / 2);

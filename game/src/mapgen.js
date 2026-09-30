@@ -513,10 +513,102 @@ function generateDroneWarWorld(seed) {
   // (трасса, дороги между городами, дороги соседних сёл): получается дерево с примыканиями «Т»,
   // а не пучок прямых, пересекающихся в чистом поле
   // сеть — только настоящие дороги: линии роста городов из их центров — не дороги (connectToCity их обрезает)
-  const net = [highway, hwLocal];
+  // (дороги между городами — тоже сеть: их загородные участки остаются, городские заменяют улицы)
+  const net = [];
+  // сетка отрезков сети (ячейка 250 м): поиск пересечений и соседства — без перебора всех дорог
+  const NC = 250, netCells = new Map();
+  const netAdd = (o) => {
+    net.push(o);
+    for (let j = 1; j < o.length; j++) {
+      const c = o[j - 1], d = o[j];
+      for (let cx = Math.floor(Math.min(c[0], d[0]) / NC); cx <= Math.floor(Math.max(c[0], d[0]) / NC); cx++)
+        for (let cy = Math.floor(Math.min(c[1], d[1]) / NC); cy <= Math.floor(Math.max(c[1], d[1]) / NC); cy++) {
+          const k = cx * 65536 + cy;
+          let a = netCells.get(k); if (!a) netCells.set(k, (a = []));
+          a.push(o, j);
+        }
+    }
+  };
+  // вызывает fn(линия, j) для отрезков сети рядом с рамкой (отрезок может прийти несколько раз)
+  const netNear = (x0, y0, x1, y1, fn) => {
+    for (let cx = Math.floor(x0 / NC); cx <= Math.floor(x1 / NC); cx++)
+      for (let cy = Math.floor(y0 / NC); cy <= Math.floor(y1 / NC); cy++) {
+        const a = netCells.get(cx * 65536 + cy);
+        if (a) for (let i = 0; i < a.length; i += 2) fn(a[i], a[i + 1]);
+      }
+  };
+  for (const o of [highway, hwLocal, ...[...growth.values()].flat()]) netAdd(o);
+  // Выезд из села: если цель лежит вдоль улицы — дорога продолжает улицу с её конца (а не идёт
+  // рядом с ней под острым углом), иначе отходит от середины улицы поперёк
+  const exitOf = (v, tgt) => {
+    const dx = tgt[0] - v.c[0], dy = tgt[1] - v.c[1], L = Math.hypot(dx, dy) || 1;
+    const dot = (dx * Math.cos(v.angle) + dy * Math.sin(v.angle)) / L;
+    if (Math.abs(dot) > 0.64) return (dot > 0 ? v.street[v.street.length - 1] : v.street[0]).slice();
+    return v.c.slice();
+  };
+  // Дорога обрывается на первой встреченной дороге сети (Т-примыкание, а не пересечение «иксом»);
+  // если примыкание выходит под острым углом, последний участок доворачиваем поперёк
+  const joinNet = (ln, skip = 60) => {
+    let acc = 0;
+    for (let k = 1; k < ln.length; k++) {
+      acc += Math.hypot(ln[k][0] - ln[k - 1][0], ln[k][1] - ln[k - 1][1]);
+      if (acc < skip) continue;
+      let hit = null, hb = 2;
+      const a = ln[k - 1], b = ln[k];
+      netNear(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1]), (o, j) => {
+        if (o === ln) return;
+        const t = segCross(a, b, o[j - 1], o[j]);
+        if (t >= 0 && t < hb) { hb = t; hit = { o, j }; }
+      });
+      if (!hit) {
+        // подошла вплотную к другой дороге (ближе 55 м), не пересекая: примыкаем к ней сразу,
+        // а не тянем рядом параллельно
+        if (k + 3 >= ln.length) continue;
+        const p = ln[k];
+        let F = null, fd = 55;
+        netNear(p[0] - 55, p[1] - 55, p[0] + 55, p[1] + 55, (o, j) => {
+          if (o === ln) return;
+          const f = footOn(p, o[j - 1], o[j]), d = Math.hypot(f[0] - p[0], f[1] - p[1]);
+          if (d < fd) { fd = d; F = f; }
+        });
+        if (F) return [...ln.slice(0, k + 1), F];
+        continue;
+      }
+      const P = [a[0] + (b[0] - a[0]) * hb, a[1] + (b[1] - a[1]) * hb];
+      let out = [...ln.slice(0, k), P];
+      const o = hit.o, c = o[hit.j - 1], d = o[hit.j];
+      const ta = [b[0] - a[0], b[1] - a[1]], tb = [d[0] - c[0], d[1] - c[1]];
+      const cos = Math.abs(ta[0] * tb[0] + ta[1] * tb[1]) / (Math.hypot(...ta) * Math.hypot(...tb) || 1);
+      if (cos > 0.77) {
+        // острый угол (< 40°): от точки в ~150 м до примыкания — к ближайшей точке дороги-хозяина
+        let back = 0, q = out.length - 1;
+        while (q > 1 && back < 150) { back += Math.hypot(out[q][0] - out[q - 1][0], out[q][1] - out[q - 1][1]); q--; }
+        const Q = out[q];
+        let F = P, fd = Infinity;
+        for (let j = 1; j < o.length; j++) { const f = footOn(Q, o[j - 1], o[j]); const dd = Math.hypot(f[0] - Q[0], f[1] - Q[1]); if (dd < fd) { fd = dd; F = f; } }
+        if (fd > 20) {
+          // плавный доворот: сплайн через точку до поворота, точку поворота и середину перемычки
+          const q0 = Math.max(0, q - 4), M0 = [(Q[0] + F[0]) / 2, (Q[1] + F[1]) / 2];
+          out = [...out.slice(0, q0), ...resample(catmullRom([out[q0], Q, M0, F], 8), 10)];
+        }
+      }
+      return out;
+    }
+    return ln;
+  };
   const order = villages.map((v) => { let bd = Infinity, best = null; for (const ct of allC) { const d = Math.hypot(ct.c[0] - v.c[0], ct.c[1] - v.c[1]); if (d < bd) { bd = d; best = ct; } } return { v, bd, best }; }).sort((a, b) => a.bd - b.bd);
+  const touchesNet = (line) => {
+    for (let k = 1; k < line.length; k++) {
+      const a = line[k - 1], b = line[k];
+      let hit = false;
+      netNear(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1]), (o, j) => { if (!hit && segCross(a, b, o[j - 1], o[j]) >= 0) hit = true; });
+      if (hit) return true;
+    }
+    return false;
+  };
   for (const { v, bd, best } of order) {
-    if (bd < 3500) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
+    if (touchesNet(v.street)) continue; // улица села и так пересекает дорогу сети — отдельный выезд не нужен
+    if (bd < 3500) { const ln = joinNet(wobblyRoad(rng, exitOf(v, best.c), best.c.slice(), 4)); growth.get(best).push(ln); netAdd(ln); continue; }
     let tp = null, td = Infinity;
     // точки внутри городов не годятся: въезды в город потом обрезаются по краю застройки
     const nearCity = (p) => allC.some((ct) => Math.hypot(ct.c[0] - p[0], ct.c[1] - p[1]) < 2600 * (ct.sc || 1));
@@ -526,10 +618,9 @@ function generateDroneWarWorld(seed) {
     for (const ln of net) for (let k = 0; k < ln.length; k += 2) { const p = ln[k]; if (!nearCity(p)) cands.push([Math.hypot(p[0] - v.c[0], p[1] - v.c[1]), p]); }
     cands.sort((a, b) => a[0] - b[0]);
     for (const [d, p] of cands.slice(0, 200)) if (dry(p)) { td = d; tp = p; break; }
-    if (!tp) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
-    if (bd < 6000 && td > bd * 0.8) { const ln = wobblyRoad(rng, v.c, best.c.slice(), 4); growth.get(best).push(ln); net.push(ln); continue; }
-    const ln = wobblyRoad(rng, v.c, tp.slice(), td > 2500 ? 4 : 2);
-    addRoad(world, ln, 'local'); net.push(ln);
+    if (!tp || (bd < 6000 && td > bd * 0.8)) { const ln = joinNet(wobblyRoad(rng, exitOf(v, best.c), best.c.slice(), 4)); growth.get(best).push(ln); netAdd(ln); continue; }
+    const ln = joinNet(wobblyRoad(rng, exitOf(v, tp), tp.slice(), td > 2500 ? 4 : 2));
+    addRoad(world, ln, 'local'); netAdd(ln);
   }
   for (const v of villages) addRoad(world, v.street, 'village');
 
@@ -637,8 +728,10 @@ function generateDroneWarWorld(seed) {
     let pyl = resample(catmullRom(pts, 6), kv >= 330 ? 350 : 250).map(([x, y]) => ({ x, y }));
     // опоры не ставим на площадках объектов и в воде (кроме порталов на концах)
     pyl = pyl.filter((p, i) => i === 0 || i === pyl.length - 1 || !mask.has(p.x, p.y, M.BUILD | M.WATER | M.ROAD));
+    // провода заходят на шины ОРУ (а не обрываются у ограды): концевая опора напротив портала
+    if (a.comps) pyl = terminatePylons(pyl, a, portalOf(a, kv, cb), false);
+    if (b.comps) pyl = terminatePylons(pyl, b, portalOf(b, kv, ca), true);
     pyl[0].portal = true; pyl[pyl.length - 1].portal = !!b.comps;
-    // провода заходят на шины ОРУ (а не обрываются у ограды)
     if (a.comps) pyl[0].ph = portalOf(a, kv, cb).h;
     if (b.comps) pyl[pyl.length - 1].ph = portalOf(b, kv, ca).h;
     lines.push({ id: lines.length + 1, kv, a: a.id ?? null, b: b.id ?? null, pylons: pyl, side: a.side });
@@ -716,6 +809,7 @@ function generateDroneWarWorld(seed) {
   }
   world.power = { lines };
 
+  snapRoadEnds(world);
   connectRoadNet(world, rng);
   // ---------- Мосты: где дороги и ж/д пересекают реки ----------
   const bridges = [];
@@ -881,30 +975,96 @@ function addVillageGround(world, street) {
 }
 
 // Дорога из села заканчивается у края застройки и примыкает к ближайшей улице
+// (линия может и начинаться в городе — дорога между городами: тогда обрезаем оба конца)
 function connectToCity(world, line) {
   const { mask } = world;
-  let cut = line.findIndex(([x, y]) => mask.has(x, y, M.CITY));
-  if (cut < 0) { addRoad(world, line, 'local'); return; }
-  cut = Math.max(1, cut - 1);
-  const trimmed = line.slice(0, cut + 1);
-  const end = trimmed[trimmed.length - 1];
-  const cands = [];
-  for (const r of world.roadList) {
-    if (r.type !== 'street' && r.type !== 'avenue') continue;
-    for (const p of r.line) if (Math.abs(p[0] - end[0]) < 260 && Math.abs(p[1] - end[1]) < 260) cands.push(p);
-  }
-  cands.sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]));
-  for (const c of cands.slice(0, 40)) {
-    const L = Math.hypot(c[0] - end[0], c[1] - end[1]);
-    if (L > 250) break;
-    let ok = true;
-    for (let t = 0; t <= L; t += 2) {
-      const x = end[0] + ((c[0] - end[0]) * t) / L, y = end[1] + ((c[1] - end[1]) * t) / L;
-      if (mask.has(x, y, M.BUILD | M.WATER)) { ok = false; break; }
+  const inC = line.map(([x, y]) => mask.has(x, y, M.CITY));
+  if (!inC.some(Boolean)) { addRoad(world, line, 'local'); return; }
+  const s = inC.indexOf(false);
+  if (s < 0) return; // целиком в городе — её заменяют улицы
+  let e = s;
+  while (e + 1 < line.length && !inC[e + 1]) e++;
+  const trimmed = line.slice(s, e + 1);
+  if (trimmed.length < 2) return;
+  const attach = (end) => {
+    const cands = [];
+    for (const r of world.roadList) {
+      if (r.type !== 'street' && r.type !== 'avenue') continue;
+      for (const p of r.line) if (Math.abs(p[0] - end[0]) < 260 && Math.abs(p[1] - end[1]) < 260) cands.push(p);
     }
-    if (ok) { trimmed.push(c.slice()); break; }
-  }
+    cands.sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]));
+    for (const c of cands.slice(0, 40)) {
+      const L = Math.hypot(c[0] - end[0], c[1] - end[1]);
+      if (L > 250) break;
+      let ok = true;
+      for (let t = 0; t <= L; t += 2) {
+        const x = end[0] + ((c[0] - end[0]) * t) / L, y = end[1] + ((c[1] - end[1]) * t) / L;
+        if (mask.has(x, y, M.BUILD | M.WATER)) { ok = false; break; }
+      }
+      if (ok) return c.slice();
+    }
+    return null;
+  };
+  if (e + 1 < line.length) { const c = attach(trimmed[trimmed.length - 1]); if (c) trimmed.push(c); }
+  if (s > 0) { const c = attach(trimmed[0]); if (c) trimmed.unshift(c); }
   addRoad(world, resample(trimmed, 10), 'local');
+}
+
+// Параметр t (0..1) на отрезке ab точки пересечения с отрезком cd, или −1
+function segCross(a, b, c, d) {
+  const r0 = b[0] - a[0], r1 = b[1] - a[1], s0 = d[0] - c[0], s1 = d[1] - c[1], den = r0 * s1 - r1 * s0;
+  if (Math.abs(den) < 1e-9) return -1;
+  const t = ((c[0] - a[0]) * s1 - (c[1] - a[1]) * s0) / den, u = ((c[0] - a[0]) * r1 - (c[1] - a[1]) * r0) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : -1;
+}
+function footOn(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+  return [a[0] + dx * t, a[1] + dy * t];
+}
+const lineLen = (l) => { let s = 0; for (let i = 1; i < l.length; i++) s += Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]); return s; };
+
+// Концы дорог, не дотянутые до соседней дороги на несколько метров (или до 45 м по ходу), доводим
+// до её оси — иначе на карте видна щель, а в графе логистики остров. Вырожденные куски убираем.
+function snapRoadEnds(world) {
+  const { mask } = world;
+  const drop = new Set();
+  for (const r of world.roadList) if (lineLen(r.line) < 2) drop.add(r);
+  let n = 0;
+  for (const r of world.roadList) {
+    if (drop.has(r) || r.type === 'highway') continue;
+    for (const end of [0, 1]) {
+      const L = r.line, E = end ? L[L.length - 1] : L[0], Q = end ? L[Math.max(0, L.length - 4)] : L[Math.min(3, L.length - 1)];
+      const dl = Math.hypot(E[0] - Q[0], E[1] - Q[1]) || 1, dir = [(E[0] - Q[0]) / dl, (E[1] - Q[1]) / dl];
+      let best = null, bd = Infinity, touch = false;
+      for (const o of world.roads.query({ x0: E[0] - 60, y0: E[1] - 60, x1: E[0] + 60, y1: E[1] + 60 })) {
+        if (o === r || drop.has(o)) continue;
+        const ol = o.line;
+        for (let j = 1; j < ol.length && !touch; j++) {
+          const f = footOn(E, ol[j - 1], ol[j]), d = Math.hypot(f[0] - E[0], f[1] - E[1]);
+          if (d < Math.max(r.width, o.width) / 2 + 2) { touch = true; break; }
+          // впереди по ходу (не дальше 45 м) или просто рядом (до 16 м)
+          const ahead = (f[0] - E[0]) * dir[0] + (f[1] - E[1]) * dir[1];
+          const ok = d < 16 || (ahead > d * 0.8 && d < 45);
+          if (ok && d < bd) { bd = d; best = f; }
+        }
+        if (touch) break;
+      }
+      if (touch || !best) continue;
+      let clear = true;
+      for (let t = 2; t < bd; t += 2) { const x = E[0] + ((best[0] - E[0]) * t) / bd, y = E[1] + ((best[1] - E[1]) * t) / bd; if (mask.has(x, y, M.BUILD | M.WATER)) { clear = false; break; } }
+      if (!clear) continue;
+      if (end) L.push(best); else L.unshift(best);
+      mask.stampLine([E, best], ROAD_STYLE[r.type]?.stamp || 8, M.ROAD);
+      n++;
+    }
+  }
+  // индекс перестраиваем: рамки удлинённых дорог изменились
+  world.roadList = world.roadList.filter((r) => !drop.has(r));
+  const old = world.roads;
+  world.roads = new SpatialIndex(world.W, world.H, old.cell);
+  for (const r of old.items) if (!drop.has(r)) { r.bbox = bboxOf(r.line, r.width + 6); world.roads.insert(r); }
+  world.roadsSnapped = n;
 }
 
 function nearestPoint(line, p) {
@@ -1122,8 +1282,23 @@ export function portalOf(o, kv, toward) {
   const L = Math.hypot(lx, ly) || 1;
   let r = Math.round(((ly / L) * 0.5 + 0.5) * (rows - 1));
   r = Math.max(0, Math.min(rows - 1, r));
-  const u = oru.u + Math.sign(lx || 1) * oru.w / 2, v = oru.v - oru.h / 2 + ((r + 0.5) * oru.h) / rows;
-  return { pt: [o.x + u * c - v * s, o.y + u * s + v * c], into: null, h: H };
+  const su = Math.sign(lx || 1);
+  const u = oru.u + su * oru.w / 2, v = oru.v - oru.h / 2 + ((r + 0.5) * oru.h) / rows;
+  // концевая опора — за оградой напротив портала: последний пролёт идёт вдоль ряда, а не через площадку
+  const uo = su * (o.w / 2 + 8 + (big ? 45 : 30));
+  return { pt: [o.x + u * c - v * s, o.y + u * s + v * c], out: [o.x + uo * c - v * s, o.y + uo * s + v * c], into: null, h: H };
+}
+// Вставляет концевую опору перед порталом ОРУ и убирает опоры, попавшие на площадку или
+// слишком близко к концевой (atEnd — портал в конце списка)
+export function terminatePylons(pyl, o, P, atEnd) {
+  if (!P.out) return pyl;
+  const c = Math.cos(o.angle), s = Math.sin(o.angle);
+  const onSite = (p) => { const lx = (p.x - o.x) * c + (p.y - o.y) * s, ly = -(p.x - o.x) * s + (p.y - o.y) * c; return Math.abs(lx) < o.w / 2 + 20 && Math.abs(ly) < o.h / 2 + 20; };
+  const list = atEnd ? pyl.slice().reverse() : pyl.slice();
+  const head = list[0], T = { x: P.out[0], y: P.out[1] };
+  const rest = list.slice(1).filter((p, i, a) => i === a.length - 1 || (!onSite(p) && Math.hypot(p.x - T.x, p.y - T.y) > 90));
+  const out = [head, T, ...rest];
+  return atEnd ? out.reverse() : out;
 }
 // Точка на границе площадки объекта в сторону цели
 export function edgeOf(o, toward) {
@@ -1153,7 +1328,8 @@ export function gridFeed(world, o, maxPs = 9000) {
     if (!best || bd > maxPs * 1.5) return null;
     const P = portalOf(best, 110, [o.x, o.y]);
     const A = edgeOf(o, P.pt);
-    const pyl = route(A, P.pt, 220).map(([x, y]) => ({ x, y }));
+    let pyl = route(A, P.pt, 220).map(([x, y]) => ({ x, y }));
+    pyl = terminatePylons(pyl, best, P, true);
     pyl[0].portal = true; pyl[pyl.length - 1].portal = true; pyl[pyl.length - 1].ph = P.h;
     return { oid: o.id, kv: 110, side, pylons: pyl, id: 'f' + o.id, L: bd };
   }
@@ -1211,7 +1387,8 @@ export function applyEconEvent(world, ev) {
 function connectRoadNet(world, rng) {
   const { mask } = world;
   const xs = [], ys = [], rid = [];
-  world.roadList.forEach((r, ri) => { for (const [x, y] of resample(r.line, 40)) { xs.push(x); ys.push(y); rid.push(ri); } });
+  // шаг 12 м: иначе конец улицы, упёршийся в середину длинного пролёта соседней, кажется оторванным
+  world.roadList.forEach((r, ri) => { for (const [x, y] of resample(r.line, 12)) { xs.push(x); ys.push(y); rid.push(ri); } });
   const n = xs.length, par = new Int32Array(n).map((_, i) => i);
   const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
   const uni = (a, b) => { a = find(a); b = find(b); if (a !== b) par[a] = b; };
@@ -1246,18 +1423,33 @@ function connectRoadNet(world, rng) {
     const islands = [...size.entries()].filter(([r, k]) => r !== main && k >= 3).sort((a, b) => b[1] - a[1]);
     if (!islands.length) break;
     let linked = false;
+    // узлы основной сети — в грубой сетке 200 м; ближайший ищем кольцами наружу (до 8 км)
+    const G = 200, mainCells = new Map();
+    for (let j = 0; j < n; j++) if (find(j) === main) { const k = Math.floor(xs[j] / G) * 100003 + Math.floor(ys[j] / G); (mainCells.get(k) || mainCells.set(k, []).get(k)).push(j); }
+    const nearestMain = (x, y) => {
+      const ci = Math.floor(x / G), cj = Math.floor(y / G);
+      let best = -1, bd = 8000;
+      for (let r = 0; r <= 40 && (r - 1) * G < bd; r++)
+        for (let di = -r; di <= r; di++)
+          for (let dj = -r; dj <= r; dj += Math.abs(di) === r ? 1 : 2 * r || 1) { // только периметр кольца
+            const a = mainCells.get((ci + di) * 100003 + cj + dj);
+            if (a) for (const j of a) { const d = Math.hypot(xs[j] - x, ys[j] - y); if (d < bd) { bd = d; best = j; } }
+          }
+      return [best, bd];
+    };
     for (const [root] of islands) {
       const cand = [];
-      for (let i = 0; i < n; i += 1) {
-        if (find(i) !== root) continue;
-        for (const R of [400, 1200, 3000, 8000]) {
-          let best = -1, bd = R;
-          near(xs[i], ys[i], R, (j) => { if (find(j) !== main) return; const d = Math.hypot(xs[j] - xs[i], ys[j] - ys[i]); if (d < bd) { bd = d; best = j; } });
-          if (best >= 0) { cand.push([bd, i, best]); break; }
-        }
+      for (let i = 0, m = 0; i < n; i++) {
+        if (find(i) !== root || m++ % 3) continue; // каждый третий узел (36 м) — точности хватает
+        const [best, bd] = nearestMain(xs[i], ys[i]);
+        if (best >= 0) cand.push([bd, i, best]);
       }
-      cand.sort((a, b) => a[0] - b[0]);
-      for (const [, i, j] of cand.slice(0, 300)) {
+      // по одному лучшему кандидату на квадрат 400 м: иначе все попытки упираются в один и тот же
+      // непроходимый участок (застройка, ж/д)
+      const bestIn = new Map();
+      for (const c of cand) { const k = Math.floor(xs[c[1]] / 400) * 1000 + Math.floor(ys[c[1]] / 400); const b = bestIn.get(k); if (!b || c[0] < b[0]) bestIn.set(k, c); }
+      const pick = [...bestIn.values()].sort((a, b) => a[0] - b[0]);
+      for (const [, i, j] of pick.slice(0, 300)) {
         const a = [xs[i], ys[i]], b = [xs[j], ys[j]];
         if (!passable(a, b)) continue;
         const L = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L, o = rng.float(-0.06, 0.06) * L;
@@ -1379,11 +1571,13 @@ function buildFieldsDW(world, rng, massifs) {
     }
   }
   const MB = 3000, mbins = new Map();
-  for (const m of massifs) { const k = `${Math.floor(m.x / MB)},${Math.floor(m.y / MB)}`; (mbins.get(k) || mbins.set(k, []).get(k)).push(m); }
+  // числовые ключи корзин (owner зовут сотни тысяч раз — строковые ключи здесь заметно дороже)
+  const mkey = (ix, iy) => (ix + 64) * 4096 + iy + 64;
+  for (const m of massifs) { const k = mkey(Math.floor(m.x / MB), Math.floor(m.y / MB)); (mbins.get(k) || mbins.set(k, []).get(k)).push(m); }
   const owner = (x, y) => {
     let best = null, bd = Infinity;
     const ix = Math.floor(x / MB), iy = Math.floor(y / MB);
-    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (const m of mbins.get(`${ix + dx},${iy + dy}`) || []) {
+    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (const m of mbins.get(mkey(ix + dx, iy + dy)) || []) {
       const d = Math.hypot(x - m.x, y - m.y) / m.r;
       if (d < bd) { bd = d; best = m; }
     }
