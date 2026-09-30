@@ -17,7 +17,7 @@ const DOCTRINES = {
 
 const VALUE = { refinery: 7, railterm: 4, port: 4, coalmine: 4, cement: 3, decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, workshop: 5, launch: 5, hub: 5, wpp: 3, spp: 3 };
 const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, workshop: 1.5, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
-const TARGET_COMPS = { refinery: ['tank', 'shop', 'dryer'], railterm: ['rack', 'hall'], port: ['rack', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], workshop: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const TARGET_COMPS = { refinery: ['tank', 'shop', 'column'], railterm: ['rack', 'hall'], port: ['quay', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], workshop: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 const D_RANGE = (D) => D.range || 99999;
 

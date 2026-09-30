@@ -2133,6 +2133,8 @@ function drawPowerLines(ctx, world, q, ppm) {
   for (const tp of [...p.tps, ...(p.feeds || [])]) {
     if (tp.oid !== undefined ? fogHidden(world, tp.side, tp.oid) : p.mains?.[tp.main] && fogHidden(world, p.mains[tp.main].side, p.mains[tp.main].infraId)) continue;
     const pts = tp.poles;
+    // ТП городского района питается кабелем целиком (веер опор от подстанции над кварталами — неправда)
+    if (tp.oid === undefined && world.mask.has(tp.x, tp.y, M.CITY | M.CITYZONE)) continue;
     const runs = [];
     let cur = null;
     for (let i = 0; i < pts.length; i++) {

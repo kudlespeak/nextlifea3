@@ -278,7 +278,8 @@ function bessBlock(M, w, h, st) {
   const n = Math.max(2, Math.round(w / 7));
   for (let k = 0; k < n; k++) for (const row of [-1, 1]) {
     const x0 = -w / 2 + k * (w / n) + 0.3, x1 = x0 + w / n - 0.6, y0 = row < 0 ? -h / 2 : 0.6, y1 = row < 0 ? -0.6 : h / 2;
-    M.box(x0, x1, y0, y1, 0, st === 'destroyed' && (k + row) % 2 ? 0.8 : 2.6, st === 'destroyed' ? SOOT : mat('#e2e2de', { fn(o, x, y, z, nn) { if (Math.abs(nn[2]) < 0.5 && fr(x * 1.4) < 0.08) mix(o, [90, 100, 110], 0.3); } }));
+    M.box(x0, x1, y0, y1, 0, st === 'destroyed' && (k + row) % 2 ? 0.8 : 2.6, st === 'destroyed' ? SOOT : mat('#c7c9c4', { fn(o, x, y, z, nn) { if (Math.abs(nn[2]) < 0.5 && fr(x * 1.4) < 0.08) mix(o, [90, 100, 110], 0.3); } }),
+      st === 'destroyed' ? SOOT : mat('#b9bcb8', { fn(o, x, y) { if (fr(x * 0.9) < 0.1 || fr(y * 0.5) < 0.06) mix(o, [120, 124, 122], 0.5); if (fr(x * 0.3 + 0.5) < 0.05) mix(o, [70, 90, 110], 0.5); } }));
   }
 }
 // Понтонный мост: секции на воде и настил
@@ -312,6 +313,30 @@ function dryerTower(M, w, st) {
   M.box(-w / 3, w / 3, -w / 3, w / 3, 0, 22, st === 'damaged' ? SOOT : mat('#b7b9b4', { fn(o, x, y, z) { if (fr(z * 0.5) < 0.08) mix(o, [70, 72, 70], 0.35); } }));
   M.box(-w / 2, w / 2, -w / 2, w / 2, 0, 4, STEEL);
   M.cylZ(w / 2 + 1.2, 0, 1.3, 1.3, 1, 3.6, STEEL, 8);
+}
+// Ректификационная колонна НПЗ: высокий цилиндр с площадками обслуживания и шлемовой трубой
+function distColumn(M, w, st) {
+  if (st === 'destroyed') { M.cylZ(0, 0, w / 3, w / 3.3, 0, 8, SOOT, 12); M.seg([0, 0, 8], [w, w / 2, 0.5], 1.4, 1.2, RUST); return; }
+  const r = w / 4, H = st === 'damaged' ? 30 : 48;
+  M.box(-w / 2, w / 2, -w / 2, w / 2, 0, 1, CONCRETE);
+  M.cylZ(0, 0, r, r * 0.9, 1, H, st === 'damaged' ? SOOT : mat('#b9bab4', { fn(o, x, y, z) { if (fr(z * 0.12) < 0.05) mix(o, [90, 92, 90], 0.4); } }), 14, mat('#9fa09a'));
+  for (const z of [12, 24, 36]) if (z < H) M.cylZ(0, 0, r + 1.2, r + 1.2, z, z + 0.4, STEEL, 14); // площадки
+  M.seg([r * 0.7, 0, H], [r + 4, 0, H + 3], 0.5, 0.5, STEEL);
+  M.seg([r + 4, 0, H + 3], [r + 6, 0, 2], 0.5, 0.5, STEEL); // шлемовая труба к конденсатору
+}
+// Причал речного порта: бетонная стенка с кордоном и портальные краны на рельсах
+function quay(M, w, h, st) {
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 1.2, CONC_DK, mat('#8a877e', { fn(o, x, y) { if (Math.abs(y + h / 2 - 1) < 0.35) mix(o, [230, 200, 60], 0.7); if (fr(x * 0.1) < 0.02) mix(o, [60, 60, 56], 0.4); } }));
+  for (const d of [-2.5, 2.5]) M.box(-w / 2 + 3, w / 2 - 3, d - 0.2, d + 0.2, 1.2, 1.4, STEEL);
+  const n = Math.max(2, Math.round(w / 90));
+  for (let i = 0; i < n; i++) {
+    const x = -w / 2 + ((i + 0.5) * w) / n;
+    if (st === 'destroyed' && i % 2 === 0) { M.seg([x, 0, 1.2], [x + 14, -h, 0.5], 1, 0.8, RUST); continue; }
+    const col = st === 'destroyed' ? SOOT : mat('#c9a431');
+    for (const dx of [-3, 3]) for (const dy of [-2.5, 2.5]) M.seg([x + dx, dy, 1.2], [x + dx * 0.4, dy * 0.4, 14], 0.5, 0.4, col); // портал
+    M.box(x - 3, x + 3, -2.5, 2.5, 14, 19, col); // кабина и поворотная часть
+    M.seg([x, -1, 18], [x + (i % 2 ? 10 : -10), -h - 18, 26], 0.7, 0.5, col); // стрела над водой
+  }
 }
 function bunker(M, w, h, st) {
   if (st === 'destroyed') {
@@ -736,6 +761,8 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'wtower': waterTower(M, w, st); break;
     case 'headframe': headframe(M, w, st); break;
     case 'dryer': dryerTower(M, w, st); break;
+    case 'column': distColumn(M, w, st); break;
+    case 'quay': quay(M, w, h, st); break;
     case 'canopy': canopy(M, w, h, st); break;
     case 'fcanopy': fuelCanopy(M, w, h, st, side); break;
     case 'hgen': hydroUnit(M, w, h, st); break;

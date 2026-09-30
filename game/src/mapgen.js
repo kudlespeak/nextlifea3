@@ -327,7 +327,7 @@ function infraLayout0(kind, L = 0) {
     case 'hpp': return { w: 230, h: 120, comps: [
       ...[0, 1, 2, 3].map((i) => c('hgen', -80 + i * 38, -18, 34, 30, { n: `Гидроагрегат №${i + 1}` })),
       c('gsu', -60, 32, 14, 9, { n: 'Блочный трансформатор №1' }), c('gsu', -10, 32, 14, 9, { n: 'Блочный трансформатор №2' }),
-      c('oru', 80, 5, 56, 80, { n: 'ОРУ-330 кВ' }), c('ctrl', 40, 40, 26, 16, { n: 'Щит управления ГЭС' }),
+      c('oru', 80, 5, 56, 80, { n: 'ОРУ-330 кВ' }), c('ctrl', 35, 48, 26, 14, { n: 'Щит управления ГЭС' }),
     ] };
     case 'chp': return { w: 210, h: 150, comps: [
       c('unit', -50, -20, 60, 42, { n: 'Турбоагрегат №1' }), c('unit', 20, -20, 60, 42, { n: 'Турбоагрегат №2' }),
@@ -356,15 +356,15 @@ function infraLayout0(kind, L = 0) {
     case 'refinery': {
       // НПЗ в реальную величину: резервуарный парк, установки, колонны, факел, эстакада налива
       const cs = [];
-      for (let i = 0; i < 12; i++) cs.push(c('tank', -290 + (i % 6) * 58, -150 + Math.floor(i / 6) * 62, 44, 44, { n: `Резервуар №${i + 1}` }));
+      for (let i = 0; i < 12; i++) cs.push(c('tank', -320 + (i % 6) * 54, -150 + Math.floor(i / 6) * 60, 42, 42, { n: `Резервуар №${i + 1}` }));
       cs.push(c('shop', 60, -120, 150, 60, { n: 'Установка первичной перегонки' }), c('shop', 60, -30, 150, 50, { n: 'Установка каталитического крекинга' }));
-      cs.push(c('dryer', 190, -110, 22, 22, { n: 'Ректификационная колонна №1' }), c('dryer', 190, -50, 22, 22, { n: 'Ректификационная колонна №2' }), c('chimney', 250, 60, 16, 16, { n: 'Факельная труба' }));
+      cs.push(c('column', 190, -110, 22, 22, { n: 'Ректификационная колонна №1' }), c('column', 190, -50, 22, 22, { n: 'Ректификационная колонна №2' }), c('chimney', 250, 60, 16, 16, { n: 'Факельная труба' }));
       cs.push(c('rack', -120, 130, 320, 14, { n: 'Эстакада налива' }), c('hall', 150, 110, 120, 40, { n: 'Товарный парк и насосная' }), c('ctrl', -250, 110, 50, 24, { n: 'Операторная' }));
       return { w: 700, h: 400, comps: cs };
     }
     case 'watertower': return { w: 110, h: 80, comps: [c('wtower', -25, 0, 18, 18, { n: 'Водонапорная башня' }), c('ctrl', 25, 8, 36, 20, { n: 'Насосная с резервным генератором' })] };
     case 'railterm': return { w: 520, h: 130, comps: [c('rack', 0, -40, 440, 12, { n: 'Погрузочная эстакада' }), c('hall', -120, 25, 180, 40, { n: 'Склад зерна' }), c('silo', 90, 20, 120, 34, { n: 'Силосы перевалки' }), c('ctrl', 220, 30, 30, 16, { n: 'Диспетчерская станции' })] };
-    case 'port': return { w: 360, h: 150, comps: [c('rack', 0, -52, 300, 12, { n: 'Причал с кранами' }), c('hall', -80, 20, 150, 50, { n: 'Портовый склад' }), c('silo', 90, 15, 110, 34, { n: 'Бункеры зерна' }), c('ctrl', 150, 55, 26, 14, { n: 'Управление порта' })] };
+    case 'port': return { w: 360, h: 150, comps: [c('quay', 0, -52, 300, 12, { n: 'Причал с кранами' }), c('hall', -80, 20, 150, 50, { n: 'Портовый склад' }), c('silo', 90, 15, 110, 34, { n: 'Бункеры зерна' }), c('ctrl', 150, 55, 26, 14, { n: 'Управление порта' })] };
     case 'coalmine': return { w: 480, h: 320, comps: [c('headframe', -160, -80, 22, 22, { n: 'Копёр ствола №1' }), c('headframe', -110, -80, 22, 22, { n: 'Копёр ствола №2' }), c('shop', 60, -90, 170, 60, { n: 'Обогатительная фабрика' }), c('coal', 40, 70, 280, 110, { n: 'Угольный склад' }), c('hall', -160, 60, 90, 50, { n: 'Административно-бытовой комбинат' })] };
     case 'cement': return { w: 440, h: 240, comps: [c('silo', 120, -60, 150, 40, { n: 'Силосы цемента' }), c('shop', -80, -50, 200, 60, { n: 'Печной цех' }), c('chimney', -190, 60, 16, 16, { n: 'Труба печи' }), c('hall', 60, 60, 220, 50, { n: 'Склад стройматериалов' })] };
     case 'housing': return { w: 320, h: 200, comps: [c('house', -90, -55, 110, 14, { n: 'Жилой дом №1' }), c('house', 70, -55, 110, 14, { n: 'Жилой дом №2' }), c('house', -90, 5, 110, 14, { n: 'Жилой дом №3' }), c('house', 70, 5, 110, 14, { n: 'Жилой дом №4' }), c('house', -10, 65, 180, 14, { n: 'Жилой дом №5' }), c('hall', 120, 70, 50, 30, { n: 'Детский сад' })] };
@@ -502,12 +502,15 @@ function generateDroneWarWorld(seed) {
   });
 
   const growth = new Map(allC.map((ct) => [ct, []]));
+  // довоенные дороги между северными и южными городами сторон: сходятся в одной точке на границе
+  // (сейчас там КПП на линии фронта), а не заходят друг за друга «иксом»
+  const cross = [1, 2].map((i) => [W / 2 + rng.float(-300, 300), (sides.blue.cities[i].c[1] + sides.red.cities[i].c[1]) / 2 + rng.float(-300, 300)]);
   for (const S of Object.values(sides)) {
     const [cap, cN, cS] = S.cities;
     growth.get(cN).push(wobblyRoad(rng, cN.c, cap.c.slice(), 5));
     growth.get(cS).push(wobblyRoad(rng, cS.c, cap.c.slice(), 5));
-    growth.get(cN).push(wobblyRoad(rng, cN.c, [W / 2 - S.dir * 400, cN.c[1] + rng.float(-600, 600)], 4));
-    growth.get(cS).push(wobblyRoad(rng, cS.c, [W / 2 - S.dir * 400, cS.c[1] + rng.float(-600, 600)], 4));
+    growth.get(cN).push(wobblyRoad(rng, cN.c, cross[0].slice(), 4));
+    growth.get(cS).push(wobblyRoad(rng, cS.c, cross[1].slice(), 4));
   }
   // Дороги из сёл: близко к городу — в город, иначе — к ближайшей точке уже проложенной сети
   // (трасса, дороги между городами, дороги соседних сёл): получается дерево с примыканиями «Т»,
@@ -729,8 +732,8 @@ function generateDroneWarWorld(seed) {
     // опоры не ставим на площадках объектов и в воде (кроме порталов на концах)
     pyl = pyl.filter((p, i) => i === 0 || i === pyl.length - 1 || !mask.has(p.x, p.y, M.BUILD | M.WATER | M.ROAD));
     // провода заходят на шины ОРУ (а не обрываются у ограды): концевая опора напротив портала
-    if (a.comps) pyl = terminatePylons(pyl, a, portalOf(a, kv, cb), false);
-    if (b.comps) pyl = terminatePylons(pyl, b, portalOf(b, kv, ca), true);
+    if (a.comps) pyl = terminatePylons(pyl, a, portalOf(a, kv, cb), false, mask);
+    if (b.comps) pyl = terminatePylons(pyl, b, portalOf(b, kv, ca), true, mask);
     pyl[0].portal = true; pyl[pyl.length - 1].portal = !!b.comps;
     if (a.comps) pyl[0].ph = portalOf(a, kv, cb).h;
     if (b.comps) pyl[pyl.length - 1].ph = portalOf(b, kv, ca).h;
@@ -1059,6 +1062,22 @@ function snapRoadEnds(world) {
       n++;
     }
   }
+  // тупиковые огрызки: короткий кусок, один конец которого ни к чему не примыкает (и там не ворота)
+  const gates = world.infra.filter((o) => o.gate).map((o) => o.gate);
+  const free = (r, E) => {
+    if (gates.some((g) => Math.hypot(g[0] - E[0], g[1] - E[1]) < 25)) return false;
+    for (const o of world.roads.query({ x0: E[0] - 30, y0: E[1] - 30, x1: E[0] + 30, y1: E[1] + 30 }, false)) {
+      if (o === r || drop.has(o)) continue;
+      for (let j = 1; j < o.line.length; j++) { const f = footOn(E, o.line[j - 1], o.line[j]); if (Math.hypot(f[0] - E[0], f[1] - E[1]) < Math.max(r.width, o.width) / 2 + 3) return false; }
+    }
+    return true;
+  };
+  for (let pass = 0; pass < 2; pass++)
+    for (const r of world.roadList) {
+      if (drop.has(r) || r.type === 'highway' || lineLen(r.line) > 80) continue;
+      const a = free(r, r.line[0]), b = free(r, r.line[r.line.length - 1]);
+      if (a !== b) drop.add(r);
+    }
   // индекс перестраиваем: рамки удлинённых дорог изменились
   world.roadList = world.roadList.filter((r) => !drop.has(r));
   const old = world.roads;
@@ -1290,8 +1309,8 @@ export function portalOf(o, kv, toward) {
 }
 // Вставляет концевую опору перед порталом ОРУ и убирает опоры, попавшие на площадку или
 // слишком близко к концевой (atEnd — портал в конце списка)
-export function terminatePylons(pyl, o, P, atEnd) {
-  if (!P.out) return pyl;
+export function terminatePylons(pyl, o, P, atEnd, mask = null) {
+  if (!P.out || (mask && mask.has(P.out[0], P.out[1], M.WATER))) return pyl; // опору в реку не ставим
   const c = Math.cos(o.angle), s = Math.sin(o.angle);
   const onSite = (p) => { const lx = (p.x - o.x) * c + (p.y - o.y) * s, ly = -(p.x - o.x) * s + (p.y - o.y) * c; return Math.abs(lx) < o.w / 2 + 20 && Math.abs(ly) < o.h / 2 + 20; };
   const list = atEnd ? pyl.slice().reverse() : pyl.slice();
@@ -1329,7 +1348,7 @@ export function gridFeed(world, o, maxPs = 9000) {
     const P = portalOf(best, 110, [o.x, o.y]);
     const A = edgeOf(o, P.pt);
     let pyl = route(A, P.pt, 220).map(([x, y]) => ({ x, y }));
-    pyl = terminatePylons(pyl, best, P, true);
+    pyl = terminatePylons(pyl, best, P, true, world.mask);
     pyl[0].portal = true; pyl[pyl.length - 1].portal = true; pyl[pyl.length - 1].ph = P.h;
     return { oid: o.id, kv: 110, side, pylons: pyl, id: 'f' + o.id, L: bd };
   }
@@ -2276,12 +2295,20 @@ function buildCityDW(world, rng, C, rail, river, extraGrowth = [], sc = 1) {
   const served = ([x, y]) => { for (const b of world.buildings.query({ x0: x - 60, y0: y - 60, x1: x + 60, y1: y + 60 })) if (Math.hypot(b.x - x, b.y - y) < 40 + Math.max(b.w || 0, b.h || 0) / 2) return true; return false; };
   const drop = new Set();
   for (const r of mine) {
-    if (r.type === 'avenue') continue;
     const pts = resample(r.line, 10);
     const ok = pts.map(served);
     // короткие разрывы (перекрёсток, сквер) не рвут улицу
     for (let i = 0; i < ok.length; i++) if (!ok[i]) { let j = i; while (j < ok.length && !ok[j]) j++; if (i > 0 && j < ok.length && j - i <= 6) for (let k = i; k < j; k++) ok[k] = true; i = j; }
     if (ok.every(Boolean)) continue;
+    if (r.type === 'avenue') {
+      // проспект не рвём (он идёт по мостам и связывает районы), но концы за последней застройкой
+      // срезаем — иначе он уходит в поле тупиком
+      const i0 = ok.indexOf(true), i1 = ok.lastIndexOf(true);
+      if (i0 < 0 || (i0 === 0 && i1 === ok.length - 1) || i1 - i0 < 2) continue;
+      drop.add(r);
+      addRoad(world, pts.slice(Math.max(0, i0 - 1), Math.min(pts.length, i1 + 2)), 'avenue');
+      continue;
+    }
     drop.add(r);
     let run = [];
     for (let i = 0; i <= pts.length; i++) {

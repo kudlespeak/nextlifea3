@@ -292,7 +292,7 @@ export class DWInfra {
     let pylons = [];
     for (let i = 0; i <= n; i++) pylons.push({ x: A[0] + ((B[0] - A[0]) * i) / n, y: A[1] + ((B[1] - A[1]) * i) / n });
     // концевые опоры напротив порталов — провода заходят на ОРУ вдоль ряда, а не через площадку
-    pylons = terminatePylons(terminatePylons(pylons, q.a, pa, false), q.b, pb, true);
+    pylons = terminatePylons(terminatePylons(pylons, q.a, pa, false, this.world.mask), q.b, pb, true, this.world.mask);
     pylons[0].portal = true; pylons[pylons.length - 1].portal = true;
     if (pa.h) pylons[0].ph = pa.h;
     if (pb.h) pylons[pylons.length - 1].ph = pb.h;
