@@ -38,7 +38,7 @@ function drawInfra(ctx, g, side, toS, inView, z, now, dpr, t) {
       if (!train && k > 0 && z > 0.3) { ctx.fillStyle = '#d6b95e'; ctx.fillRect(-L * 0.92, -w * 0.35, L * 0.84, w * 0.7); } // зерно в трюме
       ctx.restore();
     }
-    if (sh.wait) { const [sx, sy] = toS(head.x, head.y); ctx.fillStyle = '#ff5a4a'; ctx.font = `${Math.round(11 * dpr)}px sans-serif`; ctx.fillText('⛔', sx + 6 * dpr, sy - 6 * dpr); }
+    if (sh.wait) { const [sx, sy] = toS(head.x, head.y); ctx.fillStyle = '#ff5a4a'; ctx.font = `${Math.round(11 * dpr)}px sans-serif`; ctx.fillText('стоит', sx + 6 * dpr, sy - 6 * dpr); }
   }
   for (const p of I.paving) {
     if (p.side !== side || !inView(p.x, p.y, 50)) continue;

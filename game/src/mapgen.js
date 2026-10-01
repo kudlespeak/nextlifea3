@@ -1650,6 +1650,7 @@ export function applyEconEvent(world, ev) {
     const xs = P.map((p) => p.x), ys = P.map((p) => p.y);
     return [{ x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 }];
   }
+  if (ev.k === 'gfx') { world.gfxLow = !!ev.low; return null; }
   if (ev.k === 'burn') { const b = addBurn(world, new Rng(ev.s >>> 0), ev.x, ev.y, ev.r); return [bboxOf(b.poly, 4)]; }
   if (ev.k === 'crop') {
     const out = [];

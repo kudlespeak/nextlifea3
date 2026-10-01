@@ -54,7 +54,7 @@ export function drawNight(ctx, world, sim, view, darkness) {
   if (p) {
     // Уличные фонари: пятно света на проезжей части рядом с опорой, сама лампа — маленькая точка
     const close = cam.zoom > 1.2 * dpr;
-    const far = cam.zoom < 0.08 * dpr;
+    const far = cam.zoom < (globalThis.GFX === 'low' ? 0.6 : 0.08) * dpr; // экономная графика — огни поселений целиком
     if (!far) for (const l of p.lamps) {
       if (!l.on || !inView(l.x, l.y, 30) || !tpPowered(world, l.tp)) continue;
       const px = l.x + (l.nx || 0) * 3.5, py = l.y + (l.ny || 0) * 3.5;

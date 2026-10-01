@@ -113,7 +113,7 @@ export function drawChunk(ctx, world, b, ppm) {
   for (const f of fl) drawField(ctx, f, b, ppm);
   drawAreas(ctx, world, b, q, ppm);
   drawLowFreq(ctx, world, b, ppm);
-  if (ppm >= 2) drawMicro(ctx, world, b, ppm);
+  if (ppm >= 2 && !world.gfxLow) drawMicro(ctx, world, b, ppm);
   const season = world.season;
   if (season === 'autumn') { ctx.fillStyle = 'rgba(160,110,40,0.2)'; ctx.fillRect(b.x0, b.y0, size, size); } // пожухлая трава и стерня
   else if (season === 'spring') { ctx.fillStyle = 'rgba(70,150,50,0.1)'; ctx.fillRect(b.x0, b.y0, size, size); } // молодая зелень

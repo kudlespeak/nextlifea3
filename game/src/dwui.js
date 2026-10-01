@@ -57,6 +57,37 @@ export class DWUI {
   get g() { return this.sim.game; }
   get S() { return this.g.sides[this.side]; }
 
+  tabByIndex(i) {
+    const k = ['grid', 'ad', 'strike', 'repair', 'econ', 'res', 'state'][i];
+    if (!k) return;
+    this.state.tab = k; this.state.folded = false; this.fold(); this.build();
+  }
+  // Обучение при первом запуске: пять шагов с подсветкой вкладок (можно пропустить; запоминается)
+  tutorial(force = false) {
+    let done = false;
+    try { done = localStorage.getItem('dw-tut') === '1'; } catch { /* нет хранилища — показываем */ }
+    if (done && !force) return;
+    const steps = [
+      ['Ваша задача', 'Удержать тыл: свет, топливо и торговля кормят бюджет, а удары противника по энергосистеме и логистике его обрушают. Проигрывает сторона, чья «устойчивость тыла» (вверху, «тыл») упадёт до нуля.', 'grid'],
+      ['ПВО', 'Вкладка «ПВО» (Shift+2): выберите средство и кликните по своей земле. РЛС наводит огневые группы в радиусе 25 км — без неё они бьют почти вслепую. Макеты ЗРК отвлекают удары.', 'ad'],
+      ['Удары', 'Вкладка «Удары» (Shift+3): дроны собирает завод — закажите «+1/+5», потом кликните по цели. Объекты противника видны только после разведки.', 'strike'],
+      ['Ремонт и энергосеть', '«Ремонт» (Shift+4) — бригады чинят узлы бесплатно, платите только за уничтоженное оборудование. На «Обзоре» — веерные отключения: они спасают трансформаторы от перегрева.', 'repair'],
+      ['Карта и время', 'Журнал слева внизу: клик по событию — перейти к месту. M — слой миникарты (энергосеть, логистика, ПВО). Пробел — пауза, 1–5 — скорость, F1 — справка. Погода меняется: в туман видят только РЛС.', 'grid'],
+    ];
+    let i = 0;
+    const box = $('tut');
+    const show = () => {
+      const [h, t, tab] = steps[i];
+      $('tut-h').textContent = h; $('tut-t').textContent = t; $('tut-n').textContent = `${i + 1} из ${steps.length}`;
+      $('tut-next').textContent = i === steps.length - 1 ? 'Понятно' : 'Далее';
+      this.state.tab = tab; this.state.folded = false; this.fold(); this.build();
+      box.classList.add('show');
+    };
+    const end = () => { box.classList.remove('show'); try { localStorage.setItem('dw-tut', '1'); } catch { /* ignore */ } };
+    $('tut-next').onclick = () => { if (++i >= steps.length) end(); else show(); };
+    $('tut-skip').onclick = end;
+    show();
+  }
   // ------------------------------------------------ Панель
   build() {
     for (const t of document.querySelectorAll('[data-dwtab]')) t.classList.toggle('active', t.dataset.dwtab === this.state.tab);
@@ -242,7 +273,7 @@ export class DWUI {
       const P = g.res.side[side];
       const bar = (k) => `<div class="bar"><i style="width:${(100 * Math.max(0, Math.min(1, k))).toFixed(0)}%"></i></div>`;
       let ph = `<div class="dw-income">Сборка: <b>${P.rate.toFixed(1)}</b> линий${P.rate < 1 ? ' <span class="bad">— завод выбит, идут только поставки партнёров</span>' : ''} · в очереди ${P.queue.reduce((a, q) => a + q.n, 0)}</div>`;
-      ph += P.queue.slice(0, 6).map((q, i) => `<div class="dw-crew">${esc(DW_DRONES[q.k].short)} ×${q.n}${i === 0 ? bar(P.prog / droneWork(q.k)) : ''}<button class="dw-x" data-cancel="${i}" title="отменить (деньги за несобранные вернут)">✕</button></div>`).join('');
+      ph += P.queue.slice(0, 6).map((q, i) => `<div class="dw-crew">${esc(DW_DRONES[q.k].short)} ×${q.n}${i === 0 ? bar(P.prog / droneWork(q.k)) : ''}<button class="dw-x" data-cancel="${i}" title="отменить (деньги за несобранные вернут)">${icon('close')}</button></div>`).join('');
       $('dw-prod').innerHTML = ph;
       for (const el of document.querySelectorAll('[data-stock]')) { const n = g.res.stock(side, el.dataset.stock); el.textContent = n; el.classList.toggle('zero', !n); }
     } else if (this.state.tab === 'repair') {
@@ -264,7 +295,7 @@ export class DWUI {
         const inQ = S.queue.includes(c.id);
         const name = c.pylons ? `ЛЭП ${c.kv} кВ` : `${c.name}`;
         const where = c.pylons ? '' : ` · ${c.obj.name}`;
-        const fe = c.fire > 0 ? (c.fireEngine ? ' · 🔥 тушат пожарные' : ' · 🔥 горит, пожарные в пути/нет машин') : '';
+        const fe = c.fire > 0 ? (c.fireEngine ? ' · тушат пожарные' : ' · горит, пожарные в пути/нет машин') : '';
         const st = crew ? `бригада №${crew.id}: ${CREW_ST[crew.job.state] || ''}` : inQ ? (c.blockedUntil > this.sim.time ? 'нет проезда (мост)' : c.waitFunds ? `ждёт денег на оборудование (${c.waitFunds})` : 'в очереди — ждёт свободную бригаду') : '';
         const k = g.repairCost(side, c);
         return `<div class="dw-row small"><div><b class="${c.pylons ? 'warn' : ST_CLS[c.state]}">${esc(name)}</b><small>${esc(where)}${fe}${st ? ' · ' + esc(st) : ''}</small></div>${crew || inQ ? `<span class="muted">${k || ''}</span>` : `<button data-repair="${c.id}">${k ? 'Ремонт ' + k : 'Ремонт'}</button>`}</div>`;
@@ -370,7 +401,7 @@ export class DWUI {
     const bld = g.objects.filter((o) => o.side === side && o.build);
     const unplugged = g.objs(side).filter((o) => g.econ.needsGrid(o) && !o.grid && !o.build);
     let h = '';
-    if (bld.length || unplugged.length) h += `<div class="dw-sub">Идёт стройка</div>` + bld.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — ${o.build.grid ? '<span class="bad">готов, ждёт подключения к сети</span>' : o.build.up ? `реконструкция до ${(o.level || 1) + 1}-го ур.` : `строится, ещё ${rmin(this.sim, o.build.until - this.sim.time)} мин`}${o.build.grid ? ` <button data-grid="${o.id}">⚡ Подключить</button>` : ''}<div class="bar"><i style="width:${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%"></i></div></div>`).join('') + unplugged.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — <span class="bad">не подключён</span> <button data-grid="${o.id}">⚡ Подключить</button></div>`).join('');
+    if (bld.length || unplugged.length) h += `<div class="dw-sub">Идёт стройка</div>` + bld.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — ${o.build.grid ? '<span class="bad">готов, ждёт подключения к сети</span>' : o.build.up ? `реконструкция до ${(o.level || 1) + 1}-го ур.` : `строится, ещё ${rmin(this.sim, o.build.until - this.sim.time)} мин`}${o.build.grid ? ` <button data-grid="${o.id}">${icon('plug')} Подключить</button>` : ''}<div class="bar"><i style="width:${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%"></i></div></div>`).join('') + unplugged.map((o) => `<div class="dw-crew" data-obj="${o.id}">${esc(o.name)} — <span class="bad">не подключён</span> <button data-grid="${o.id}">${icon('plug')} Подключить</button></div>`).join('');
     h += `<label class="dw-check"><input type="checkbox" data-act="flows" ${this.state.showFlows ? 'checked' : ''}> Слой потоков на карте: зерно, топливо, товары</label>`;
     setHTML($('dw-econ'), h);
   }
@@ -382,7 +413,7 @@ export class DWUI {
     const fire = o.comps.some((c) => c.fire > 0);
     const st = o.kind === 'bridge' ? (this.g.bridgeCap(o) === 0 ? 'destroyed' : bad ? 'damaged' : 'ok') : bad === 0 ? 'ok' : o.comps.filter((c) => c.state === 'destroyed').length > o.comps.length / 2 ? 'destroyed' : 'damaged';
     const extra = o.kind === 'ps110' && o.side === this.side ? ` · ${((o.supply ?? 1) * 100).toFixed(0)}%` : '';
-    return `<div class="dw-row small${this.state.selObj === o.id ? ' sel' : ''}" data-obj="${o.id}"><div><b class="${ST_CLS[st]}">${esc(o.kind === 'bridge' ? o.name.replace(/^Мост через /, 'Мост ') : o.name)}</b><small>${this.kindName(o)}${bad ? ` · неисправно ${bad}/${o.comps.length}` : ''}${extra}${fire ? ' · 🔥' : ''}</small></div></div>`;
+    return `<div class="dw-row small${this.state.selObj === o.id ? ' sel' : ''}" data-obj="${o.id}"><div><b class="${ST_CLS[st]}">${esc(o.kind === 'bridge' ? o.name.replace(/^Мост через /, 'Мост ') : o.name)}</b><small>${this.kindName(o)}${bad ? ` · неисправно ${bad}/${o.comps.length}` : ''}${extra}${fire ? ' · ' + icon('alert') : ''}</small></div></div>`;
   }
 
   // ------------------------------------------------ Карточка
@@ -396,11 +427,11 @@ export class DWUI {
     if (v && !o && !a) {
       const own = v.side === side;
       const what = { import: 'везёт товар в распредцентр (пошлина при доставке)', export: 'везёт экспорт на границу (выручка на погранпереходе)', deliver: v.kind === 'tanker' ? 'везёт топливо на АЗС' : 'развозит товар по магазинам', resupply: 'везёт боеприпасы на позицию ПВО', repair: 'ремонтная бригада', fire: 'выезд на пожар' }[v.task.type] || '';
-      el.innerHTML = `<button class="dw-close" data-act="close">✕</button><div class="dw-title">${esc(VEH[v.kind].name)}</div><div class="dw-subt">${own ? 'ваш транспорт' : 'транспорт противника (обнаружен разведкой)'} · ${v.dead ? 'уничтожен' : v.state === 'back' && v.task.type !== 'export' ? 'возвращается' : v.state === 'work' ? 'на месте работ' : what}</div>${!own && !v.dead && (v.kind === 'fura' || v.kind === 'supply' || v.kind === 'tanker') ? '<div class="dw-note">Цель для барражирующих боеприпасов: выберите «Ланцет»/Warmate на вкладке «Удары» и кликните по машине.</div>' : ''}`;
+      el.innerHTML = `<button class="dw-close" data-act="close">${icon('close')}</button><div class="dw-title">${esc(VEH[v.kind].name)}</div><div class="dw-subt">${own ? 'ваш транспорт' : 'транспорт противника (обнаружен разведкой)'} · ${v.dead ? 'уничтожен' : v.state === 'back' && v.task.type !== 'export' ? 'возвращается' : v.state === 'work' ? 'на месте работ' : what}</div>${!own && !v.dead && (v.kind === 'fura' || v.kind === 'supply' || v.kind === 'tanker') ? '<div class="dw-note">Цель для барражирующих боеприпасов: выберите «Ланцет»/Warmate на вкладке «Удары» и кликните по машине.</div>' : ''}`;
       el.classList.add('show');
       return;
     }
-    let h = '<button class="dw-close" data-act="close">✕</button>';
+    let h = `<button class="dw-close" data-act="close">${icon('close')}</button>`;
     if (o) {
       const own = o.side === side;
       const stockInfo = o.stock !== undefined && own ? ` · товара ${o.stock}${o.cut ? ' · <span class="bad">отрезан: нет проезда</span>' : ''}` : o.engines !== undefined && own ? ` · свободных машин ${o.engines}` : '';
@@ -413,7 +444,7 @@ export class DWUI {
         if (o.idle) e += ` · <span class="warn">простой: ${esc(o.idle)}</span>`;
         if (o.kind === 'factory' && !o.build) e += ` <button data-act="evac" data-id="${o.id}" title="вывезти оборудование вглубь тыла (не ближе 14 км к фронту): 300 оч., 10 мин без производства">Эвакуировать в тыл</button>`;
         if (o.kind === 'pontoon') e += ` · ${g.obj(o.bridge) && g.bridgeCap(g.obj(o.bridge)) === 0.4 ? 'машины идут по понтонам' : 'в резерве: мост цел'}`;
-        if (g.econ.needsGrid(o) && !o.grid) { const q = g.econ.gridCheck(side, o.id); e += ` · <span class="bad">не подключён к сети</span> ` + (q.err ? `<span class="warn">${esc(q.err)}</span>` : `<button data-grid="${o.id}" title="протянуть ${q.f.kv === 110 ? 'ЛЭП 110 кВ к ближайшей подстанции' : 'отпайку 10 кВ от ближайшей ТП или подстанции'} (${(q.f.L / 1000).toFixed(1)} км)">⚡ Подключить к сети — ${q.cost}</button>`); }
+        if (g.econ.needsGrid(o) && !o.grid) { const q = g.econ.gridCheck(side, o.id); e += ` · <span class="bad">не подключён к сети</span> ` + (q.err ? `<span class="warn">${esc(q.err)}</span>` : `<button data-grid="${o.id}" title="протянуть ${q.f.kv === 110 ? 'ЛЭП 110 кВ к ближайшей подстанции' : 'отпайку 10 кВ от ближайшей ТП или подстанции'} (${(q.f.L / 1000).toFixed(1)} км)">${icon('plug')} Подключить к сети — ${q.cost}</button>`); }
         if (o.build?.grid) e += ` · <span class="warn">построен, ждёт подключения</span>`;
         else if (o.build) e += ` · <span class="warn">${o.build.up ? 'реконструкция' : 'строится'}: ${(100 * (1 - (o.build.until - this.sim.time) / o.build.total)).toFixed(0)}%</span>`;
         else if (BUILD[o.kind] && lv < 3) e += ` <button data-upg="${o.id}" title="реконструкция: больше выручки и вместимости">Реконструкция до ${lv + 1} ур. — ${upgradeCost(o)}</button>`;
@@ -428,7 +459,7 @@ export class DWUI {
           if (c.state !== 'ok') { const k = g.repairCost(side, c); btns += inQ ? '<span class="muted">в ремонте</span>' : `<button data-repair="${c.id}" title="${k ? 'оборудование взамен уничтоженного' : 'бригады на зарплате — бесплатно'}">Ремонт${k ? ' ' + k : ''}</button>`; }
           else if ((C.shelter || C.net) && shelterDef(c, c.shelter + 1)) { const L = c.shelter + 1, Sd = shelterDef(c, L); btns += this.S.queue.includes('S' + c.id) || this.S.crews.some((w) => w.job?.shelter && w.job.id === c.id) ? `<span class="muted">${C.net ? 'ставят сетку' : 'строится укрытие'}</span>` : `<button data-shelter="${c.id}" data-level="${L}" title="${esc(Sd.name)}">${C.net ? 'Сетка' : L === 1 ? 'Габионы' : 'Бетон'} ${Sd.cost}</button>`; }
         } else if (c.state === 'ok' && !CIVIL.has(o.kind)) btns += `<button data-target="${c.id}">Цель</button>`;
-        h += `<div class="dw-comp"><span class="dot ${ST_CLS[c.state]}"></span><span class="nm">${esc(c.name)}${c.shelter ? ` <small>[${C.net ? 'сетка' : c.shelter === 1 ? 'габионы' : 'бетон'}]</small>` : ''}${c.fire > 0 ? ' 🔥' : ''}</span><span class="hp"><i style="width:${(c.hp * 100).toFixed(0)}%"></i></span><span class="st">${ST_TEXT[c.state]}</span>${btns}</div>`;
+        h += `<div class="dw-comp"><span class="dot ${ST_CLS[c.state]}"></span><span class="nm">${esc(c.name)}${c.shelter ? ` <small>[${C.net ? 'сетка' : c.shelter === 1 ? 'габионы' : 'бетон'}]</small>` : ''}${c.fire > 0 ? ' ' + icon('alert') : ''}</span><span class="hp"><i style="width:${(c.hp * 100).toFixed(0)}%"></i></span><span class="st">${ST_TEXT[c.state]}</span>${btns}</div>`;
       }
       h += '</div>';
       if (!own) h += `<div class="dw-note">Выберите на вкладке «Удары» тип дронов и кликните по узлу — или нажмите «Цель» у узла.</div>`;
@@ -437,7 +468,7 @@ export class DWUI {
       const own = a.side === side;
       h += `<div class="dw-title">${esc(a.name)}</div><div class="dw-subt">${esc(T.sub[a.side])} · ${a.dead ? 'уничтожен' : a.state === 'deploying' ? 'развёртывание' : a.state === 'moving' ? 'на марше' : 'готов'}${own ? '' : ' · обнаружен разведкой'}</div>`;
       if (own) {
-        h += `<div class="dw-note">${esc(T.desc)}</div><div class="dw-stats">Дальность ${(T.range / 1000).toFixed(1)} км${T.radar ? ` · РЛС ${(T.radar / 1000).toFixed(0)} км` : ''}${a.missiles ? ` · ракет ${a.missiles}` : ''}${T.ammo ? ` · боезапас ${Math.round(a.ammo)}` : ''}${a.type === 'icpt' ? ` · перехватчиков ${a.stock}` : ''} · сбито ${a.kills || 0}${a.supplyComing ? ' · <b>боеприпасы в пути</b>' : a.supplyCut && g.sim.time - a.supplyCut < 90 ? ' · <span class="bad">нет подъезда для снабжения — переставьте ближе к дороге</span>' : ''}</div>`;
+        h += `<div class="dw-note">${esc(T.desc)}</div><div class="dw-stats">Дальность ${(T.range / 1000).toFixed(1)} км${T.radar ? ` · РЛС ${(T.radar / 1000).toFixed(0)} км` : ''}${a.missiles ? ` · ракет ${a.missiles}` : ''}${T.ammo ? ` · боезапас ${Math.round(a.ammo)}` : ''}${a.type === 'icpt' ? ` · перехватчиков ${a.stock}` : ''} · сбито ${a.kills || 0}${['mog', 'spaag', 'icpt'].includes(a.type) ? (g.linked(a) ? ' · наводка РЛС: есть' : ' · <span class="warn">нет связи с РЛС — огонь без наводки</span>') : ''}${a.supplyComing ? ' · <b>боеприпасы в пути</b>' : a.supplyCut && g.sim.time - a.supplyCut < 90 ? ' · <span class="bad">нет подъезда для снабжения — переставьте ближе к дороге</span>' : ''}</div>`;
         if (a.type === 'sam') h += `<div class="dw-btns"><button data-roe="all" class="${a.roe === 'all' ? 'sel' : ''}">Огонь по всем целям</button><button data-roe="threat" class="${a.roe !== 'all' ? 'sel' : ''}">Беречь ракеты (только угрозы)</button></div>`;
         if (T.mobile) h += `<div class="dw-note">ПКМ по карте — переместить (${kmh(T.mobile)} км/ч, потом развёртывание).</div>`;
       } else h += `<div class="dw-note">Цель для барражирующих боеприпасов: выберите «${this.side === 'red' ? 'Ланцет-3' : 'Warmate'}» на вкладке «Удары» и кликните по позиции.</div>`;

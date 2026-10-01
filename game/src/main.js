@@ -23,7 +23,7 @@ import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, a
 import { DWUI } from './dwui.js';
 import { drawDW, drawDWPreview } from './render/dwdraw.js';
 import { drawWeatherLayer } from './render/dwextra.js';
-import { WX } from './sim/dronewar.js';
+import { WX, DW_AD as DW_AD_REF } from './sim/dronewar.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -63,7 +63,9 @@ const menu = {
   side: 'blue', mode: 'zones', role: 'defend', startHour: 5, fog: true, difficulty: 'normal', duration: 3600, prep: 300,
   seed: Number(params.get('seed')) || Math.floor(Math.random() * 1e6), tab: 'single',
   map: params.get('seed') ? 'random' : 'main', // «Война дронов»: основная выверенная карта или случайная
+  gfx: (() => { try { return params.get('gfx') || localStorage.getItem('gfx') || 'high'; } catch { return 'high'; } })(),
 };
+window.GFX = menu.gfx;
 
 function buildMenu() {
   const f = $('factions');
@@ -114,6 +116,10 @@ function buildMenu() {
   opts('opt-prep', 'Подготовка', preps, 'prep');
   $('opt-map').style.display = menu.mode === 'drones' ? 'flex' : 'none';
   opts('opt-map', 'Карта', [['main', 'Основная (выверенная)'], ['random', 'Случайная']], 'map');
+  // Графика: «экономная» — без людей, пыли, фар, погоды на экране, травяной микротекстуры и огней окон
+  opts('opt-gfx', 'Графика', [['high', 'Высокая'], ['low', 'Экономная (слабый ПК)']], 'gfx');
+  try { localStorage.setItem('gfx', menu.gfx); } catch { /* ignore */ }
+  window.GFX = menu.gfx;
   const fixed = menu.mode === 'drones' && menu.map === 'main';
   $('opt-seed').value = fixed ? MAIN_SEED : menu.seed;
   $('opt-seed').disabled = fixed;
@@ -225,6 +231,9 @@ function startGame(c) {
       // в «Войне дронов» окопов и планировок зданий нет
       for (const id of ['btn-forts', 'btn-interior']) { const b = $(id); if (b) b.style.display = 'none'; }
       dwui = new DWUI({ sim, side: controlSide, issue, log, focus: (x, y, zm) => focus(x, y, zm * dpr), screenToWorld, view });
+      if (role !== 'guest') setTimeout(() => dwui.tutorial(), 1500);
+      if (window.GFX === 'low') chunks.worldEvent({ k: 'gfx', low: true });
+      $('mini-layer').onclick = cycleMiniLayer;
       $('prep-text').innerHTML = 'Разверните ПВО: мобильные группы, РЛС, РЭБ, посты. Удары дронами — после окончания развёртывания.';
       log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
       log('Защищайте ТЭС, подстанции, мосты и склады; ремонтируйте их. Проиграет тот, чья энергосистема рухнет без денег на восстановление.');
@@ -592,6 +601,9 @@ addEventListener('keydown', (e) => {
     selectionChanged();
     return;
   }
+  // Shift+1…7 — вкладки меню «Войны дронов»; M — слой миникарты
+  if (dwui && e.shiftKey && /^Digit[1-7]$/.test(c)) { dwui.tabByIndex(+c.slice(5) - 1); return; }
+  if (dwui && c === 'KeyM') { cycleMiniLayer(); return; }
   const speedKeys = { Digit1: 0.5, Digit2: 1, Digit3: 2, Digit4: 4, ...(dwui ? { Digit5: 8 } : {}) };
   if (speedKeys[c]) { requestSpeed(speedKeys[c]); return; }
   if (c === 'KeyL') toggleLabels();
@@ -1074,12 +1086,23 @@ $('roster-toggle').onclick = () => {
 };
 
 // ================= Журнал =================
+// Место события: объект или позиция ПВО, чьё имя упомянуто в сообщении (самое длинное совпадение)
+function eventPlace(text) {
+  const g = sim?.game;
+  if (!g || g.mode !== 'drones') return null;
+  let best = null, bl = 0;
+  for (const o of g.objects) if (o.name && o.name.length > bl && text.includes(o.name) && (o.side === controlSide || g.known(controlSide, o))) { best = o; bl = o.name.length; }
+  for (const a of g.ad) if (a.side === controlSide && a.name.length > bl && text.includes(a.name)) { best = a; bl = a.name.length; }
+  return best ? [best.x, best.y] : null;
+}
 function log(text) {
   const box = $('log');
   const ev = document.createElement('div');
-  ev.className = 'ev' + (/убит|уничтож|обруш|погиб|умер|тяжело ранен|обесточ/.test(text) ? ' loss' : '');
+  ev.className = 'ev' + (/убит|уничтож|обруш|погиб|умер|тяжело ранен|обесточ|Перебита|Потеряна/.test(text) ? ' loss' : '');
   ev.innerHTML = `<time>${sim ? fmtClock(sim.tod()) : ''}</time><span></span>`;
   ev.querySelector('span').textContent = text;
+  const at = eventPlace(text);
+  if (at) { ev.classList.add('go'); ev.title = 'Показать на карте'; ev.onclick = () => { cam.x = at[0]; cam.y = at[1]; cam.zoom = Math.max(cam.zoom, 0.4 * dpr); clampCam(); }; }
   box.prepend(ev);
   while (box.children.length > 9) box.lastChild.remove();
   [...box.children].forEach((c, i) => c.classList.toggle('old', i > 3));
@@ -1237,9 +1260,28 @@ function showEnd() {
   if (g.mode === 'drones') {
     const r2 = (side) => { const S = g.sides[side]; return `<tr><td style="color:${FACTIONS[side].fill}">${FACTIONS[side].short}</td><td>устойчивость тыла ${Math.round(S.morale ?? 0)}</td><td>пущено ${S.stats.launched}, попаданий ${S.stats.hits}</td><td>сбито чужих ${S.stats.shot}</td><td>ремонтов ${S.stats.repairs}, потеряно ПВО ${S.stats.lostAD}</td></tr>`; };
     $('end-stats').innerHTML = r2('blue') + r2('red');
+    drawEndChart(g);
   } else $('end-stats').innerHTML = row('blue') + row('red');
   $('end-screen').classList.add('show');
   paused = true;
+}
+
+// Графики партии на итоговом экране: устойчивость тыла и доля света по времени (обе стороны)
+function drawEndChart(g) {
+  const cv = $('end-chart'); if (!cv || !g.state) return;
+  const H = { blue: g.state.side.blue.hist, red: g.state.side.red.hist };
+  const n = Math.max(H.blue.length, H.red.length);
+  cv.style.display = n > 1 ? 'block' : 'none';
+  if (n < 2) return;
+  const c = cv.getContext('2d'), W = (cv.width = 520), Ht = (cv.height = 170);
+  c.fillStyle = 'rgba(255,255,255,0.04)'; c.fillRect(0, 0, W, Ht);
+  c.strokeStyle = 'rgba(255,255,255,0.12)'; c.lineWidth = 1;
+  for (const v of [25, 50, 75]) { const y = 10 + (1 - v / 100) * (Ht - 30); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 6, y); c.stroke(); }
+  c.fillStyle = 'rgba(230,230,220,0.6)'; c.font = '11px sans-serif'; c.fillText('100', 4, 14); c.fillText('0', 14, Ht - 18);
+  const plot = (arr, k, col, dash) => { c.strokeStyle = col; c.lineWidth = 2; c.setLineDash(dash); c.beginPath(); arr.forEach((q, i) => { const x = 30 + (i / (n - 1)) * (W - 36), y = 10 + (1 - q[k] / 100) * (Ht - 30); if (i) c.lineTo(x, y); else c.moveTo(x, y); }); c.stroke(); c.setLineDash([]); };
+  plot(H.blue, 1, FACTIONS.blue.fill, []); plot(H.red, 1, FACTIONS.red.fill, []);
+  plot(H.blue, 2, FACTIONS.blue.fill, [4, 4]); plot(H.red, 2, FACTIONS.red.fill, [4, 4]);
+  c.fillStyle = 'rgba(230,230,220,0.8)'; c.fillText('сплошная — устойчивость тыла, пунктир — свет, %', 34, Ht - 4);
 }
 
 // ================= Миникарта =================
@@ -1257,6 +1299,13 @@ mini.addEventListener('pointerdown', (e) => {
   mini.onpointerup = () => (mini.onpointermove = null);
 });
 
+const MINI_LAYERS = ['all', 'grid', 'logi', 'ad'], MINI_NAMES = { all: 'Все', grid: 'Энергосеть', logi: 'Логистика', ad: 'ПВО' };
+let miniLayer = 0;
+function cycleMiniLayer() {
+  miniLayer = (miniLayer + 1) % MINI_LAYERS.length;
+  const b = $('mini-layer'); if (b) b.textContent = MINI_NAMES[MINI_LAYERS[miniLayer]];
+  drawMinimap();
+}
 function drawMinimap() {
   const miniScale = mini.width / world.W;
   mctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1288,7 +1337,25 @@ function drawMinimap() {
     mctx.beginPath(); mctx.arc(z.x * miniScale, z.y * miniScale, Math.max(4, z.r * miniScale), 0, Math.PI * 2); mctx.stroke();
   }
   if (dwui) {
-    const g = sim.game;
+    const g = sim.game, layer = MINI_LAYERS[miniLayer];
+    if (layer === 'grid') {
+      // энергосеть: ЛЭП (перебитые — красным), подстанции по питанию района
+      for (const l of g.lines) {
+        if (!l.pylons || (l.side !== controlSide && !g.known(controlSide, g.obj(l.a) || {}))) continue;
+        mctx.strokeStyle = l.cut ? '#ef5a4a' : l.kv >= 330 ? '#ffd36b' : '#9fd0ff'; mctx.lineWidth = l.kv >= 330 ? 1.6 : 1;
+        mctx.beginPath(); l.pylons.forEach((p, i) => (i ? mctx.lineTo(p.x * miniScale, p.y * miniScale) : mctx.moveTo(p.x * miniScale, p.y * miniScale))); mctx.stroke();
+      }
+    } else if (layer === 'logi') {
+      for (const v of g.visibleVehicles(controlSide)) { if (v.dead) continue; mctx.fillStyle = v.side === controlSide ? '#e8e2cc' : '#ff7d72'; mctx.fillRect(v.x * miniScale - 1.5, v.y * miniScale - 1.5, 3, 3); }
+      for (const h of g.roadHoles || []) { mctx.fillStyle = '#e0b030'; mctx.fillRect(h.x * miniScale - 2, h.y * miniScale - 2, 4, 4); }
+    } else if (layer === 'ad') {
+      for (const a of g.visibleAD(controlSide)) {
+        if (a.dead) continue; const T = DW_AD_REF[a.type], R = Math.max(T.range || 0, T.radar || 0);
+        if (!R) continue;
+        mctx.strokeStyle = a.side === controlSide ? 'rgba(140,200,255,0.6)' : 'rgba(255,140,120,0.6)'; mctx.lineWidth = 1;
+        mctx.beginPath(); mctx.arc(a.x * miniScale, a.y * miniScale, R * miniScale, 0, Math.PI * 2); mctx.stroke();
+      }
+    }
     mctx.strokeStyle = 'rgba(255,90,70,0.6)'; mctx.lineWidth = 1;
     mctx.beginPath(); mctx.moveTo(g.frontX * miniScale, 0); mctx.lineTo(g.frontX * miniScale, mini.height); mctx.stroke();
     for (const o of g.objects) {
@@ -1563,7 +1630,7 @@ function frameBody(now) {
     drawDWPreview(ctx, sim, view, controlSide, dwui.state, mouse ? screenToWorld(mouse[0], mouse[1]) : null);
     drawDW(ctx, sim, view, controlSide, dwui.state);
     drawArtillery(ctx, sim, view);
-    drawWeatherLayer(ctx, sim.game, view, performance.now(), sim.time);
+    if (window.GFX !== 'low') drawWeatherLayer(ctx, sim.game, view, performance.now(), sim.time);
     drawLabels();
     uiTimer += dtReal;
     if (uiTimer > 0.25) {

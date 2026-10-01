@@ -123,6 +123,13 @@
     #log .ev time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
     #log .ev.loss { color: #ffb0a6; }
     #log .ev.old { opacity: 0.55; }
+    #log .ev.go { cursor: pointer; } #log .ev.go:hover span { text-decoration: underline; }
+    #log { pointer-events: auto; }
+    #mini-layer { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 2px 7px; opacity: 0.85; }
+    body:not(.dw) .dw-only { display: none; }
+    #tut { position: absolute; left: 50%; top: 72px; transform: translateX(-50%); width: min(520px, 90vw); z-index: 30; padding: 14px 16px; display: none; }
+    #tut.show { display: block; } #tut h4 { margin: 0 0 6px; font: 700 17px 'PT Sans Narrow', sans-serif; color: var(--accent-2); }
+    #tut .row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; gap: 8px; } #tut .n { color: var(--muted); font-size: 12px; }
 
     #mapbox { right: 10px; bottom: 10px; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
     #minimap { width: 300px; height: auto; border-radius: 6px; cursor: pointer; display: block; }
@@ -439,6 +446,7 @@
 
   <div id="mapbox" class="panel">
     <canvas id="minimap"></canvas>
+    <button id="mini-layer" class="dw-only" title="Слой миникарты (M): все / энергосеть / логистика / ПВО">Все</button>
     <div class="mapinfo">
       <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
       <span id="coords">—</span>
@@ -472,6 +480,7 @@
           <div class="opt-row" id="opt-dur"></div>
           <div class="opt-row" id="opt-prep"></div>
           <div class="opt-row" id="opt-map"></div>
+          <div class="opt-row" id="opt-gfx"></div>
           <div class="opt-row"><span>Карта (seed)</span><input class="txt" id="opt-seed" /><button id="seed-rnd">Случайная</button></div>
         </div>
         <div class="mcard" id="mp-card" style="grid-column: 1 / -1; display:none">
@@ -493,8 +502,10 @@
     <h2 id="end-title"></h2>
     <div id="end-reason" style="color:var(--muted)"></div>
     <table id="end-stats"></table>
+    <canvas id="end-chart" style="display:none;margin:0 auto 12px;border-radius:6px"></canvas>
     <button class="big" id="end-menu">В главное меню</button>
   </div></div>
+  <div id="tut" class="panel"><h4 id="tut-h"></h4><div id="tut-t"></div><div class="row"><span class="n" id="tut-n"></span><span><button id="tut-skip">Пропустить</button> <button id="tut-next">Далее</button></span></div></div>
   <div id="hint"></div>
   <div id="loading" class="panel">Прорисовка местности…</div>
 

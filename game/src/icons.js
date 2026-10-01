@@ -66,6 +66,7 @@ const P = {
   check: 'M4 12l5 5L20 6',
   plug: 'M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0zM12 17v5',
   alert: 'M12 3l10 18H2zM12 10v5M12 18v.1',
+  close: 'M6 6l12 12M18 6L6 18',
   info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v6M12 7.5v.1',
 };
 

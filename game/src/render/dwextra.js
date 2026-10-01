@@ -230,6 +230,7 @@ function drawWeather(ctx, g, view, toS, now, t) {
 export function drawExtras(ctx, g, sim, view, side, toS, inView, now, t, night, fireFn) {
   const { cam, dpr } = view, z = cam.zoom;
   drawTrains(ctx, g, toS, inView, z, dpr, t);
+  if (typeof window !== 'undefined' && window.GFX === 'low') { drawFieldFires(ctx, g, toS, inView, z, dpr, now, fireFn); drawBypass(ctx, g, toS, inView, z, dpr); return; }
   const vehicles = [...g.visibleVehicles(side).filter((v) => !v.wreck), ...(g._traffic?.cars || []).filter((c) => !c.gone)];
   drawDust(ctx, g, vehicles, toS, inView, z, dpr, now, g.world.season);
   drawPeople(ctx, g, toS, inView, z, dpr, t, 1 - night);
