@@ -656,6 +656,8 @@ export class DWUI {
       const kind = mode.slice(6);
       const s = g.econ.siteFor(side, kind, x, y);
       if (s.err) { this.log(`${BUILD[kind].name}: ${s.err}`); return true; }
+      const fc = g.econ.fullCost(side, kind, s);
+      if (this.S.points < fc.cost) { this.log(`${BUILD[kind].name}: не хватает очков — нужно ${fc.cost}${fc.plan?.km ? ` (с ЛЭП ${fc.plan.km.toFixed(0)} км)` : ''}, есть ${Math.floor(this.S.points)}`); return true; }
       this.issue('dw', 'buildCivil', side, kind, x, y);
       if (!shift) { this.state.mode = null; this.build(); }
       return true;
@@ -759,7 +761,9 @@ export class DWUI {
     }
     if (mode?.startsWith('build:')) {
       const kind = mode.slice(6), s = g.econ.siteFor(side, kind, x, y);
-      return s.err ? `<span style="color:var(--bad)">${esc(s.err)}</span>` : `ЛКМ — построить <b>${esc(BUILD[kind].name)}</b> (${BUILD[kind].cost} оч., ${Math.round(BUILD[kind].time / 60)} мин). Shift — несколько. ПКМ — отмена`;
+      if (s.err) return `<span style="color:var(--bad)">${esc(s.err)}</span>`;
+      const fc = g.econ.fullCost(side, kind, s), pl = fc.plan, poor = this.S.points < fc.cost;
+      return `${poor ? '<span style="color:var(--bad)">не хватает очков — ' : 'ЛКМ — построить '}<b>${esc(BUILD[kind].name)}</b> (${fc.cost} оч.${poor ? `, есть ${Math.floor(this.S.points)}` : ''}, ${Math.round((BUILD[kind].time + (pl?.time || 0)) / 60)} мин${pl?.km ? ` · с ЛЭП ${pl.km.toFixed(0)} км` : ''}${s.access ? ` · подъезд ${(s.access / 1000).toFixed(1)} км` : ''})${poor ? '</span>' : ''}. Shift — несколько. ПКМ — отмена`;
     }
     if (mode === 'pave') { const q = g.infra.roadAt(side, x, y); return q.err ? `<span style="color:var(--bad)">${esc(q.err)}</span>` : `ЛКМ — асфальтировать ${(q.len / 1000).toFixed(1)} км (${q.cost} оч., 3 мин). ПКМ — отмена`; }
     if (mode?.startsWith('line') || mode?.startsWith('cable')) {

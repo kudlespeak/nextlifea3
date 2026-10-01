@@ -132,6 +132,26 @@ export class DWRoads {
     }
     return -1;
   }
+  // Новая грунтовка (подъезд к дальней стройке): узлы по линии, конец — к ближайшему узлу сети
+  addLine(line, w = 4) {
+    const pts = resample(line, STEP), ids = [];
+    let prev = -1;
+    for (const [x, y] of pts) {
+      const id = this.x.length;
+      this.x.push(x); this.y.push(y); this.adj.push([]); this.br.push(0); this.w.push(w);
+      this.bin(x, y).push(id);
+      if (prev >= 0) this.link(prev, id);
+      prev = id; ids.push(id);
+    }
+    for (const e of [ids[0], ids[ids.length - 1]]) {
+      let best = -1, bd = 90;
+      for (const j of this.near(this.x[e], this.y[e], 90)) { if (ids.includes(j)) continue; const d = Math.hypot(this.x[j] - this.x[e], this.y[j] - this.y[e]); if (d < bd) { bd = d; best = j; } }
+      if (best >= 0) this.link(e, best);
+    }
+    const n = this.x.length;
+    this.g = new Float64Array(n); this.par = new Int32Array(n); this.seen = new Uint32Array(n); this.stamp = 0;
+    this.components();
+  }
   link(a, b) {
     const d = Math.hypot(this.x[a] - this.x[b], this.y[a] - this.y[b]);
     this.adj[a].push([b, d]); this.adj[b].push([a, d]);

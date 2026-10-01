@@ -314,22 +314,25 @@ export class DWInfra {
   }
   // Подстанция достроена: заходы ЛЭП строятся вместе с ней (входят в смету), район перераспределяется
   // План заходов ЛЭП новой подстанции в точке (x, y): к кому и какого напряжения, длина и цена
-  substationPlan(side, kind, x, y, self = null) {
+  substationPlan(side, kind, x, y, self = null, compact = false) {
     const g = this.g;
     const live = (k) => g.objs(side, k).filter((q) => q !== self && !(q.build && !q.build.up));
     const near = (list) => list.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
     const p110 = near(live('ps110')), links = [];
+    const d = (q) => Math.hypot(q.x - x, q.y - y);
     if (kind === 'ps110' && p110[0]) {
       links.push({ b: p110[0], kv: 110 });
-      const hub = near(live('ps330')).find((q) => Math.hypot(q.x - x, q.y - y) < 30000) || p110[1];
-      if (hub) links.push({ b: hub, kv: 110 });
+      // вторая цепь (кольцо) — только если недалеко: к ПС 330 в 30 км или второй ПС 110 в 25 км
+      const hub = near(live('ps330')).find((q) => d(q) < 30000) || (p110[1] && d(p110[1]) < 25000 ? p110[1] : null);
+      if (hub && !compact) links.push({ b: hub, kv: 110 });
     } else if (kind === 'ps330') {
       const src = near([...live('ps330'), ...live('tpp'), ...live('hpp')])[0];
       if (src) links.push({ b: src, kv: 330 });
-      for (const q of p110.slice(0, 2)) links.push({ b: q, kv: 110 });
+      for (const q of p110.slice(0, 2)) if (d(q) < 30000 || q === p110[0]) links.push({ b: q, kv: 110 });
     } else if (kind === 'ps35' && p110[0]) links.push({ b: p110[0], kv: 35 });
+    // заходы ЛЭП к подстанции строит та же стройка — дешевле, чем отдельная линия игрока
     let km = 0, cost = 0;
-    for (const l of links) { l.km = Math.hypot(l.b.x - x, l.b.y - y) / 1000; km += l.km; cost += l.km * (l.kv >= 330 ? 40 : l.kv >= 110 ? LINE.perKm : 12); }
+    for (const l of links) { l.km = d(l.b) / 1000; km += l.km; cost += l.km * (l.kv >= 330 ? 14 : l.kv >= 110 ? 8 : 4); }
     return { links, p110, km, cost: Math.round(cost * (g.state?.k(side, 'build') ?? 1)), time: Math.round(km * 8) };
   }
   substationReady(o) {
@@ -345,7 +348,7 @@ export class DWInfra {
       this.sim.events.push({ type: 'forts', bbox: { x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 } });
       return b;
     };
-    const plan = this.substationPlan(side, o.kind, o.x, o.y, o), p110 = plan.p110;
+    const plan = this.substationPlan(side, o.kind, o.x, o.y, o, o.compact), p110 = plan.p110;
     for (const l of plan.links) link(l.b, l.kv);
     if (o.kind === 'ps110') {
       const donor = p110[0];

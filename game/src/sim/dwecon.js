@@ -112,6 +112,7 @@ const UPG = new Set(['jumper', 'workshop', 'store', 'fuel', 'market', 'mall', 'h
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
 
+const SUBST_KINDS = new Set(['ps330', 'ps110', 'ktpb', 'ps35', 'jumper', 'mobps']);
 const hashStr = (s) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; };
 const areaOf = (poly) => { let a = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; } return Math.abs(a) / 2; };
 
@@ -473,7 +474,7 @@ export class DWEconomy {
     const dist = (q) => Math.hypot(q.x - x, q.y - y);
     if (kind === 'ps110' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна действующая ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 110 кВ' };
     if (kind === 'ps110' && live('ps110').some((q) => dist(q) < 1200)) return { err: 'Слишком близко к другой ПС 110 кВ (нужно от 1,2 км)' };
-    if (kind === 'ktpb' && !live('ps110').some((q) => dist(q) < 15000)) return { err: 'КТПБ — в 15 км от действующей ПС 110 (забирает часть её района)' };
+    if (kind === 'ktpb' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна действующая ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 110 кВ' };
     if (kind === 'ktpb' && live('ps110').some((q) => dist(q) < 700)) return { err: 'Слишком близко к другой подстанции (нужно от 700 м)' };
     if (kind === 'ps35' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 35 кВ' };
     if (kind === 'ps330' && ![...live('ps330'), ...live('tpp'), ...live('hpp')].some((q) => dist(q) < 100000)) return { err: 'Нужна ТЭС, ГЭС или ПС 330 кВ не дальше 100 км — для захода 330 кВ' };
@@ -487,7 +488,8 @@ export class DWEconomy {
       const nx = -Math.sin(br.angle), ny = Math.cos(br.angle), off = 45;
       return { x: br.x + nx * off, y: br.y + ny * off, angle: br.angle, gate: [br.x, br.y], gateQ: 0, drive: null, lay: infraLayout('pontoon', (br.L || 80) + 30), L: (br.L || 80) + 30, bridge: br.id };
     }
-    const reach = kind === 'port' ? 800 : 400; // к причалу ведут подъездные пути подлиннее
+    // к причалу ведут подъездные пути подлиннее; к подстанциям в глубоком тылу — грунтовка до 12 км
+    const reach = kind === 'port' ? 800 : SUBST_KINDS.has(kind) ? 12000 : 400;
     const n = R.nearest(x, y, reach);
     if (n < 0) return { err: `Нужна дорога рядом (до ${reach} м)` };
     const nb = R.adj[n][0]?.[0] ?? n;
@@ -518,13 +520,38 @@ export class DWEconomy {
     // ворота — сторона к дороге
     const gq = side2 > 0 ? -Math.PI / 2 : Math.PI / 2;
     const gate = [x + Math.cos(ang + gq) * (lay.h / 2 + 8), y + Math.sin(ang + gq) * (lay.h / 2 + 8)];
-    const drive = [gate, [rx, ry]];
     const L = Math.hypot(rx - gate[0], ry - gate[1]);
-    for (let t = 10; t < L - 10; t += 10) {
-      const px = gate[0] + ((rx - gate[0]) * t) / L, py = gate[1] + ((ry - gate[1]) * t) / L;
-      if (W.mask.has(px, py, M.WATER | M.RAIL) || (W.mask.has(px, py, M.BUILD) && !pointInPoly(px, py, apron))) return { err: 'Подъезд к дороге перекрыт' };
+    const blocked = (p0, p1) => {
+      const l = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+      for (let t = 10; t < l - 10; t += 10) {
+        const px = p0[0] + ((p1[0] - p0[0]) * t) / l, py = p0[1] + ((p1[1] - p0[1]) * t) / l;
+        if (W.mask.has(px, py, M.WATER | (SUBST_KINDS.has(kind) ? 0 : M.RAIL)) || (W.mask.has(px, py, M.BUILD) && !pointInPoly(px, py, apron))) return true; // к подстанции — через ж/д переездом
+      }
+      return false;
+    };
+    let drive = [gate, [rx, ry]];
+    if (blocked(gate, [rx, ry])) {
+      // длинный подъезд к подстанции — объезд с изломом (в обход домов, ж/д и воды)
+      drive = null;
+      if (SUBST_KINDS.has(kind) && L > 300) {
+        const ux = (rx - gate[0]) / L, uy = (ry - gate[1]) / L;
+        for (const f of [0.35, 0.5, 0.65]) for (const off of [250, -250, 600, -600, 1200, -1200]) {
+          const m = [gate[0] + ux * L * f - uy * off, gate[1] + uy * L * f + ux * off];
+          if (!blocked(gate, m) && !blocked(m, [rx, ry])) { drive = [gate, m, [rx, ry]]; break; }
+        }
+        // ближайшая дорога за рекой или застройкой — пробуем другие дороги вокруг
+        if (!drive) {
+          const cand = R.near(x, y, Math.min(reach, L * 2 + 3000)).map((id) => [id, Math.hypot(R.x[id] - x, R.y[id] - y)]).sort((a, b) => a[1] - b[1]);
+          for (let k = 0, tries = 0; k < cand.length && tries < 40 && !drive; k += 6, tries++) {
+            const q = [R.x[cand[k][0]], R.y[cand[k][0]]];
+            if (!blocked(gate, q)) drive = [gate, q];
+          }
+        }
+        if (drive) { let acc = 0; for (let i = 1; i < drive.length; i++) acc += Math.hypot(drive[i][0] - drive[i - 1][0], drive[i][1] - drive[i - 1][1]); return { x, y, angle: ang, gate, gateQ: gq, drive, lay, access: acc }; }
+      }
+      return { err: 'Подъезд к дороге перекрыт' };
     }
-    return { x, y, angle: ang, gate, gateQ: gq, drive, lay };
+    return { x, y, angle: ang, gate, gateQ: gq, drive, lay, access: L > 450 ? L : 0 };
   }
   hireBuilders(side) {
     const E = this.side[side], S = this.g.sides[side];
@@ -561,6 +588,12 @@ export class DWEconomy {
     }
     if (cities.length) this.sim.msg(`Сирены ГО: ${cities.map((q) => q.name).join(', ')} — население в укрытиях, ближние заводы на 3 мин остановлены`, side);
   }
+  // Полная смета стройки: объект + заходы ЛЭП (подстанции) + грунтовый подъезд
+  fullCost(side, kind, site) {
+    const plan = ['ps330', 'ps110', 'ps35', 'ktpb'].includes(kind) && this.g.infra ? this.g.infra.substationPlan(side, kind === 'ktpb' ? 'ps110' : kind, site.x, site.y, null, kind === 'ktpb') : null;
+    const cost0 = this.cost(side, kind) + (plan?.cost || 0) + Math.round((site.access || 0) / 1000 * 20);
+    return { plan, cost0, cost: this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0 };
+  }
   cost(side, kind) { return Math.round(BUILD[kind].cost * (this.g.state?.k(side, 'build') ?? 1)); }
   nearName(x, y, side) {
     let best = null, bd = Infinity;
@@ -573,8 +606,8 @@ export class DWEconomy {
     const site = this.siteFor(side, kind, x, y);
     if (site.err) return site.err;
     // подстанции — вместе с заходами ЛЭП: цена и срок растут с длиной линий
-    const plan = ['ps330', 'ps110', 'ps35', 'ktpb'].includes(kind) && this.g.infra ? this.g.infra.substationPlan(side, kind === 'ktpb' ? 'ps110' : kind, site.x, site.y) : null;
-    const cost0 = this.cost(side, kind) + (plan?.cost || 0), cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
+    const { plan, cost0 } = this.fullCost(side, kind, site);
+    const cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.g.infra?.matPrice(side, cost0, true); // стройматериалы — скидка 20%
     S.points -= cost; S.stats.spent += cost;
@@ -583,7 +616,7 @@ export class DWEconomy {
     const compact = kind === 'ktpb'; // КТПБ — та же ПС 110/10, только «из блоков» (один трансформатор)
     if (compact) kind = 'ps110';
     const o = this.addObject({ id: this.nextBuilt++, side, kind, name, compact: compact || undefined, L: compact ? 1 : site.L, mimic: kind === 'decoy' ? 'ps110' : undefined, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time + (plan?.time || 0), total: B.time + (plan?.time || 0) }, built: true });
-    this.sim.msg(`Стройка: ${name} — готово через ${Math.round((B.time + (plan?.time || 0)) / 60)} мин (−${cost} оч.${plan?.km ? `, с ЛЭП ${plan.km.toFixed(0)} км` : ''})`, side);
+    this.sim.msg(`Стройка: ${name} — готово через ${Math.round((B.time + (plan?.time || 0)) / 60)} мин (−${cost} оч.${plan?.km ? `, с ЛЭП ${plan.km.toFixed(0)} км` : ''}${site.access ? `, подъезд ${(site.access / 1000).toFixed(1)} км` : ''})`, side);
     return o ? null : 'Не удалось';
   }
   // Объект по описанию (стройка у хоста, воссоздание у гостя по снимку)
@@ -608,6 +641,11 @@ export class DWEconomy {
     if (d.kind === 'agro' && d.farm === undefined) { let best = null, bd = 6000; for (const f of this.farms) { if (f.side !== d.side) continue; const q = Math.hypot(f.x - d.x, f.y - d.y); if (q < bd) { bd = q; best = f; } } obj.farm = best ? best.id : -1; }
     for (const st of this.world.settlements) st._ps = null;
     if (remote) return obj; // у гостя площадку добавляет событие мира от хоста
+    // длинный подъезд (подстанция в глубоком тылу) — в дорожную сеть машин, иначе бригады не доедут
+    if (d.drive && d.drive.length > 1 && Math.hypot(d.drive[0][0] - d.drive[d.drive.length - 1][0], d.drive[0][1] - d.drive[d.drive.length - 1][1]) > 450 && this.logi?.roads) {
+      this.logi.roads.addLine(d.drive.slice().reverse());
+      this.logi.routeCache?.clear();
+    }
     const bbox = addSite(this.world, { kind: d.kind, oid: d.id, side: d.side, x: d.x, y: d.y, angle: d.angle, gateQ: d.gateQ, drive: d.drive, L: d.L });
     this.sim.events.push({ type: 'net', ev: { k: 'site', s: { kind: d.kind, oid: d.id, side: d.side, x: d.x, y: d.y, angle: d.angle, gateQ: d.gateQ, drive: d.drive, L: d.L } } });
     this.sim.events.push({ type: 'forts', bbox });
