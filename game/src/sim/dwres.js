@@ -149,7 +149,9 @@ export class DWResearch {
     if (o.readyAt === undefined && !F.raw && o.built) o.readyAt = this.sim.time;
     k *= Math.min(1, 0.45 + 0.55 * Math.max(0, this.sim.time - t0) / RAMP);
     if (F.power) {
-      const ps = g.econ.nearestPS(o.side, o.x, o.y);
+      // промышленная ПС 35/10 в 10 км — свой фидер, иначе — районная ПС 110
+      const p35 = g.objs(o.side, 'ps35').filter((q) => !q.build && Math.hypot(q.x - o.x, q.y - o.y) < 10000).sort((a, b) => (b.supply ?? 0) - (a.supply ?? 0))[0];
+      const ps = p35 || g.econ.nearestPS(o.side, o.x, o.y);
       const sup = ps ? (ps.supply ?? 1) : 1;
       if (sup < 0.45) { o.idle = 'нет света'; return 0; }
       k *= Math.min(1, sup);

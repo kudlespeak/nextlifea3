@@ -64,6 +64,11 @@ export const BUILD = {
   coalmine: { name: 'Угольная шахта', cost: 300, time: 360, desc: 'свой уголь: ТЭС +10%, уголь идёт даже при разбитом угольном складе' },
   cement: { name: 'Цементный завод', cost: 220, time: 300, desc: 'стройматериалы +3 в минуту (нужен свет): стройка и ремонт на 20% дешевле, пока есть запас' },
   reserve: { name: 'Госрезерв', cost: 200, time: 240, desc: '+2 резервных автотрансформатора; запас топлива, если нефтебаза разрушена' },
+  // ----- подстанции -----
+  ps330: { name: 'ПС 330/110 кВ', cost: 950, time: 3000, desc: 'второй опорный узел сети: заход 330 кВ от ближайшей ТЭС, ГЭС или ПС 330 и ЛЭП 110 кВ к двум ближайшим ПС 110 — если главную ПС 330 выбьют, районы не останутся без питания' },
+  ps110: { name: 'ПС 110/10 кВ', cost: 340, time: 1500, desc: 'новая районная подстанция: забирает треть нагрузки ближайшей ПС 110 (удар по одной гасит меньше районов), две ЛЭП 110 кВ прокладываются сами' },
+  ps35: { name: 'ПС 35/10 кВ (промышленная)', cost: 160, time: 900, desc: 'питает заводы в радиусе 10 км по отдельному фидеру 35 кВ: веерные отключения в городе их не касаются; сама запитана от ближайшей ПС 110' },
+  mobps: { name: 'Мобильная ПС 110/10 кВ', cost: 210, time: 420, near: 'ps110', desc: 'трансформатор на прицепе у ПС 110 кВ (до 1,5 км): +45 МВт мощности трансформации — выручает, пока сгоревшие трансформаторы в ремонте' },
   // ----- промышленность (строится с нуля, долго) -----
   steel: { name: 'Металлургический завод', cost: 520, time: 2400, desc: 'руда → сталь (для двигателей, кабеля, сеток, трансформаторов, грузовиков); нужен свет и 1500 рабочих' },
   concrete: { name: 'Бетонный завод (ЖБИ)', cost: 200, time: 1200, desc: 'песок и щебень → бетон: бетонные укрытия трансформаторов вдвое дешевле и быстрее' },
@@ -99,7 +104,7 @@ export const BUILD_GROUPS = [
   ['Промышленность: материалы', ['steel', 'chem', 'concrete', 'asphalt', 'cement', 'refinery', 'terminal']],
   ['Промышленность: комплектующие', ['engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery']],
   ['Промышленность: для тыла и ПВО', ['cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant']],
-  ['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство', ['elevator', 'agro', 'mill', 'dairy']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'coalmine', 'reserve', 'pontoon']]];
+  ['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство', ['elevator', 'agro', 'mill', 'dairy']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика: подстанции', ['ps330', 'ps110', 'ps35', 'mobps']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'coalmine', 'reserve', 'pontoon']]];
 const UPG = new Set(['workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery', 'steel', 'concrete', 'asphalt', 'chem', 'engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery', 'cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant', 'missile', 'uground', 'minifab', 'terminal', 'mlaunch', 'airbase']);
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
@@ -135,7 +140,7 @@ export class DWEconomy {
   settlementsOf(side) { return this.world.settlements.filter((s) => s.side === side); }
   nearestPS(side, x, y) {
     let best = null, bd = Infinity;
-    for (const p of this.g.objs(side, 'ps110')) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } }
+    for (const p of this.g.objs(side, 'ps110')) { if (p.build && !p.build.up) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } }
     return best;
   }
   onImpact(x, y, wh = 50) {
@@ -444,6 +449,13 @@ export class DWEconomy {
     if (B.near === 'rail' && !this.world.rails.items.some((r) => !r.siding && r.line.some(([px, py]) => Math.abs(px - x) < 400 && Math.abs(py - y) < 400 && Math.hypot(px - x, py - y) < 400))) return { err: 'Только у железной дороги (до 400 м)' };
     if (B.near === 'river' && !this.world.water.items.some((r) => r.kind === 'river' && r.line.some(([px, py]) => Math.abs(py - y) < 350 && Math.hypot(px - x, py - y) < 350))) return { err: 'Только на берегу реки (до 350 м)' };
     if (B.near === 'ps110' && !this.g.objs(side, 'ps110').some((q) => Math.hypot(q.x - x, q.y - y) < 1500)) return { err: 'Только рядом с ПС 110 кВ (до 1,5 км)' };
+    const live = (k) => this.g.objs(side, k).filter((q) => !(q.build && !q.build.up));
+    const dist = (q) => Math.hypot(q.x - x, q.y - y);
+    if (kind === 'ps110' && !live('ps110').some((q) => dist(q) < 15000)) return { err: 'Нужна действующая ПС 110 кВ в 15 км: новая забирает часть её района' };
+    if (kind === 'ps110' && live('ps110').some((q) => dist(q) < 1200)) return { err: 'Слишком близко к другой ПС 110 кВ (нужно от 1,2 км)' };
+    if (kind === 'ps35' && !live('ps110').some((q) => dist(q) < 20000)) return { err: 'Нужна ПС 110 кВ в 20 км — от неё пойдёт ЛЭП 35 кВ' };
+    if (kind === 'ps330' && ![...live('ps330'), ...live('tpp'), ...live('hpp')].some((q) => dist(q) < 45000)) return { err: 'Нужна ТЭС, ГЭС или ПС 330 кВ в 45 км — для захода 330 кВ' };
+    if (kind === 'mobps' && this.g.objs(side, 'mobps').some((q) => dist(q) < 1500)) return { err: 'У этой подстанции мобильная ПС уже есть' };
     if (kind === 'pontoon') {
       // у моста: понтоны наводят рядом, ниже по течению
       let br = null, bd = 600;
@@ -625,6 +637,7 @@ export class DWEconomy {
     if (o.kind === 'reserve' && !up) S.spare += 2;
     if (o.kind === 'bess') { o.charge = 1; o.ps = this.nearestPS(o.side, o.x, o.y)?.id; }
     if (o.kind === 'solar') o.ps = this.nearestPS(o.side, o.x, o.y)?.id;
+    if (!up && ['ps330', 'ps110', 'ps35', 'mobps'].includes(o.kind)) this.g.infra?.substationReady(o);
   }
   nearCity(o) {
     let best = null, bd = Infinity;
@@ -723,7 +736,9 @@ export class DWEconomy {
     if (this.grainT <= 0) { this.grainT = 3; this.updateGrain(); }
     this.prodT = (this.prodT ?? 30) - dt;
     if (this.prodT <= 0) { this.prodT = 30; this.production(); this.population(0.5); this.society(); }
-    if (this.pendingCrop.length) {
+    this.cropT = (this.cropT ?? 0) - dt;
+    if (this.pendingCrop.length && this.cropT <= 0) {
+      this.cropT = 20; // не чаще раза в 20 с: каждая пачка — перерисовка чанков с этими полями
       // смена вида полей — фоновой отрисовке карты (пачкой)
       const list = this.pendingCrop.splice(0);
       const W = this.world;
@@ -733,7 +748,7 @@ export class DWEconomy {
         if (!f) continue;
         f.crop = crop;
         bb = bb ? { x0: Math.min(bb.x0, f.bbox.x0), y0: Math.min(bb.y0, f.bbox.y0), x1: Math.max(bb.x1, f.bbox.x1), y1: Math.max(bb.y1, f.bbox.y1) } : { ...f.bbox };
-        this.sim.events.push({ type: 'forts', bbox: f.bbox });
+        this.sim.events.push({ type: 'forts', bbox: f.bbox, minor: true });
       }
       this.sim.events.push({ type: 'net', ev: { k: 'crop', f: list } });
       void bb;

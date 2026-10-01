@@ -286,19 +286,65 @@ export class DWInfra {
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.matPrice(side, q.cost, true);
     S.points -= cost; S.stats.spent += cost;
-    // от портала ОРУ одного объекта к порталу другого, провода заходят на шины
-    const pa = portalOf(q.a, 110, [q.b.x, q.b.y]), pb = portalOf(q.b, 110, [q.a.x, q.a.y]);
-    const A = pa.pt, B = pb.pt, n = Math.max(2, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1]) / 250));
+    this.newLines.push({ side, a: q.a.id, b: q.b.id, kv: 110, pylons: this.linePylons(q.a, q.b, 110), until: this.sim.time + LINE.time, total: LINE.time, name: `${q.a.name} — ${q.b.name}` });
+    this.sim.msg(`Стройка ЛЭП 110 кВ «${q.a.name} — ${q.b.name}» (${(q.L / 1000).toFixed(1)} км, −${cost} оч., ${Math.round(LINE.time / 60)} мин)`, side);
+    return null;
+  }
+  // Опоры ЛЭП от портала ОРУ одного объекта к порталу другого, провода заходят на шины
+  linePylons(a, b, kv) {
+    const pa = portalOf(a, kv, [b.x, b.y]), pb = portalOf(b, kv, [a.x, a.y]);
+    const A = pa.pt, B = pb.pt, span = kv >= 330 ? 330 : kv >= 110 ? 250 : 160, n = Math.max(2, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1]) / span));
     let pylons = [];
     for (let i = 0; i <= n; i++) pylons.push({ x: A[0] + ((B[0] - A[0]) * i) / n, y: A[1] + ((B[1] - A[1]) * i) / n });
     // концевые опоры напротив порталов — провода заходят на ОРУ вдоль ряда, а не через площадку
-    pylons = terminatePylons(terminatePylons(pylons, q.a, pa, false, this.world.mask), q.b, pb, true, this.world.mask);
+    pylons = terminatePylons(terminatePylons(pylons, a, pa, false, this.world.mask), b, pb, true, this.world.mask);
     pylons[0].portal = true; pylons[pylons.length - 1].portal = true;
     if (pa.h) pylons[0].ph = pa.h;
     if (pb.h) pylons[pylons.length - 1].ph = pb.h;
-    this.newLines.push({ side, a: q.a.id, b: q.b.id, kv: 110, pylons, until: this.sim.time + LINE.time, total: LINE.time, name: `${q.a.name} — ${q.b.name}` });
-    this.sim.msg(`Стройка ЛЭП 110 кВ «${q.a.name} — ${q.b.name}» (${(q.L / 1000).toFixed(1)} км, −${cost} оч., ${Math.round(LINE.time / 60)} мин)`, side);
-    return null;
+    return pylons;
+  }
+  // Подстанция достроена: заходы ЛЭП строятся вместе с ней (входят в смету), район перераспределяется
+  substationReady(o) {
+    const g = this.g, side = o.side;
+    const live = (k) => g.objs(side, k).filter((q) => q !== o && !(q.build && !q.build.up));
+    const near = (list) => list.sort((a, b) => Math.hypot(a.x - o.x, a.y - o.y) - Math.hypot(b.x - o.x, b.y - o.y));
+    const link = (b, kv) => {
+      if (!b || g.lines.some((l) => l.kv === kv && ((l.a === o.id && l.b === b.id) || (l.a === b.id && l.b === o.id)))) return;
+      const d = { side, a: o.id, b: b.id, kv, pylons: this.linePylons(o, b, kv) };
+      const ln = this.addLine(d);
+      this.sim.events.push({ type: 'net', ev: { k: 'line', ln } });
+      const xs = d.pylons.map((p) => p.x), ys = d.pylons.map((p) => p.y);
+      this.sim.events.push({ type: 'forts', bbox: { x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 } });
+      return b;
+    };
+    const p110 = near(live('ps110'));
+    if (o.kind === 'ps110') {
+      const donor = p110[0];
+      if (donor) {
+        o.city = donor.city ?? 1;
+        const share = 0.33 * (donor.loadK ?? 1);
+        donor.loadK = (donor.loadK ?? 1) - share;
+        o.loadK = share; o.donor = donor.id;
+        link(donor, 110);
+        const hub = near(live('ps330')).find((q) => Math.hypot(q.x - o.x, q.y - o.y) < 30000) || p110[1];
+        link(hub, 110);
+        this.sim.msg(`${o.name}: под напряжением — забрала треть района ${donor.name}; две ЛЭП 110 кВ в работе`, side);
+      }
+    } else if (o.kind === 'ps330') {
+      const src = near([...live('ps330'), ...live('tpp'), ...live('hpp')])[0];
+      link(src, 330);
+      p110.slice(0, 2).forEach((q) => link(q, 110));
+      this.sim.msg(`${o.name}: под напряжением — заход 330 кВ${src ? ` от «${src.name}»` : ''} и ЛЭП 110 кВ к районным подстанциям`, side);
+    } else if (o.kind === 'ps35') {
+      o.ps = p110[0]?.id;
+      link(p110[0], 35);
+      this.sim.msg(`${o.name}: заводы в 10 км переведены на промышленный фидер 35 кВ`, side);
+    } else if (o.kind === 'mobps') {
+      o.ps = p110[0]?.id;
+      this.sim.msg(`${o.name}: подключена к ${p110[0]?.name || 'подстанции'} — +45 МВт трансформации`, side);
+    }
+    this.world.power.version++;
+    g.flowTimer = 0;
   }
   addLine(d) {
     const id = 1000 + this.g.lines.length;

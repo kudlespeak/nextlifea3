@@ -1602,7 +1602,7 @@ function frameBody(now) {
   if (role !== 'guest') sim.processQueue(8);
   const netEvents = [];
   for (const ev of sim.events) {
-    if (ev.type === 'forts') chunks.invalidate(ev.bbox);
+    if (ev.type === 'forts') chunks.invalidate(ev.bbox, ev.minor ? 3 : 0);
     else if (ev.type === 'msg') {
       if (!ev.side || ev.side === controlSide) log(ev.text);
       if (role === 'host' && (!ev.side || ev.side !== controlSide)) net.send({ t: 'msg', text: ev.text, side: ev.side });

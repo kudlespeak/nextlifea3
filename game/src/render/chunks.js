@@ -36,8 +36,9 @@ export class ChunkCache {
   static prewarm(seed, layout) { pre = spawn(seed, layout); }
   constructor(world) {
     this.world = world;
-    // Обзорные уровни собираются из детальных; на большой карте это сотни чанков — рисуем обзор напрямую
-    this.composeBelow = world.W * world.H > 3e8 ? 1 : COMPOSE_BELOW;
+    // Обзорные уровни собираются из детальных; на большой карте это сотни чанков (сотни крупных
+    // отрисовок, которые вытесняли из кэша детальные чанки у камеры) — там обзор рисуем напрямую
+    this.composeBelow = world.W * world.H > 3e8 ? 0 : COMPOSE_BELOW;
     this.cache = new Map(); // key → { canvas, level, cx, cy, used, stale }
     this.frame = 0;
     this.tick = 0; // счётчик изменений мира (для устаревших ответов)
@@ -143,18 +144,23 @@ export class ChunkCache {
     return entry;
   }
   evict() {
-    if (this.cache.size <= MAX_CACHE) return;
-    // Обзорные уровни и их «источник» (уровень 3) держим всегда
-    const entries = [...this.cache.entries()].filter(([, e]) => e.level > this.composeBelow).sort((a, b) => a[1].used - b[1].used);
-    for (let i = 0; i < entries.length && this.cache.size > MAX_CACHE; i++) {
+    // Обзорные уровни и их «источник» держим всегда; лимит — только на вытесняемые чанки
+    // (иначе на большой карте обзор занимал весь лимит и только что пришедший детальный чанк
+    // у камеры вытеснялся сразу же)
+    const entries = [...this.cache.entries()].filter(([, e]) => e.level > this.composeBelow);
+    if (entries.length <= MAX_CACHE) return;
+    entries.sort((a, b) => a[1].used - b[1].used);
+    for (let i = 0, over = entries.length - MAX_CACHE; i < over; i++) {
       entries[i][1].canvas?.close?.();
       this.cache.delete(entries[i][0]);
     }
   }
   // Сбросить чанки, пересекающие область (после новых воронок и т.п.)
-  invalidate(b) {
+  // minLevel: мелкие правки (смена культуры на поле) обзорные уровни не перерисовывают
+  invalidate(b, minLevel = 0) {
     this.tick++;
     for (const e of this.cache.values()) {
+      if (e.level < minLevel) continue;
       const size = this.worldSize(e.level);
       const x0 = e.cx * size, y0 = e.cy * size;
       // Старая картинка рисуется, пока не готова новая

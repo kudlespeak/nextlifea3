@@ -16,9 +16,9 @@ const DOCTRINES = {
   balanced: { name: 'взвешенный', roi: 0.7, off: 0.55, cover: 1, projects: ['highway', 'airshield', 'agroholding', 'technopark', 'powerbridge'], tech: ['economy', 'military', 'energy'] },
 };
 
-const VALUE = { refinery: 7, railterm: 4, port: 4, coalmine: 4, cement: 3, decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, bridge: 5, oil: 5, ammo: 5, factory: 7, workshop: 5, launch: 5, hub: 5, wpp: 3, spp: 3 };
+const VALUE = { refinery: 7, railterm: 4, port: 4, coalmine: 4, cement: 3, decoy: 6, elevator: 5, solar: 3, bess: 3, pontoon: 3, reserve: 3, tpp: 14, ps330: 12, hpp: 10, chp: 8, ps110: 6, ps35: 4, mobps: 3, bridge: 5, oil: 5, ammo: 5, factory: 7, workshop: 5, launch: 5, hub: 5, wpp: 3, spp: 3 };
 const WANT_COVER = { elevator: 1.5, tpp: 7, ps330: 6, hpp: 5, chp: 4, ps110: 3, factory: 3, workshop: 1.5, launch: 2.5, bridge: 1.5, oil: 2, ammo: 2, wpp: 1, spp: 1.5 };
-const TARGET_COMPS = { refinery: ['tank', 'shop', 'column'], railterm: ['rack', 'hall'], port: ['quay', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], workshop: ['shop'], launch: ['launcher'], hub: ['hall'] };
+const TARGET_COMPS = { refinery: ['tank', 'shop', 'column'], railterm: ['rack', 'hall'], port: ['quay', 'hall'], coalmine: ['headframe', 'shop'], cement: ['shop', 'silo'], decoy: ['tr', 'oru'], elevator: ['silo', 'dryer'], solar: ['pv', 'inv', 'oru'], bess: ['bess'], pontoon: ['pont'], reserve: ['hall', 'tank'], hpp: ['gsu', 'oru', 'hgen'], chp: ['unit', 'gsu', 'oru'], wpp: ['wt', 'gsu'], spp: ['pv', 'inv', 'oru'], tpp: ['gsu', 'unit', 'oru', 'coal'], ps330: ['at', 'oru'], ps110: ['tr', 'oru'], ps35: ['tr', 'oru'], mobps: ['tr'], bridge: ['span'], oil: ['tank'], ammo: ['bunker'], factory: ['shop'], workshop: ['shop'], launch: ['launcher'], hub: ['hall'] };
 
 const D_RANGE = (D) => D.range || 99999;
 
@@ -442,6 +442,21 @@ export class DroneWarAI {
       else if (o.kind === 'launch') gain = this.launchShort >= 2 || this.S.points > 1500 ? 9 : 0;
       else if (o.kind === 'agro') gain = 1.2;
       if (gain > 0) out.push({ act: 'upgrade', id: o.id, cost: upgradeCost(o), gain, name: `реконструкция «${o.name}»` });
+    }
+    // Подстанции (вне очереди «одна стройка за раз» — сеть важнее): мобильная — к ПС с выбитыми трансформаторами; новая ПС 110 — к перегруженной
+    // (веерные отключения); промышленная 35 кВ — к заводам; вторая ПС 330 — для резерва сети
+    {
+      const add = (kind, ax, ay, r0, r1, gain, name) => { if (gain <= 0 || S.points < 0 || g.objs(side, kind).some((o) => o.build)) return; const p = this.spot(kind, ax, ay, r0, r1); if (p) out.push({ act: 'build', kind, x: p[0], y: p[1], cost: BUILD[kind].cost, gain, name }); };
+      const have = (kind) => g.objs(side, kind).length, ind = I.industry || 0, tax = I.tax || 0;
+      const cities = g.world.settlements.filter((q) => q.side === side && q.type === 'city');
+      const live = g.objs(side, 'ps110').filter((q) => !q.build);
+      const hurt = live.find((q) => q.comps.some((c) => c.k === 'tr' && c.state !== 'ok') && !g.objs(side, 'mobps').some((m) => Math.hypot(m.x - q.x, m.y - q.y) < 1500));
+      if (hurt) add('mobps', hurt.x, hurt.y, 250, 1300, 3 + (1 - (hurt.supply ?? 1)) * 6, `мобильная подстанция у ${hurt.name}`);
+      const over = live.filter((q) => (q.shed || 0) > 0 || q.unstable).sort((a, b) => (b.demand || 0) - (a.demand || 0))[0];
+      if (over && have('ps110') < live.length + 1 && have('ps110') < 14) add('ps110', over.x, over.y, 1500, 4500, 2.5 + (1 - S.supply) * 0.4 * (ind + tax), `новая ПС 110 кВ рядом с ${over.name}`);
+      const plants = g.res?.plants(side) || [];
+      if (plants.length >= 4 && have('ps35') < 2) { const pl = plants[rng.int(0, plants.length - 1)]; add('ps35', pl.x, pl.y, 600, 3000, 2.2, 'промышленная подстанция 35 кВ у заводов'); }
+      if (have('ps330') < 2 && S.points > 2500) { const c = cities[0]; if (c) add('ps330', c.x, c.y, 4000, 9000, 3, 'вторая ПС 330 кВ (резерв сети)'); }
     }
     if (busy) return out;
     const cities = g.world.settlements.filter((q) => q.side === side && q.type === 'city');

@@ -488,7 +488,7 @@ export class DroneWar {
     if (c.shelter >= level) return 'Уже есть';
     if (COMP[c.k].net && level > 1) return 'Сетка уже есть';
     if (level > c.shelter + 1) return 'Сначала — габионы';
-    if (S.queue.includes('S' + id)) return 'Уже в очереди';
+    if (S.queue.includes('S' + id) || S.crews.some((w) => w.job?.qid === 'S' + id)) return 'Уже в очереди'; // и не строится прямо сейчас
     S.queue.push('S' + id);
     this.sim.msg(`${shelterDef(c, level).name}: ${c.name} — в очереди`, side);
     return null;
@@ -724,10 +724,11 @@ export class DroneWar {
       genBy.import = impCap; totalGen += impCap;
       E(0, node('import:330'), impCap);
       // Подстанции
-      const p110 = this.objs(side, 'ps110');
+      const live = (o) => !(o.build && !o.build.up);
+      const p110 = this.objs(side, 'ps110').filter(live);
       const allK = (o, k) => o.comps.filter((c) => c.k === k);
       const okK = (o, k) => o.comps.filter((c) => c.k === k && this.compOk(c));
-      for (const ps of this.objs(side, 'ps330')) {
+      for (const ps of this.objs(side, 'ps330').filter(live)) {
         const oruOk = allK(ps, 'oru').every((c) => this.compOk(c));
         const cap = oruOk ? okK(ps, 'at').length * 250 * (okK(ps, 'ctrl').length ? 1 : 0.6) : 0;
         E(node(`${ps.id}:330`), node(`${ps.id}:110`), cap);
@@ -736,9 +737,11 @@ export class DroneWar {
       p110.forEach((ps, i) => {
         const oruOk = allK(ps, 'oru').every((c) => this.compOk(c));
         const cap = oruOk ? okK(ps, 'tr').length * (TR_CAP[ps.city ?? 1]) * (okK(ps, 'ctrl').length ? 1 : 0.7) : 0;
-        ps.trCap = cap;
-        E(node(`${ps.id}:110`), node(`${ps.id}:10`), cap);
-        D[i] = DEMAND[ps.city ?? 1] * prof * this.state.k(side, 'demand');
+        // мобильная ПС на прицепе рядом — дополнительный трансформатор 110/10
+        const mob = this.objs(side, 'mobps').filter((m) => live(m) && m.ps === ps.id && m.comps.some((c) => c.k === 'tr' && this.compOk(c))).length * 45;
+        ps.trCap = cap + mob;
+        E(node(`${ps.id}:110`), node(`${ps.id}:10`), cap + mob);
+        D[i] = DEMAND[ps.city ?? 1] * (ps.loadK ?? 1) * prof * this.state.k(side, 'demand');
         E(node(`${ps.id}:10`), 1, D[i]);
         // мобильные ГТУ — прямо на шины 10 кВ
         for (const gt of this.gens) if (gt.ps === ps.id && !gt.dead && gt.state === 'ready') {
@@ -815,6 +818,16 @@ export class DroneWar {
           if (changed) this.world.power.version++;
         }
       });
+      // Промышленные ПС 35/10: свой фидер от ПС 110 — веерные отключения района их не касаются,
+      // свет есть, пока у ПС 110 есть мощность (и цела ЛЭП 35 кВ и свои трансформаторы)
+      for (const o of this.objs(side, 'ps35')) {
+        if (!live(o)) { o.supply = 0; continue; }
+        const par = this.obj(o.ps), ln = this.lines.find((l) => l.kv === 35 && (l.a === o.id || l.b === o.id));
+        const own = o.comps.some((c) => c.k === 'tr' && this.compOk(c)) && o.comps.some((c) => c.k === 'oru' && this.compOk(c));
+        const pAvail = par ? Math.min(1, (par.avail ?? 0) / Math.max(1, (par.demand ?? 1) * 0.6)) : 0;
+        o.supply = own && ln && !ln.cut && par && !par.unstable ? pAvail : own && par ? (par.supply ?? 0) * 0.5 : 0;
+        if (achr) o.supply = Math.min(o.supply, 0.25);
+      }
       S.gen = Math.round(totalGen); S.demand = Math.round(dem); S.delivered = Math.round(del);
       S.supply = dem ? del / dem : 1;
       S.powerLoss = dem ? lostW / dem : 0; // для устойчивости тыла: плановые отключения переносятся легче
@@ -855,7 +868,7 @@ export class DroneWar {
     const sim = this.sim;
     for (const side of ['blue', 'red']) {
       const S = this.sides[side];
-      const p110 = this.objs(side, 'ps110');
+      const p110 = this.objs(side, 'ps110').filter((o) => !(o.build && !o.build.up));
       const town = (ci) => { const ps = p110.filter((p) => p.city === ci); return ps.reduce((a, p) => a + (p.supply ?? 1), 0) / Math.max(1, ps.length); };
       // Логистика городов за рекой: хотя бы один мост цел
       const br = this.objs(side, 'bridge');

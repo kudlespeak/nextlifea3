@@ -383,6 +383,13 @@ const cache = new Map();
 const models = new Map();
 let budgetMs = 0, budgetFrame = -1;
 
+const extents = new Map();
+// наибольший размер модели в плане с высотой (м)
+function modelExtent(m) {
+  let r = 1;
+  for (const part of m.parts) for (const f of part) for (const p of f.v) r = Math.max(r, Math.hypot(p[0], p[1]) + p[2]);
+  return r * 2;
+}
 // build: () => Model; key — уникальное имя модели
 export function getModel(key, build) {
   let m = models.get(key);
@@ -402,7 +409,13 @@ export function spriteFor(key, build, angle, zoomPx, opts, frameNo) {
   const step = (Math.PI * 2) / NA;
   let ai = Math.round(angle / step) % NA;
   if (ai < 0) ai += NA;
-  const lod = Math.min(lodFor(zoomPx), opts?.maxLod || 99);
+  let lod = Math.min(lodFor(zoomPx), opts?.maxLod || 99);
+  // большие модели (ВПП, ОРУ, цеха) — с ограничением размера спрайта: иначе один ракурс
+  // километровой полосы растеризуется в картинку в десятки тысяч пикселей и кадр встаёт на секунду
+  let ext = extents.get(key);
+  if (ext === undefined) { ext = modelExtent(getModel(key, build)); extents.set(key, ext); }
+  const cap = 1400 / (ext * SS);
+  if (lod > cap) lod = Math.max(0.25, 2 ** Math.floor(Math.log2(cap)));
   const k = `${key}|${lod}|${ai}`;
   let s = cache.get(k);
   if (!s) {
@@ -414,7 +427,7 @@ export function spriteFor(key, build, angle, zoomPx, opts, frameNo) {
       cache.set(k, s);
     } else {
       // запасной: тот же угол другого LOD или соседний угол
-      for (const l of LODS) { s = cache.get(`${key}|${l}|${ai}`); if (s) break; }
+      for (const l of [lod, ...LODS]) { s = cache.get(`${key}|${l}|${ai}`); if (s) break; }
       for (let d = 1; !s && d <= NA / 2; d++)
         for (const l of [lod, ...LODS]) {
           s = cache.get(`${key}|${l}|${(ai + d) % NA}`) || cache.get(`${key}|${l}|${(ai - d + NA) % NA}`);

@@ -13,7 +13,7 @@ import { drawExtras } from './dwextra.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС',
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', ps35: '35', mobps: 'МПС', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС',
   quarry: 'КАР', mine: 'РУД', oilfield: 'НП', truckstop: 'СТФ', weigh: 'ВК', steel: 'МЗ', concrete: 'ЖБИ', asphalt: 'АБЗ', chem: 'ХК', engine: 'ДВ', turbine: 'ТРД', explosive: 'ПЗ', electronics: 'ЭЛК', composite: 'КМП', optics: 'ОПТ', battery: 'АКБ', cable: 'КАБ', trafo: 'ТРЗ', netfab: 'СЕТ', ewfab: 'РЭБ', decoyfab: 'МАК', autoplant: 'АВТ', terminal: 'ТЕРМ', missile: 'РЗ', uground: 'ПЦ', minifab: 'ЦЕХ', mlaunch: 'КР', rivlaunch: 'КР', airbase: 'АВБ', workshop: 'СЦ' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { dummy: 'МАК', mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
@@ -232,7 +232,7 @@ function drawLineEnds(ctx, g, world, side, toS, inView, z) {
 // ---------- Ограда объекта: бетонный забор у энергетики, военных и промышленных объектов,
 // сетчатый — у пожарных частей, баз и прочего; магазины и АЗС открыты; ворота со шлагбаумом и будкой охраны со стороны подъезда ----------
 const OPEN_SITE = new Set(['store', 'kiosk', 'fuel', 'mall', 'market']);
-const HARD_FENCE = new Set(['tpp', 'hpp', 'chp', 'ps330', 'ps110', 'decoy', 'oil', 'ammo', 'factory', 'workshop', 'launch', 'refinery', 'coalmine', 'reserve', 'bess', 'spp', 'solar', 'hub', 'elevator', 'cement', 'railterm', 'port']);
+const HARD_FENCE = new Set(['tpp', 'hpp', 'chp', 'ps330', 'ps110', 'ps35', 'decoy', 'oil', 'ammo', 'factory', 'workshop', 'launch', 'refinery', 'coalmine', 'reserve', 'bess', 'spp', 'solar', 'hub', 'elevator', 'cement', 'railterm', 'port']);
 function drawFence(ctx, o, toS, z, dpr, part) {
   if (OPEN_SITE.has(o.kind)) return; // магазины, АЗС и ТЦ открыты с улицы — без ограды
   const hard = HARD_FENCE.has(o.kind), Hf = hard ? 2.6 : 1.8;

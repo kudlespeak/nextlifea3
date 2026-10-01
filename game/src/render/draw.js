@@ -548,7 +548,7 @@ function drawArea(ctx, a, b, ppm) {
           ctx.strokeStyle = 'rgba(60,58,50,0.25)';
           ctx.lineWidth = 0.4;
           ctx.beginPath();
-          const step = a.site === 'ps330' || a.site === 'ps110' ? 12 : 30;
+          const step = a.site === 'ps330' || a.site === 'ps110' || a.site === 'ps35' ? 12 : 30;
           for (let u = -hw; u <= hw; u += step) { ctx.moveTo(u, -hh); ctx.lineTo(u, hh); }
           ctx.stroke();
         }

@@ -14,9 +14,9 @@ const $ = (id) => document.getElementById(id);
 const TAB_TITLE = { grid: 'Обзор', ad: 'ПВО', strike: 'Дроны, ракеты, удары', repair: 'Ремонт', econ: 'Стройка', res: 'Промышленность', state: 'Страна' };
 const AD_ICON = { mog: 'mog', spaag: 'spaag', sam: 'sam', lrsam: 'sam', ew: 'ew', acoustic: 'acoustic', radar: 'radar', ewd: 'ewd', icpt: 'icpt', dummy: 'decoyps' };
 const DRONE_ICON = { strike: 'strike', decoy: 'decoy', recon: 'recon', loiter: 'loiter', hunter: 'hunter', cruise: 'missile' };
-const GROUP_ICON = ['shield', 'factory', 'gear', 'truck', 'market', 'mill', 'railterm', 'housing', 'bolt'];
-const GROUP_SHORT = ['военное', 'материалы', 'детали', 'для тыла', 'торговля', 'агро', 'экспорт', 'люди', 'энергия'];
-const BUILD_ICON = { steel: 'factory', chem: 'refinery', concrete: 'cement', asphalt: 'pave', terminal: 'hub', engine: 'engine', turbine: 'engine', explosive: 'bomb', electronics: 'chip', composite: 'factory', optics: 'recon', battery: 'bess', cable: 'line', trafo: 'bolt', netfab: 'net', ewfab: 'ew', decoyfab: 'decoyps', autoplant: 'truck', missile: 'missile', uground: 'workshop', minifab: 'workshop', mlaunch: 'missile', rivlaunch: 'missile', airbase: 'jet', store: 'store', fuel: 'fuel', market: 'market', mall: 'mall', hub: 'hub', autopark: 'autopark', elevator: 'elevator', agro: 'agro', mill: 'mill', dairy: 'dairy', cement: 'cement', railterm: 'railterm', port: 'port', housing: 'housing', hospital: 'hospital', school: 'school', watertower: 'watertower', solar: 'solar', bess: 'bess', refinery: 'refinery', coalmine: 'coalmine', reserve: 'reserve', pontoon: 'pontoon', launch: 'launch', workshop: 'workshop', decoy: 'decoyps' };
+const GROUP_ICON = ['shield', 'factory', 'gear', 'truck', 'market', 'mill', 'railterm', 'housing', 'subst', 'bolt'];
+const GROUP_SHORT = ['военное', 'материалы', 'детали', 'для тыла', 'торговля', 'агро', 'экспорт', 'люди', 'подстанции', 'энергия'];
+const BUILD_ICON = { ps330: 'subst', ps110: 'subst', ps35: 'subst', mobps: 'truck', steel: 'factory', chem: 'refinery', concrete: 'cement', asphalt: 'pave', terminal: 'hub', engine: 'engine', turbine: 'engine', explosive: 'bomb', electronics: 'chip', composite: 'factory', optics: 'recon', battery: 'bess', cable: 'line', trafo: 'bolt', netfab: 'net', ewfab: 'ew', decoyfab: 'decoyps', autoplant: 'truck', missile: 'missile', uground: 'workshop', minifab: 'workshop', mlaunch: 'missile', rivlaunch: 'missile', airbase: 'jet', store: 'store', fuel: 'fuel', market: 'market', mall: 'mall', hub: 'hub', autopark: 'autopark', elevator: 'elevator', agro: 'agro', mill: 'mill', dairy: 'dairy', cement: 'cement', railterm: 'railterm', port: 'port', housing: 'housing', hospital: 'hospital', school: 'school', watertower: 'watertower', solar: 'solar', bess: 'bess', refinery: 'refinery', coalmine: 'coalmine', reserve: 'reserve', pontoon: 'pontoon', launch: 'launch', workshop: 'workshop', decoy: 'decoyps' };
 // Первое предложение описания — для плитки
 // Перерисовать блок, не закрывая раскрытые «подробности» и не сбрасывая прокрутку
 function setHTML(el, html) {
@@ -215,7 +215,7 @@ export class DWUI {
     this.status();
     this.advice();
     if (this.state.tab === 'grid') {
-      const p110 = g.objs(side, 'ps110');
+      const p110 = g.objs(side, 'ps110').filter((o) => !(o.build && !o.build.up));
       const cities = this.sim.world.settlements.filter((s) => s.type === 'city' && s.side === side);
       const cityRow = (ci) => {
         const ps = p110.filter((p) => p.city === ci);
@@ -258,7 +258,7 @@ export class DWUI {
       const veh = g.logi.vehicles.filter((v) => !v.dead && v.side === side);
       const cnt = (k) => veh.filter((v) => v.kind === k).length;
       h += `<details class="dw-more"><summary>Торговля и логистика</summary><div class="dw-income">Торговля <b>+${(S.tradeAvg ?? 0).toFixed(1)}</b> · на складе РЦ <b>${L.hub.stock}</b> · магазинов с товаром ${withGoods}/${L.markets.length} · АЗС с топливом ${withFuel}/${L.fuels.length}${cut ? ` · <span class="bad">отрезано ${cut}</span>` : ''}<br>На дорогах: фур ${cnt('fura')}, развозных ${cnt('van')}, бензовозов ${cnt('tanker')}, снабжение ПВО ${cnt('supply')}, ремонтники ${cnt('crew')}, пожарные ${cnt('fire')}${L.stats.lostTrucks ? ` · <span class="bad">потеряно машин ${L.stats.lostTrucks}</span>` : ''}</div></details>`;
-      const groups = ['tpp', 'hpp', 'chp', 'wpp', 'spp', 'solar', 'bess', 'ps330', 'ps110', 'decoy', 'bridge', 'pontoon', 'elevator', 'reserve', 'oil', 'ammo', 'factory', 'workshop', 'launch', 'hub', 'border', 'rembase', 'firest', 'fuel'];
+      const groups = ['tpp', 'hpp', 'chp', 'wpp', 'spp', 'solar', 'bess', 'ps330', 'ps110', 'ps35', 'mobps', 'decoy', 'bridge', 'pontoon', 'elevator', 'reserve', 'oil', 'ammo', 'factory', 'workshop', 'launch', 'hub', 'border', 'rembase', 'firest', 'fuel'];
       let own = '';
       for (const k of groups) for (const o of g.objs(side, k)) own += this.objRow(o);
       h += `<details class="dw-more"><summary>Ваши объекты</summary>${own}</details>`;
