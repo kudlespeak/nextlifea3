@@ -238,12 +238,33 @@ export function drawExtras(ctx, g, sim, view, side, toS, inView, now, t, night, 
   drawBypass(ctx, g, toS, inView, z, dpr);
   drawHeadlights(ctx, vehicles, toS, inView, z, dpr, night);
 }
-// погода — поверх всего кадра (вызывается в конце отрисовки)
-export function drawWeatherLayer(ctx, g, view, now, t) {
+// Цветокоррекция кадра по времени суток: рассвет и закат — тёплый косой свет (мягкое наложение),
+// полдень — чуть выбеленная дымка, издалека — воздушная перспектива; лёгкое виньетирование
+function grade(ctx, view, tod) {
+  const { canvas, cam, dpr } = view, W = canvas.width, H = canvas.height;
+  const h = ((tod / 3600) % 24 + 24) % 24;
+  const bump = (c, w) => Math.max(0, 1 - Math.abs(h - c) / w);
+  const dawn = bump(6.5, 1.8), dusk = bump(19.2, 1.8), noon = bump(13, 4);
+  ctx.globalCompositeOperation = 'soft-light';
+  if (dawn > 0.01) { ctx.fillStyle = `rgba(255,170,110,${0.45 * dawn})`; ctx.fillRect(0, 0, W, H); }
+  if (dusk > 0.01) { ctx.fillStyle = `rgba(255,140,70,${0.5 * dusk})`; ctx.fillRect(0, 0, W, H); }
+  if (noon > 0.01) { ctx.fillStyle = `rgba(255,248,225,${0.18 * noon})`; ctx.fillRect(0, 0, W, H); }
+  ctx.globalCompositeOperation = 'source-over';
+  // воздушная перспектива на обзорном масштабе
+  const far = Math.max(0, Math.min(1, (0.25 * dpr - cam.zoom) / (0.2 * dpr)));
+  if (far > 0.01) { ctx.fillStyle = `rgba(190,200,210,${0.1 * far})`; ctx.fillRect(0, 0, W, H); }
+  // виньетка
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.45, W / 2, H / 2, Math.hypot(W, H) * 0.62);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(10,12,8,0.28)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+}
+// погода и свет — поверх всего кадра (вызывается в конце отрисовки)
+export function drawWeatherLayer(ctx, g, view, now, t, tod) {
   const { cam, canvas } = view, z = cam.zoom;
   const toS = (x, y) => [(x - cam.x) * z + canvas.width / 2, (y - cam.y) * z + canvas.height / 2];
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawWeather(ctx, g, view, toS, now, t);
+  if (tod !== undefined) grade(ctx, view, tod);
   ctx.restore();
 }
 void lineLen;

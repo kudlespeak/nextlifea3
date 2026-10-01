@@ -967,12 +967,61 @@ function drawSpan(ctx, c, sx, sy, z, o) {
   ctx.translate(sx, sy);
   ctx.rotate(c.angle);
   if (c.state === 'destroyed') {
-    ctx.fillStyle = '#3e5a60';
-    ctx.fillRect(-w / 2, -h / 2 - 1, w, h + 2);
-    ctx.fillStyle = 'rgba(80,76,70,0.9)';
-    for (let i = 0; i < 6; i++) ctx.fillRect(-w / 2 + (i / 6) * w, -h / 2 + ((i * 37) % 10) / 10 * h, 0.12 * w, 0.2 * h);
-    ctx.strokeStyle = 'rgba(30,28,26,0.9)'; ctx.lineWidth = Math.max(1, 0.6 * z);
-    ctx.beginPath(); ctx.moveTo(-w / 2, -h / 2); ctx.lineTo(-w / 2 + 0.1 * w, h / 2); ctx.moveTo(w / 2, -h / 2); ctx.lineTo(w / 2 - 0.12 * w, h / 2); ctx.stroke();
+    // Обрушенный пролёт: настила нет — видна вода; две половины плиты сломались посередине и
+    // уходят в воду (торцы у опор выше и светлее, к середине темнеют и скрываются под водой),
+    // из рваных кромок торчит арматура, вокруг — пена и обломки; на уцелевших соседних пролётах — рваный край
+    const sd = hash(c.x * 0.3 + c.y);
+    const hw = w / 2, hh = h / 2 + 1.2 * z;
+    // вода в проёме (заливаем настил из подложки), с тенью от уцелевших пролётов
+    ctx.fillStyle = '#2d4648'; ctx.fillRect(-hw - 0.5, -hh, w + 1, hh * 2);
+    const sh = ctx.createLinearGradient(0, -hh, 0, hh); sh.addColorStop(0, 'rgba(0,0,0,0.35)'); sh.addColorStop(0.5, 'rgba(0,0,0,0.05)'); sh.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = sh; ctx.fillRect(-hw, -hh, w, hh * 2);
+    const jag = (x0, dir, k) => { const pts = []; for (let i = 0; i <= 8; i++) { const v = -hh + (i / 8) * hh * 2; pts.push([x0 + dir * (hash(sd * 50 + i * 7 + k) * 0.08 * w), v]); } return pts; };
+    // две половины плиты: от опоры к середине, сужаются и темнеют (уходят под воду)
+    for (const side of [-1, 1]) {
+      const x0 = side * hw, mid = side * (0.2 + 0.07 * hash(sd + side)) * w;
+      const edge = jag(mid, side, side * 3);
+      const g = ctx.createLinearGradient(x0, 0, mid, 0);
+      g.addColorStop(0, '#8d8a82'); g.addColorStop(0.55, '#5f5d58'); g.addColorStop(1, 'rgba(45,70,72,0.9)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(x0, -hh * 0.92);
+      for (const [x, y] of edge) ctx.lineTo(x, y * (0.78 + 0.1 * hash(y + side)));
+      ctx.lineTo(x0, hh * 0.92); ctx.closePath(); ctx.fill();
+      // трещины и полосы разметки на плите
+      ctx.strokeStyle = 'rgba(30,28,26,0.55)'; ctx.lineWidth = Math.max(0.6, 0.25 * z);
+      ctx.beginPath();
+      for (let i = 0; i < 4; i++) { const u = x0 + (mid - x0) * (0.25 + 0.18 * i), v = (hash(sd * 9 + i + side) - 0.5) * hh * 1.4; ctx.moveTo(u, v); ctx.lineTo(u + (mid - x0) * 0.12, v + (hash(i + side * 5) - 0.5) * hh * 0.8); }
+      ctx.stroke();
+      // арматура из кромки
+      ctx.strokeStyle = 'rgba(90,60,42,0.95)'; ctx.lineWidth = Math.max(0.5, 0.18 * z);
+      ctx.beginPath();
+      for (let i = 1; i < edge.length - 1; i += 2) { const [x, y] = edge[i]; const L = (1.2 + hash(i * 3 + side) * 2.2) * z; ctx.moveTo(x, y * 0.85); ctx.lineTo(x + side * L, y * 0.85 + (hash(i + 9) - 0.5) * L); }
+      ctx.stroke();
+      // пена и рябь у кромки воды
+      ctx.strokeStyle = 'rgba(220,228,226,0.55)'; ctx.lineWidth = Math.max(0.6, 0.3 * z);
+      ctx.beginPath(); edge.forEach(([x, y], i) => { const px = x + side * 1.2 * z, py = y * 0.8; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }); ctx.stroke();
+      // рваный торец уцелевшего пролёта у опоры
+      ctx.fillStyle = '#4a4844';
+      ctx.beginPath(); ctx.moveTo(x0, -hh); for (let i = 0; i <= 6; i++) ctx.lineTo(x0 - side * hash(sd * 3 + i + side) * 2 * z, -hh + (i / 6) * hh * 2); ctx.lineTo(x0, hh); ctx.closePath(); ctx.fill();
+      // тень от торца уцелевшего пролёта на воду (настил висит в 8–10 м над водой)
+      const sg = ctx.createLinearGradient(x0, 0, x0 - side * 6 * z, 0);
+      sg.addColorStop(0, 'rgba(0,0,0,0.45)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = sg; ctx.fillRect(Math.min(x0, x0 - side * 6 * z), -hh, 6 * z, hh * 2);
+      // заграждение на подъезде: красно-белый барьер поперёк полотна уцелевшего пролёта
+      const bx = x0 + side * 4 * z, seg = Math.max(2, (hh * 2) / 6);
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = i % 2 ? '#f2efe8' : '#d23a2c'; ctx.fillRect(bx - 0.6 * z, -hh + i * seg, 1.2 * z, seg); }
+    }
+    // обломки в воде с бурунами
+    for (let i = 0; i < 5; i++) {
+      const u = (hash(sd * 11 + i) - 0.5) * w * 0.34, v = (hash(sd * 13 + i) - 0.5) * hh * 2.2, r = (0.8 + hash(i + sd) * 1.6) * z;
+      ctx.fillStyle = 'rgba(210,220,218,0.35)'; ctx.beginPath(); ctx.ellipse(u + r * 0.6, v, r * 1.8, r * 0.9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#6a6862'; ctx.beginPath(); ctx.ellipse(u, v, r, r * 0.7, hash(i) * 3, 0, Math.PI * 2); ctx.fill();
+    }
+    // течение огибает завал: светлые струи вдоль реки ниже по течению от обломков
+    ctx.strokeStyle = 'rgba(200,214,212,0.3)'; ctx.lineWidth = Math.max(0.5, 0.25 * z);
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) { const u = (hash(sd * 17 + i) - 0.5) * w * 0.3; ctx.moveTo(u, hh * 0.4); ctx.quadraticCurveTo(u + 1.5 * z, hh * 1.1, u - 0.5 * z, hh * 1.9); }
+    ctx.stroke();
   } else {
     ctx.fillStyle = 'rgba(25,22,20,0.7)';
     for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc((hash(i + c.x) - 0.5) * w * 0.8, (hash(i * 2 + c.y) - 0.5) * h * 0.6, Math.max(1.5, 1.6 * z), 0, Math.PI * 2); ctx.fill(); }
@@ -1033,9 +1082,10 @@ function fire(ctx, toS, x, y, size, z, now, heavy, seed) {
     ctx.fillStyle = `rgba(255,${120 + i * 30},${40 + i * 10},${0.8 * (1 - f)})`;
     ctx.beginPath(); ctx.arc(sx + Math.sin(now / 130 + i * 2) * s * 0.25, sy - f * s * 1.3, s * (0.5 - f * 0.3), 0, Math.PI * 2); ctx.fill();
   }
-  const n = heavy ? 10 : 6;
+  // у очага — плотные клубы; дальний шлейф по ветру рисует smoke.js
+  const n = heavy ? 5 : 3;
   for (let i = 0; i < n; i++) {
-    const f = ((now / (heavy ? 5000 : 4000)) + i / n + seed) % 1;
+    const f = ((now / (heavy ? 5000 : 4000)) + i / n + seed) % 1 * 0.5;
     const r = s * (0.6 + f * (heavy ? 4 : 2.5));
     ctx.fillStyle = `rgba(${heavy ? 22 : 45},${heavy ? 20 : 42},${heavy ? 18 : 40},${(heavy ? 0.6 : 0.45) * (1 - f)})`;
     ctx.beginPath(); ctx.arc(sx + f * s * 5, sy - s - f * s * (heavy ? 12 : 7), r, 0, Math.PI * 2); ctx.fill();

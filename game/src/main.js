@@ -26,6 +26,7 @@ import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, a
 import { DWUI } from './dwui.js';
 import { drawDW, drawDWPreview } from './render/dwdraw.js';
 import { drawWeatherLayer } from './render/dwextra.js';
+import { drawSmoke } from './render/smoke.js';
 import { WX, DW_AD as DW_AD_REF } from './sim/dronewar.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1636,7 +1637,8 @@ function frameBody(now) {
     drawDWPreview(ctx, sim, view, controlSide, dwui.state, mouse ? screenToWorld(mouse[0], mouse[1]) : null);
     drawDW(ctx, sim, view, controlSide, dwui.state);
     drawArtillery(ctx, sim, view);
-    if (window.GFX !== 'low') drawWeatherLayer(ctx, sim.game, view, performance.now(), sim.time);
+    drawSmoke(ctx, sim.game, sim, view, performance.now(), window.GFX === 'low');
+    if (window.GFX !== 'low') drawWeatherLayer(ctx, sim.game, view, performance.now(), sim.time, sim.tod());
     drawLabels();
     uiTimer += dtReal;
     if (uiTimer > 0.25) {

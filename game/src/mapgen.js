@@ -63,7 +63,7 @@ function newWorld(seed, W, H, res = 4) {
 // connectRoadNet); случайные карты проходят те же проверки
 export const MAIN_SEED = 1337;
 // Версия генератора: увеличить после любых изменений карты (иначе браузер возьмёт старую копию из кэша)
-export const MAPGEN_VERSION = 'v10.4';
+export const MAPGEN_VERSION = 'v10.5';
 
 export function generateWorld(seed, layout = 'front') {
   if (layout === 'dronewar') return generateDroneWarWorld(seed);
@@ -1109,7 +1109,12 @@ function buildRingRoad(world, rng, C, R) {
     pts.push([C[0] + Math.cos(a) * r, C[1] + Math.sin(a) * r]);
   }
   const line = resample(catmullRom([...pts, pts[0], pts[1], pts[2]], 6), 10);
-  const bad = (p) => p[0] < 300 || p[1] < 300 || p[0] > world.W - 300 || p[1] > world.H - 300 || mask.near(p[0], p[1], 14, M.CITY | M.BUILD | M.VILLAGE | M.SETTLE | M.RAIL);
+  // ж/д объездная пересекает (переезд или путепровод), а у реки возле трассы — обрывается, не доходя
+  // 40 м: конец примкнёт к трассе «Т», а не ляжет кругом в воду
+  const majors = world.roadList.filter((r) => r.type === 'highway' || r.type === 'local');
+  const nearMajor = (p) => majors.some((r) => r.bbox.x0 - 60 < p[0] && r.bbox.x1 + 60 > p[0] && r.bbox.y0 - 60 < p[1] && r.bbox.y1 + 60 > p[1] && distToLine(p[0], p[1], r.line) < 55);
+  const bad = (p) => p[0] < 300 || p[1] < 300 || p[0] > world.W - 300 || p[1] > world.H - 300 || mask.near(p[0], p[1], 14, M.CITY | M.BUILD | M.VILLAGE | M.SETTLE)
+    || (mask.near(p[0], p[1], 90, M.WATER) && nearMajor(p));
   // ищем начало в «плохой» точке, чтобы куски не рвались на стыке замыкания
   let start = line.findIndex(bad);
   if (start < 0) start = 0;
@@ -1140,7 +1145,7 @@ function buildRingRoad(world, rng, C, R) {
         const t = segCross(r.line[i - 1], r.line[i], o.line[j - 1], o.line[j]);
         if (t < 0) continue;
         const x = r.line[i - 1][0] + (r.line[i][0] - r.line[i - 1][0]) * t, y = r.line[i - 1][1] + (r.line[i][1] - r.line[i - 1][1]) * t;
-        if (!world.roundabouts.some((q) => Math.hypot(q.x - x, q.y - y) < 80)) world.roundabouts.push({ x, y, r: o.type === 'highway' ? 26 : 18 });
+        if (!world.roundabouts.some((q) => Math.hypot(q.x - x, q.y - y) < 80) && !mask.near(x, y, 40, M.WATER | M.RAIL)) world.roundabouts.push({ x, y, r: o.type === 'highway' ? 26 : 18 });
       }
     }
   for (const q of world.roundabouts) mask.stampDisc(q.x, q.y, q.r + 6, M.ROAD);
@@ -1298,7 +1303,6 @@ function fixCrossings(world) {
         break;
       }
       done.add(key);
-      if (hw && !ok && cos > 0.5) { world.crossings.push({ x: P[0], y: P[1], main, minor, kind: 'x' }); continue; }
       if (!hw) { world.crossings.push({ x: P[0], y: P[1], main, minor, kind: 'x' }); continue; }
       // развязка «ромб»: путепровод и четыре съезда (с второстепенной — на проезжую часть своей стороны)
       const X = { x: P[0], y: P[1], main, minor, kind: 'interchange', tx: t[0], ty: t[1], nx, ny, ramps: [] };
@@ -1315,7 +1319,9 @@ function fixCrossings(world) {
         if (!free(ln, () => false) || onRoad(ln)) continue;
         X.ramps.push(addRoad(world, ln, 'ramp'));
       }
-      X.over = [[P[0] - nx * 32, P[1] - ny * 32], [P[0] + nx * 32, P[1] + ny * 32]];
+      // путепровод — по фактической оси второстепенной дороги над трассой (и при косом пересечении)
+      const m2 = along(minor.line, P);
+      X.over = resample([pointAt(minor.line, m2.s - 36).p, P, pointAt(minor.line, m2.s + 36).p], 4);
       world.crossings.push(X);
     }
     if (!changed) break;

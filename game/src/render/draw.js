@@ -749,7 +749,15 @@ function drawWater(ctx, world, b, q, ppm) {
         strokeLine(ctx, part, w.width + 22, 'rgba(78,92,48,0.85)'); // камыш
         strokeLine(ctx, part, w.width + 5, '#6d6a52'); // илистый берег
         strokeLine(ctx, part, w.width, '#2d4648');
+        // у берега — мелководье светлее и теплее, к стрежню — глубже и холоднее
+        if (w.width > 12) { strokeLine(ctx, offsetLine(part, w.width * 0.42), w.width * 0.16, 'rgba(92,104,84,0.35)'); strokeLine(ctx, offsetLine(part, -w.width * 0.42), w.width * 0.16, 'rgba(92,104,84,0.35)'); }
         strokeLine(ctx, part, w.width * 0.55, '#304c50');
+        strokeLine(ctx, part, w.width * 0.25, '#2a4549');
+        if (ppm >= 0.8 && w.width > 12) {
+          // струи течения и блики — короткие светлые штрихи вдоль русла
+          const k = Math.round(part[0][0] * 7 + part[0][1] * 3);
+          for (const [o, a] of [[-0.22, 0.16], [0.12, 0.12], [0.3, 0.1]]) strokeLine(ctx, offsetLine(part, w.width * o), Math.max(0.3, 0.5 / ppm), `rgba(190,210,212,${a})`, [3 + (k % 5), 11 + (k % 7)]);
+        }
       }
     } else {
       ctx.beginPath();
@@ -986,7 +994,6 @@ function drawRoads(ctx, world, b, q, ppm) {
   const nodes = junctionNodes(world).filter((n) => inQ(q, n.x, n.y, 120));
   for (const n of nodes) if (n.main.type === 'highway' && n.sub.type !== 'dirt') speedLanes(ctx, n, ppm);
   for (const n of nodes) fillets(ctx, n);
-  drawRoundabouts(ctx, world, q, ppm);
   if (ppm >= 0.9) drawBusStops(ctx, world, q, ppm);
 
   // 3) разметка (путепроводы — после неё, поверх трассы): у примыканий разметка второстепенной дороги обрывается стоп-линией, а краевая
@@ -1043,6 +1050,7 @@ function drawRoads(ctx, world, b, q, ppm) {
       }
     }
   }
+  drawRoundabouts(ctx, world, q, ppm); // поверх разметки: кольцо не перечёркивают полосы трассы
   drawOverpasses(ctx, world, q, ppm);
   if (ppm >= 1.5) drawZebras(ctx, world, q);
   if (ppm >= 2) drawSigns(ctx, nodes, world, q);
@@ -1193,10 +1201,9 @@ function speedLanes(ctx, n, ppm) {
 function drawOverpasses(ctx, world, q, ppm) {
   for (const c of world.crossings || []) {
     if (c.kind !== 'interchange' || !inQ(q, c.x, c.y, 120)) continue;
-    const r = c.minor, [a, b] = c.over;
-    const run = [[a[0] - c.nx * 8, a[1] - c.ny * 8], a, b, [b[0] + c.nx * 8, b[1] + c.ny * 8]];
+    const r = c.minor, run = c.over;
     ctx.save(); ctx.translate(4, 4.5); strokeLine(ctx, run, r.width + 3, 'rgba(0,0,0,0.38)'); ctx.restore();
-    for (const s of [-1, 1]) { const px = c.x + c.tx * 0 + c.nx * s * 14, py = c.y + c.ny * s * 14; ctx.fillStyle = '#8a877e'; ctx.fillRect(px - 1.2, py - 1.2, 2.4, 2.4); } // опоры на обочинах
+    for (const s of [-1, 1]) { const px = c.x + c.nx * s * 15, py = c.y + c.ny * s * 15; ctx.fillStyle = '#8a877e'; ctx.fillRect(px - 1.4, py - 1.4, 2.8, 2.8); } // опоры за обочинами
     ctx.lineCap = 'butt';
     strokeLine(ctx, run, r.width + 2, '#9c9580');
     strokeLine(ctx, run, r.width, SURF[r.type] || '#555653');
