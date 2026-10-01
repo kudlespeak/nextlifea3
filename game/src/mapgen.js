@@ -63,7 +63,7 @@ function newWorld(seed, W, H, res = 4) {
 // connectRoadNet); случайные карты проходят те же проверки
 export const MAIN_SEED = 1337;
 // Версия генератора: увеличить после любых изменений карты (иначе браузер возьмёт старую копию из кэша)
-export const MAPGEN_VERSION = 'v12.1';
+export const MAPGEN_VERSION = 'v12.2';
 
 export function generateWorld(seed, layout = 'front') {
   if (layout === 'dronewar') return generateDroneWarWorld(seed);
@@ -268,8 +268,8 @@ export function generateWorld(seed, layout = 'front') {
 // так что фуры с импортом и сырьём идут далеко
 export const DW_CORE_W = 56000, DW_EXT = 84015, DW_W = DW_CORE_W + 2 * DW_EXT, DW_H = 30000;
 export const DW_NAMES = {
-  blue: { cities: ['Арденск', 'Белогорье', 'Тихомирск'], river: 'Ардена', tpp: 'Арденская ТЭС' },
-  red: { cities: ['Кардагор', 'Краснокаменск', 'Заволжск'], river: 'Карда', tpp: 'Кардагорская ТЭС' },
+  blue: { cities: ['Арденск', 'Белогорье', 'Тихомирск'], river: 'Ардена', river2: 'Вельча', tpp: 'Арденская ТЭС' },
+  red: { cities: ['Кардагор', 'Краснокаменск', 'Заволжск'], river: 'Карда', river2: 'Сухая Карда', tpp: 'Кардагорская ТЭС' },
 };
 
 // Узлы объектов (локальные координаты: u — вдоль оси объекта, v — поперёк; размеры в метрах)
@@ -490,15 +490,29 @@ function generateDroneWarWorld(seed) {
     addItem(world.areas, { kind: 'floodplain', line: S.river, width: 320 }, 160);
   }
 
-  // ---------- Водохранилища ГЭС: выше по течению от столиц ----------
+  // ---------- Река глубокого тыла с водохранилищем ГЭС: генерация — далеко за городами ----------
+  for (const [side, S] of Object.entries(sides)) {
+    const xc = S.rear + S.dir * rng.float(40500, 46500);
+    const ph = rng.float(0, 6.28);
+    const pts = [];
+    for (let y = -150; y <= H + 150; y += 80) pts.push([xc + Math.sin(y / 1100 + ph) * 420 + (fbm(y / 1800, 7.3, seed + (side === 'red' ? 29 : 11)) - 0.5) * 1000, y]);
+    S.river2 = resample(catmullRom(pts, 6), 14);
+    const w2 = 40;
+    addItem(world.water, { kind: 'river', line: S.river2, width: w2, name: DW_NAMES[side].river2 }, w2 + 200);
+    mask.stampLine(S.river2, w2 + 8, M.WATER);
+    addItem(world.areas, { kind: 'floodplain', line: S.river2, width: 300 }, 150);
+    S.river2W = w2;
+  }
+
+  // ---------- Водохранилища ГЭС: на реке глубокого тыла ----------
   for (const [side, S] of Object.entries(sides)) {
     const y0 = H * 0.07, y1 = H * 0.2;
-    const seg = S.river.filter((p) => p[1] > y0 && p[1] < y1);
+    const seg = S.river2.filter((p) => p[1] > y0 && p[1] < y1);
     const mid = seg[Math.floor(seg.length / 2)];
     const res = blob(mid[0], (y0 + y1) / 2, 520, (y1 - y0) / 2, 0, rng, 40, 0.22);
     addItem(world.water, { kind: 'pond', poly: res }, 12);
     mask.stampPoly(res, M.WATER);
-    const damP = S.river.reduce((a, p) => (Math.abs(p[1] - y1 - 40) < Math.abs(a[1] - y1 - 40) ? p : a));
+    const damP = S.river2.reduce((a, p) => (Math.abs(p[1] - y1 - 40) < Math.abs(a[1] - y1 - 40) ? p : a));
     addItem(world.areas, { kind: 'dam', line: [[damP[0] - 330, damP[1]], [damP[0] + 330, damP[1]]], width: 26 }, 12);
     S.dam = damP;
   }
@@ -834,7 +848,8 @@ function generateDroneWarWorld(seed) {
     const rearX = S.rear;
     const nm = DW_NAMES[side].cities;
     const tppNorth = rng.chance(0.5); // ТЭС то на севере, то на юге тыла — у каждой стороны по-своему
-    const tpp = place(side, 'tpp', DW_NAMES[side].tpp, cap[0] + (rearX - cap[0]) * rng.float(0.35, 0.7), H * (tppNorth ? rng.float(0.12, 0.3) : rng.float(0.7, 0.88)), { angle: rng.float(-0.5, 0.5), paved: true });
+    // электростанции — далеко за городами, в глубоком тылу (до фронта — десятки километров)
+    const tpp = place(side, 'tpp', DW_NAMES[side].tpp, rearX + S.dir * rng.float(12000, 22000), H * (tppNorth ? rng.float(0.15, 0.3) : rng.float(0.7, 0.85)), { angle: rng.float(-0.5, 0.5), paved: true, reach: 12000 });
     const aA = rng.float(0, Math.PI * 2);
     const psA = place(side, 'ps330', `ПС 330 кВ «${nm[0]}»`, cap[0] - S.dir * 1800 + Math.cos(aA) * 900, cap[1] + Math.sin(aA) * 1600);
     const psB = place(side, 'ps330', 'ПС 330 кВ «Центральная»', (cap[0] + cN[0] + cS[0]) / 3 + S.dir * rng.float(-400, 1400), H * rng.float(0.35, 0.65));
@@ -887,10 +902,10 @@ function generateDroneWarWorld(seed) {
       place(side, 'fuel', `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}» №${nFuel++} (трасса)`, p[0], p[1] + (rng.chance(0.5) ? 50 : -50), { step: 15, paved: true, angle: rng.float(-0.1, 0.1) });
     }
     // Прочая генерация: ГЭС у плотины, ТЭЦ в столице, ветровая и солнечная станции
-    const hpp = place(side, 'hpp', side === 'blue' ? 'Верхнеарденская ГЭС' : 'Верхнекардинская ГЭС', S.dam[0] - S.dir * (S.riverW / 2 + 140), S.dam[1] + 90, { angle: 0, paved: true, step: 20, pad: 14 });
-    const chp = place(side, 'chp', `ТЭЦ «${nm[0]}»`, cap[0] + rng.float(-500, 500), cap[1] + 1700, { paved: true, forbid: cityForbid, step: 40 });
-    const wpp = place(side, 'wpp', `Ветровая электростанция «${side === 'blue' ? 'Вельский кряж' : 'Кардагорская степь'}»`, (cap[0] + OX + W / 2) / 2 + rng.float(-800, 800), H * 0.36 + rng.float(-800, 800), { angle: rng.float(-0.3, 0.3), pad: 30 });
-    const spp = place(side, 'spp', `Солнечная электростанция «${side === 'blue' ? 'Светлый Луг' : 'Суховей'}»`, (cap[0] + cS[0]) / 2 + rng.float(-600, 600), H * 0.66 + rng.float(-600, 600), { angle: rng.float(-0.2, 0.2) });
+    const hpp = place(side, 'hpp', side === 'blue' ? 'Вельчанская ГЭС' : 'Сухокардинская ГЭС', S.dam[0] - S.dir * (S.river2W / 2 + 140), S.dam[1] + 90, { angle: 0, paved: true, step: 20, pad: 14, reach: 16000 });
+    const chp = place(side, 'chp', `ТЭЦ «${nm[0]}»`, cap[0] + S.dir * rng.float(5500, 7500), cap[1] + rng.float(-1500, 1500), { paved: true, step: 40, reach: 8000 });
+    const wpp = place(side, 'wpp', `Ветровая электростанция «${side === 'blue' ? 'Вельский кряж' : 'Кардагорская степь'}»`, rearX + S.dir * rng.float(4000, 9000), H * rng.float(0.3, 0.42), { angle: rng.float(-0.3, 0.3), pad: 30, reach: 10000 });
+    const spp = place(side, 'spp', `Солнечная электростанция «${side === 'blue' ? 'Светлый Луг' : 'Суховей'}»`, rearX + S.dir * rng.float(3000, 8000), H * rng.float(0.62, 0.75), { angle: rng.float(-0.2, 0.2), reach: 10000 });
     // Элеватор у города с железной дорогой: сюда свозят зерно с полей, отсюда — экспорт
     { const er = new Rng((seed ^ 0xe1e7 ^ (side === 'blue' ? 1 : 2)) >>> 0); const ct = S.cities[2] || S.cities[1]; place(side, 'elevator', `Элеватор «${ct.name}»`, ct.c[0] + S.dir * 1300 * ct.sc, ct.c[1] + er.float(-500, 500), { paved: true, rng: er, angle: er.float(-0.3, 0.3) }); }
     chp.city = 0;
@@ -909,7 +924,7 @@ function generateDroneWarWorld(seed) {
     { const p = nearestPoint(highway, [extX(4500), H / 2]); place(side, 'weigh', 'Пункт весового контроля', p[0], p[1] + 70, { paved: true, angle: 0, step: 15 }); }
     // ЛЭП
     line(tpp, psA, 330); line(tpp, psB, 330); line(psA, psB, 330); line(hpp, psA, 330);
-    line(chp, cp2, 110); line(chp, cp1, 110); line(wpp, psB, 110); line(spp, pS, 110);
+    line(chp, cp2, 110); line(chp, cp1, 110); line(wpp, psA, 110); line(spp, psA, 110);
     const imp = { x: rearX + S.dir * 60, y: psA.y + rng.float(-1200, 1200), id: 'import', side };
     line(imp, psA, 330);
     line(psA, cp1, 110); line(psA, cp2, 110); line(psB, cp2, 110); line(psB, pN, 110); line(psB, pS, 110);
@@ -949,7 +964,7 @@ function generateDroneWarWorld(seed) {
   for (const b of bridges) {
     const side = b.x < OX + W / 2 ? 'blue' : 'red';
     const lay = infraLayout('bridge', b.L);
-    world.infra.push({ id: nextId++, side, kind: 'bridge', btype: b.type, name: `Мост через р. ${DW_NAMES[side].river} — ${TYPE_NAME[b.type]}`, x: b.x, y: b.y, angle: b.angle, w: lay.w, h: lay.h, comps: lay.comps, L: b.L });
+    world.infra.push({ id: nextId++, side, kind: 'bridge', btype: b.type, name: `Мост через р. ${world.water.query({ x0: b.x - 60, y0: b.y - 60, x1: b.x + 60, y1: b.y + 60 }).find((w) => w.kind === 'river' && w.name)?.name || DW_NAMES[side].river} — ${TYPE_NAME[b.type]}`, x: b.x, y: b.y, angle: b.angle, w: lay.w, h: lay.h, comps: lay.comps, L: b.L });
   }
 
   // ---------- Поля: массивы вокруг жилья (свой разворот, поля разной длины вразбежку) + пятна степи ----------

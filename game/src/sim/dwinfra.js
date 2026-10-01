@@ -23,7 +23,7 @@ export const REGION_SPEC = {
 const TRAIN = { lot: 15000, speed: 22, bonus: 1.1 }; // т, м/с; поездом дешевле — выручка +10%
 const BARGE = { lot: 20000, speed: 14, bonus: 1.15 };
 const PAVE = { perKm: 60, time: 180 };
-const LINE = { perKm: 25, time: 300, maxKm: 25 };
+const LINE = { perKm: 25, time: 300, maxKm: 100 };
 const EVAC = { cost: 300, time: 600, minFront: 14000 };
 const MAT_USE = 0.2; // доля цены, которую покрывают стройматериалы (скидка 20%)
 
@@ -304,6 +304,25 @@ export class DWInfra {
     return pylons;
   }
   // Подстанция достроена: заходы ЛЭП строятся вместе с ней (входят в смету), район перераспределяется
+  // План заходов ЛЭП новой подстанции в точке (x, y): к кому и какого напряжения, длина и цена
+  substationPlan(side, kind, x, y, self = null) {
+    const g = this.g;
+    const live = (k) => g.objs(side, k).filter((q) => q !== self && !(q.build && !q.build.up));
+    const near = (list) => list.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
+    const p110 = near(live('ps110')), links = [];
+    if (kind === 'ps110' && p110[0]) {
+      links.push({ b: p110[0], kv: 110 });
+      const hub = near(live('ps330')).find((q) => Math.hypot(q.x - x, q.y - y) < 30000) || p110[1];
+      if (hub) links.push({ b: hub, kv: 110 });
+    } else if (kind === 'ps330') {
+      const src = near([...live('ps330'), ...live('tpp'), ...live('hpp')])[0];
+      if (src) links.push({ b: src, kv: 330 });
+      for (const q of p110.slice(0, 2)) links.push({ b: q, kv: 110 });
+    } else if (kind === 'ps35' && p110[0]) links.push({ b: p110[0], kv: 35 });
+    let km = 0, cost = 0;
+    for (const l of links) { l.km = Math.hypot(l.b.x - x, l.b.y - y) / 1000; km += l.km; cost += l.km * (l.kv >= 330 ? 40 : l.kv >= 110 ? LINE.perKm : 12); }
+    return { links, p110, km, cost: Math.round(cost * (g.state?.k(side, 'build') ?? 1)), time: Math.round(km * 8) };
+  }
   substationReady(o) {
     const g = this.g, side = o.side;
     const live = (k) => g.objs(side, k).filter((q) => q !== o && !(q.build && !q.build.up));
@@ -317,27 +336,27 @@ export class DWInfra {
       this.sim.events.push({ type: 'forts', bbox: { x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 } });
       return b;
     };
-    const p110 = near(live('ps110'));
+    const plan = this.substationPlan(side, o.kind, o.x, o.y, o), p110 = plan.p110;
+    for (const l of plan.links) link(l.b, l.kv);
     if (o.kind === 'ps110') {
       const donor = p110[0];
-      if (donor) {
+      if (donor && Math.hypot(donor.x - o.x, donor.y - o.y) < 15000) {
+        // рядом с действующей — забирает треть её района
         o.city = donor.city ?? 1;
         const share = 0.33 * (donor.loadK ?? 1);
         donor.loadK = (donor.loadK ?? 1) - share;
         o.loadK = share; o.donor = donor.id;
-        link(donor, 110);
-        const hub = near(live('ps330')).find((q) => Math.hypot(q.x - o.x, q.y - o.y) < 30000) || p110[1];
-        link(hub, 110);
-        this.sim.msg(`${o.name}: под напряжением — забрала треть района ${donor.name}; две ЛЭП 110 кВ в работе`, side);
+        this.sim.msg(`${o.name}: под напряжением — забрала треть района ${donor.name}; ЛЭП 110 кВ в работе (${plan.km.toFixed(0)} км)`, side);
+      } else {
+        // далеко от городов — своя небольшая нагрузка (сёла, заводы, стоянки тылового района)
+        o.city = 1; o.loadK = 0.12;
+        this.sim.msg(`${o.name}: под напряжением — питает тыловой район; ЛЭП 110 кВ ${plan.km.toFixed(0)} км`, side);
       }
     } else if (o.kind === 'ps330') {
-      const src = near([...live('ps330'), ...live('tpp'), ...live('hpp')])[0];
-      link(src, 330);
-      p110.slice(0, 2).forEach((q) => link(q, 110));
-      this.sim.msg(`${o.name}: под напряжением — заход 330 кВ${src ? ` от «${src.name}»` : ''} и ЛЭП 110 кВ к районным подстанциям`, side);
+      const src = plan.links.find((l) => l.kv === 330)?.b;
+      this.sim.msg(`${o.name}: под напряжением — заход 330 кВ${src ? ` от «${src.name}»` : ''} и ЛЭП 110 кВ к районным подстанциям (${plan.km.toFixed(0)} км линий)`, side);
     } else if (o.kind === 'ps35') {
       o.ps = p110[0]?.id;
-      link(p110[0], 35);
       this.sim.msg(`${o.name}: заводы в 10 км переведены на промышленный фидер 35 кВ`, side);
     } else if (o.kind === 'mobps') {
       o.ps = p110[0]?.id;

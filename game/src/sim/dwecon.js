@@ -65,9 +65,9 @@ export const BUILD = {
   cement: { name: 'Цементный завод', cost: 220, time: 300, desc: 'стройматериалы +3 в минуту (нужен свет): стройка и ремонт на 20% дешевле, пока есть запас' },
   reserve: { name: 'Госрезерв', cost: 200, time: 240, desc: '+2 резервных автотрансформатора; запас топлива, если нефтебаза разрушена' },
   // ----- подстанции -----
-  ps330: { name: 'ПС 330/110 кВ', cost: 950, time: 3000, desc: 'второй опорный узел сети: заход 330 кВ от ближайшей ТЭС, ГЭС или ПС 330 и ЛЭП 110 кВ к двум ближайшим ПС 110 — если главную ПС 330 выбьют, районы не останутся без питания' },
-  ps110: { name: 'ПС 110/10 кВ', cost: 340, time: 1500, desc: 'новая районная подстанция: забирает треть нагрузки ближайшей ПС 110 (удар по одной гасит меньше районов), две ЛЭП 110 кВ прокладываются сами' },
-  ps35: { name: 'ПС 35/10 кВ (промышленная)', cost: 160, time: 900, desc: 'питает заводы в радиусе 10 км по отдельному фидеру 35 кВ: веерные отключения в городе их не касаются; сама запитана от ближайшей ПС 110' },
+  ps330: { name: 'ПС 330/110 кВ', cost: 950, time: 3000, desc: 'второй опорный узел сети: заход 330 кВ от ближайшей ТЭС, ГЭС или ПС 330 (до 100 км) и ЛЭП 110 кВ к двум ближайшим ПС 110 — если главную ПС 330 выбьют, районы не останутся без питания. ЛЭП входят в смету: +40 оч/км (330 кВ), +25 оч/км (110 кВ)' },
+  ps110: { name: 'ПС 110/10 кВ', cost: 340, time: 1500, desc: 'районная подстанция где угодно в 100 км от действующей ПС 110: рядом с городом забирает треть нагрузки соседней (удар по одной гасит меньше районов), в глубоком тылу питает свой район и заводы. ЛЭП 110 кВ прокладываются вместе с ней: +25 оч/км' },
+  ps35: { name: 'ПС 35/10 кВ (промышленная)', cost: 160, time: 900, desc: 'питает заводы в радиусе 10 км по отдельному фидеру 35 кВ: веерные отключения в городе их не касаются; ЛЭП 35 кВ от ближайшей ПС 110 (до 100 км, +12 оч/км)' },
   mobps: { name: 'Мобильная ПС 110/10 кВ', cost: 210, time: 420, near: 'ps110', desc: 'трансформатор на прицепе у ПС 110 кВ (до 1,5 км): +45 МВт мощности трансформации — выручает, пока сгоревшие трансформаторы в ремонте' },
   // ----- промышленность (строится с нуля, долго) -----
   steel: { name: 'Металлургический завод', cost: 520, time: 2400, desc: 'руда → сталь (для двигателей, кабеля, сеток, трансформаторов, грузовиков); нужен свет и 1500 рабочих' },
@@ -451,10 +451,10 @@ export class DWEconomy {
     if (B.near === 'ps110' && !this.g.objs(side, 'ps110').some((q) => Math.hypot(q.x - x, q.y - y) < 1500)) return { err: 'Только рядом с ПС 110 кВ (до 1,5 км)' };
     const live = (k) => this.g.objs(side, k).filter((q) => !(q.build && !q.build.up));
     const dist = (q) => Math.hypot(q.x - x, q.y - y);
-    if (kind === 'ps110' && !live('ps110').some((q) => dist(q) < 15000)) return { err: 'Нужна действующая ПС 110 кВ в 15 км: новая забирает часть её района' };
+    if (kind === 'ps110' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна действующая ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 110 кВ' };
     if (kind === 'ps110' && live('ps110').some((q) => dist(q) < 1200)) return { err: 'Слишком близко к другой ПС 110 кВ (нужно от 1,2 км)' };
-    if (kind === 'ps35' && !live('ps110').some((q) => dist(q) < 20000)) return { err: 'Нужна ПС 110 кВ в 20 км — от неё пойдёт ЛЭП 35 кВ' };
-    if (kind === 'ps330' && ![...live('ps330'), ...live('tpp'), ...live('hpp')].some((q) => dist(q) < 45000)) return { err: 'Нужна ТЭС, ГЭС или ПС 330 кВ в 45 км — для захода 330 кВ' };
+    if (kind === 'ps35' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 35 кВ' };
+    if (kind === 'ps330' && ![...live('ps330'), ...live('tpp'), ...live('hpp')].some((q) => dist(q) < 100000)) return { err: 'Нужна ТЭС, ГЭС или ПС 330 кВ не дальше 100 км — для захода 330 кВ' };
     if (kind === 'mobps' && this.g.objs(side, 'mobps').some((q) => dist(q) < 1500)) return { err: 'У этой подстанции мобильная ПС уже есть' };
     if (kind === 'pontoon') {
       // у моста: понтоны наводят рядом, ниже по течению
@@ -515,14 +515,16 @@ export class DWEconomy {
     if (g.winner) return 'Партия окончена';
     const site = this.siteFor(side, kind, x, y);
     if (site.err) return site.err;
-    const cost0 = this.cost(side, kind), cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
+    // подстанции — вместе с заходами ЛЭП: цена и срок растут с длиной линий
+    const plan = ['ps330', 'ps110', 'ps35'].includes(kind) && this.g.infra ? this.g.infra.substationPlan(side, kind, site.x, site.y) : null;
+    const cost0 = this.cost(side, kind) + (plan?.cost || 0), cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.g.infra?.matPrice(side, cost0, true); // стройматериалы — скидка 20%
     S.points -= cost; S.stats.spent += cost;
     const nm = this.nearName(site.x, site.y, side);
     const name = kind === 'decoy' ? `ПС 110 кВ «${nm}-${2 + (this.nextBuilt % 3)}»` : kind === 'store' ? `Магазин, ${nm}` : kind === 'fuel' ? `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${nm}` : kind === 'pontoon' ? `Понтонная переправа у моста «${this.g.obj(site.bridge)?.name.replace(/^Мост через /, '')}»` : `${B.name} «${nm}»`;
-    const o = this.addObject({ id: this.nextBuilt++, side, kind, name, mimic: kind === 'decoy' ? 'ps110' : undefined, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, L: site.L, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time, total: B.time }, built: true });
-    this.sim.msg(`Стройка: ${name} — готово через ${Math.round(B.time / 60)} мин (−${cost} оч.)`, side);
+    const o = this.addObject({ id: this.nextBuilt++, side, kind, name, mimic: kind === 'decoy' ? 'ps110' : undefined, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, L: site.L, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time + (plan?.time || 0), total: B.time + (plan?.time || 0) }, built: true });
+    this.sim.msg(`Стройка: ${name} — готово через ${Math.round((B.time + (plan?.time || 0)) / 60)} мин (−${cost} оч.${plan?.km ? `, с ЛЭП ${plan.km.toFixed(0)} км` : ''})`, side);
     return o ? null : 'Не удалось';
   }
   // Объект по описанию (стройка у хоста, воссоздание у гостя по снимку)
