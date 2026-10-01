@@ -198,3 +198,33 @@ export function applyWorldEvent(sim, ev, invalidate) {
     invalidate(w.bbox);
   } else for (const b of applyEconEvent(world, ev) || []) invalidate(b);
 }
+
+// ---------- Дельта-снимки ----------
+// Хост отправляет только изменившиеся поля снимка (верхний уровень и раздел «Войны дронов»);
+// раз в 16 снимков (2 с) — полный, чтобы гость, пропустивший пакет, догнал состояние
+const enc = (v) => JSON.stringify(v);
+export function packDelta(state, snap) {
+  state.n = (state.n || 0) + 1;
+  const full = state.n % 16 === 1 || !state.prev;
+  const prev = state.prev || {}, out = { t: 'snap', d: full ? 0 : 1 }, cur = {};
+  for (const [k, v] of Object.entries(snap)) {
+    if (k === 't') continue;
+    if (k === 'dw' && v && typeof v === 'object') {
+      const sub = {}, cs = {};
+      for (const [k2, v2] of Object.entries(v)) { const e = enc(v2); cs[k2] = e; if (full || prev.dw?.[k2] !== e) sub[k2] = v2; }
+      cur.dw = cs; out.dw = sub;
+      continue;
+    }
+    const e = enc(v); cur[k] = e;
+    if (full || prev[k] !== e || k === 'time') out[k] = v;
+  }
+  state.prev = cur;
+  return out;
+}
+export function unpackDelta(state, m) {
+  if (!m.d) { state.last = m; return m; }
+  if (!state.last) return null; // ждём полный снимок
+  const full = { ...state.last, ...m, dw: m.dw ? { ...(state.last.dw || {}), ...m.dw } : state.last.dw, d: 0 };
+  state.last = full;
+  return full;
+}

@@ -62,6 +62,8 @@ function newWorld(seed, W, H, res = 4) {
 // Основная карта «Войны дронов»: выверенный seed (проверка и починка — mapcheck.js, связность дорог —
 // connectRoadNet); случайные карты проходят те же проверки
 export const MAIN_SEED = 1337;
+// Версия генератора: увеличить после любых изменений карты (иначе браузер возьмёт старую копию из кэша)
+export const MAPGEN_VERSION = 'v10.4';
 
 export function generateWorld(seed, layout = 'front') {
   if (layout === 'dronewar') return generateDroneWarWorld(seed);

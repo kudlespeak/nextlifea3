@@ -12,7 +12,28 @@ const COMPOSE_BELOW = 3;
 const MAX_CACHE = 220;
 const MAX_INFLIGHT = 3;
 
+// Фоновые потоки отрисовки создаются заранее (до генерации мира в основном потоке): они строят
+// свою копию мира параллельно, а на многоядерных машинах с памятью их два — чанки рисуются вдвое быстрее
+let pre = null;
+function workerCount() {
+  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+  const mem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 8;
+  return cores >= 6 && mem >= 8 ? 2 : 1;
+}
+function spawn(seed, layout) {
+  const ws = [];
+  for (let i = 0; i < workerCount(); i++) {
+    try {
+      const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      w.postMessage({ t: 'init', seed, layout, write: false });
+      ws.push(w);
+    } catch { break; }
+  }
+  return { seed, layout, ws };
+}
+
 export class ChunkCache {
+  static prewarm(seed, layout) { pre = spawn(seed, layout); }
   constructor(world) {
     this.world = world;
     // Обзорные уровни собираются из детальных; на большой карте это сотни чанков — рисуем обзор напрямую
@@ -21,14 +42,16 @@ export class ChunkCache {
     this.frame = 0;
     this.tick = 0; // счётчик изменений мира (для устаревших ответов)
     this.inflight = new Map(); // key → stamp
-    this.worker = null;
     this.ready = false;
-    try {
-      this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-      this.worker.onmessage = (e) => this.onMessage(e.data);
-      this.worker.onerror = () => { this.worker = null; this.inflight.clear(); };
-      this.worker.postMessage({ t: 'init', seed: world.seed, layout: world.layout });
-    } catch { this.worker = null; }
+    const P = pre && pre.seed === world.seed && pre.layout === world.layout ? pre : spawn(world.seed, world.layout);
+    if (pre && P !== pre) for (const w of pre.ws) w.terminate();
+    pre = null;
+    this.workers = P.ws.map((w) => ({ w, n: 0 }));
+    for (const W of this.workers) {
+      W.w.onmessage = (e) => { if (e.data.t === 'chunk') W.n--; this.onMessage(e.data); };
+      W.w.onerror = () => { this.workers = this.workers.filter((q) => q !== W); this.inflight.clear(); };
+    }
+    this.worker = this.workers.length ? this.workers[0].w : null;
   }
   worldSize(level) {
     return CHUNK_PX / LEVELS[level];
@@ -47,7 +70,7 @@ export class ChunkCache {
   }
   // Событие изменения мира — фоновый поток повторяет его у себя
   worldEvent(ev) {
-    if (this.worker) this.worker.postMessage({ t: 'ev', ev });
+    for (const W of this.workers) W.w.postMessage({ t: 'ev', ev });
   }
   onMessage(m) {
     if (m.t === 'ready') { this.ready = true; return; }
@@ -67,10 +90,12 @@ export class ChunkCache {
     const size = this.worldSize(level);
     const key = this.key(level, cx, cy);
     const b = { x0: cx * size, y0: cy * size, x1: (cx + 1) * size, y1: (cy + 1) * size };
-    if (this.worker) {
-      if (this.inflight.has(key) || this.inflight.size >= MAX_INFLIGHT) return null;
+    if (this.workers.length) {
+      if (this.inflight.has(key) || this.inflight.size >= MAX_INFLIGHT * this.workers.length) return null;
+      const W = this.workers.reduce((a, q) => (q.n < a.n ? q : a));
+      W.n++;
       this.inflight.set(key, this.tick);
-      this.worker.postMessage({ t: 'render', key, stamp: this.tick, b, ppm: LEVELS[level], px: CHUNK_PX });
+      W.w.postMessage({ t: 'render', key, stamp: this.tick, b, ppm: LEVELS[level], px: CHUNK_PX });
       return null;
     }
     if (performance.now() > deadline) return null;
@@ -85,7 +110,7 @@ export class ChunkCache {
   }
   // Можно ли отправить ещё запрос в фон
   busy() {
-    return this.worker ? this.inflight.size >= MAX_INFLIGHT : false;
+    return this.workers.length ? this.inflight.size >= MAX_INFLIGHT * this.workers.length : false;
   }
   compose(level, cx, cy, deadline) {
     const kids = [];

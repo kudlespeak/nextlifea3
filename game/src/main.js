@@ -1,4 +1,5 @@
-import { generateWorld, MAIN_SEED, applyEconEvent } from './mapgen.js';
+import { MAIN_SEED, applyEconEvent } from './mapgen.js';
+import { loadWorld } from './worldcache.js';
 import { ChunkCache, LEVELS, CHUNK_PX } from './render/chunks.js';
 import { Rng } from './rng.js';
 import { Sim, SIDES, POSES, UNIT_TYPES, unitDef } from './sim/units.js';
@@ -18,6 +19,8 @@ import { drawFacilities, drawPlacement } from './render/facilities.js';
 import { FACILITIES } from './sim/construct.js';
 import { RES, RES_NAMES } from './sim/logistics.js';
 import { daylight } from './power.js';
+import { packDelta, unpackDelta } from './net.js';
+const deltaOut = {}, deltaIn = {};
 import { Net, makeSnapshot, applySnapshot, gridPacket, applyGrid, interpolate, applyWorldEvent } from './net.js';
 
 import { DWUI } from './dwui.js';
@@ -180,7 +183,7 @@ $('mp-join').onclick = async () => {
   role = 'guest';
   net.on('joined', (m) => { $('mp-status').textContent = `Вы в комнате ${m.code}. Ждём, пока хост начнёт игру…`; })
     .on('start', (m) => startGame(m.cfg))
-    .on('snap', (m) => { if (sim) { applySnapshot(sim, m); lastSnap = performance.now(); if (m.spd) { mpSpeed.host = m.spd[0]; mpSpeed.guest = m.spd[1]; mpApply(); } } })
+    .on('snap', (m0) => { const m = unpackDelta(deltaIn, m0); if (sim && m) { applySnapshot(sim, m); lastSnap = performance.now(); if (m.spd) { mpSpeed.host = m.spd[0]; mpSpeed.guest = m.spd[1]; mpApply(); } } })
     .on('grid', (m) => { if (sim) applyGrid(sim, m); })
     .on('ev', (m) => { if (!sim) return; for (const e of m.list) { chunks.worldEvent(e); applyWorldEvent(sim, e, (b) => chunks.invalidate(b)); } })
     .on('msg', (m) => { if (sim && (!m.side || m.side === controlSide)) log(m.text); });
@@ -192,14 +195,17 @@ buildMenu();
 
 // ================= Запуск партии =================
 function startGame(c) {
+  deltaOut.prev = null; deltaOut.n = 0; deltaIn.last = null;
   for (const id of ['btn-forts', 'btn-interior']) { const b = $(id); if (b) b.style.display = c.mode === 'drones' ? 'none' : ''; }
   cfg = c;
   controlSide = c.playerSide;
   $('menu-screen').classList.add('hide');
   $('loading').style.opacity = 1;
   $('loading').textContent = 'Генерация местности…';
-  setTimeout(() => {
-    world = generateWorld(c.seed, c.mode === 'drones' ? 'dronewar' : 'front');
+  const layout = c.mode === 'drones' ? 'dronewar' : 'front';
+  ChunkCache.prewarm(c.seed, layout); // потоки отрисовки строят свою копию мира параллельно
+  setTimeout(async () => {
+    world = await loadWorld(c.seed, layout);
     chunks = new ChunkCache(world);
     sim = new Sim(world);
     sim.setupGame(c);
@@ -207,7 +213,7 @@ function startGame(c) {
     if (c.mode === 'drones') { const fe = { k: 'fog', side: controlSide, on: sim.game.fog, reset: true, ids: [...sim.game.intel[controlSide]] }; chunks.worldEvent(fe); applyEconEvent(world, fe); }
     digRng = new Rng(c.seed ^ 0xd16);
     if (c.multiplayer) { timeScale = 1; mpSpeed.host = mpSpeed.guest = 1; mpApply(); document.querySelector('.timebox').classList.add('mp'); }
-    $('info').textContent = `seed ${c.seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.genTime.toFixed(0)} мс`;
+    $('info').textContent = `seed ${c.seed} · карта ${(world.W / 1000).toFixed(0)}×${(world.H / 1000).toFixed(0)} км · ${world.fromCache ? 'из кэша ' : ''}${world.genTime.toFixed(0)} мс`;
     const b = $('side-badge');
     b.textContent = FACTIONS[controlSide].country;
     b.className = controlSide;
@@ -1552,7 +1558,7 @@ function frameBody(now) {
   if (role === 'host') {
     if (netEvents.length) net.send({ t: 'ev', list: netEvents });
     netTimer += dtReal;
-    if (netTimer > 0.125) { netTimer = 0; const sn = makeSnapshot(sim); sn.spd = [mpSpeed.host, mpSpeed.guest, paused ? 0 : timeScale]; net.send(sn); }
+    if (netTimer > 0.125) { netTimer = 0; const sn = makeSnapshot(sim); sn.spd = [mpSpeed.host, mpSpeed.guest, paused ? 0 : timeScale]; net.send(packDelta(deltaOut, sn)); }
     gridTimer += dtReal;
     if (gridTimer > 3) { gridTimer = 0; const gp = gridPacket(sim); if (gp) net.send(gp); }
   }
