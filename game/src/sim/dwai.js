@@ -91,6 +91,19 @@ export class DroneWarAI {
     }
     if (S.queue.length > S.crews.length && S.crews.length < 20 && this.can('def', 60) && !this.g.buyCrew(this.side)) this.pay('def', 60);
     if (S.spare === 0 && this.can('def', 150) && !this.g.buySpare(this.side)) this.pay('def', 150);
+    // стройки ждут бригаду — нанимаем; ключевые объекты маскируем; ночью — прожекторы у огневых групп
+    if (t > (this.next.v13 ?? 0)) {
+      this.next.v13 = t + 60;
+      const EB = g.econ.side[this.side];
+      if (EB.buildWait > 0 && (EB.builders ?? 3) < 9 && S.points > 300 + 20 * (EB.builders ?? 3)) g.hireBuilders(this.side);
+      if (S.points > 1400) { const o = ['tpp', 'ps330', 'missile', 'steel', 'turbine', 'chp'].flatMap((k) => g.objs(this.side, k)).find((q) => !q.camo && !q.build); if (o) g.camouflage(this.side, o.id); }
+      const mogs = g.ad.filter((a) => !a.dead && a.side === this.side && a.type === 'mog');
+      const lights = g.ad.filter((a) => !a.dead && a.side === this.side && a.type === 'light');
+      if (mogs.length >= 2 && lights.length < Math.floor(mogs.length / 2) && S.points > 200) {
+        const m = mogs.find((q) => !lights.some((l) => Math.hypot(l.x - q.x, l.y - q.y) < 2000));
+        if (m) g.placeAD(this.side, 'light', m.x + this.sim.rng.float(-250, 250), m.y + this.sim.rng.float(-250, 250));
+      }
+    }
     this.lastPts = S.points;
   }
 
@@ -455,7 +468,13 @@ export class DroneWarAI {
       const over = live.filter((q) => (q.shed || 0) > 0 || q.unstable).sort((a, b) => (b.demand || 0) - (a.demand || 0))[0];
       if (over && have('ps110') < live.length + 1 && have('ps110') < 14) add('ps110', over.x, over.y, 1500, 4500, 2.5 + (1 - S.supply) * 0.4 * (ind + tax), `новая ПС 110 кВ рядом с ${over.name}`);
       const plants = g.res?.plants(side) || [];
-      if (plants.length >= 4 && have('ps35') < 2) { const pl = plants[rng.int(0, plants.length - 1)]; add('ps35', pl.x, pl.y, 600, 3000, 2.2, 'промышленная подстанция 35 кВ у заводов'); }
+      // промышленная ПС 35: заводы перегружают трансформаторы района или стоят без света — фидер с шин 110 кВ
+      const dark = plants.filter((p) => p.idle === 'нет света');
+      const heavy = live.find((q) => (q.plantMW || 0) > 40 && (q.demand || 0) > (q.trCap || 1e9) * 0.85);
+      if ((dark.length || heavy || plants.length >= 6) && have('ps35') < 3 && !g.objs(side, 'ps35').some((q) => q.build)) {
+        const pl = dark[0] || plants.filter((p) => !g.objs(side, 'ps35').some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 10000)).sort((a, b) => (b.level || 1) - (a.level || 1))[0];
+        if (pl) add('ps35', pl.x, pl.y, 600, 3000, dark.length || heavy ? 8 : 3, 'промышленная подстанция 35 кВ у заводов');
+      }
       if (have('ps330') < 2 && S.points > 2500) { const c = cities[0]; if (c) add('ps330', c.x, c.y, 4000, 9000, 3, 'вторая ПС 330 кВ (резерв сети)'); }
     }
     if (busy) return out;

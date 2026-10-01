@@ -71,6 +71,8 @@ export const FACT = {
   autoplant: { name: 'Автосборочный завод', in: { steel: 2, eng_p: 1 }, out: { trucks: 1 }, t: 400, workers: 1200, upkeep: 0.8, power: true },
 };
 // Сборка: линии на 1-м уровне; какие классы собирает
+// Нагрузка заводов на сеть, МВт (за уровень): металлургия и химия — энергоёмкие
+export const PLANT_MW = { steel: 60, chem: 45, refinery: 30, turbine: 20, autoplant: 18, missile: 20, engine: 15, explosive: 15, trafo: 15, electronics: 12, cable: 12, composite: 10, battery: 10, uground: 10, mine: 10, concrete: 8, ewfab: 8, workshop: 6, optics: 6, netfab: 6, asphalt: 6, oilfield: 6, decoyfab: 4, quarry: 4, minifab: 2, terminal: 2 };
 export const ASSEMBLY = {
   workshop: { name: 'Сборочный цех БПЛА', lines: 3, drones: true, workers: 600, upkeep: 0.6, power: true },
   missile: { name: 'Ракетный завод', lines: 2, missiles: true, workers: 1500, upkeep: 1.4, power: true },
@@ -137,6 +139,22 @@ export class DWResearch {
 
   // ---------------------------------------------------------------- Заводы стороны
   ready(o) { return !(o.build && !o.build.up) && o.comps.some((c) => c.state !== 'destroyed'); }
+  // Нагрузка заводов по подстанциям 110 кВ (МВт): завод на фидере ПС 35 — через её ПС 110
+  plantLoad(side) {
+    const out = new Map(), g = this.g;
+    for (const o of this.plants(side)) {
+      const mw = (PLANT_MW[o.kind] || 0) * (o.level || 1) * (o.mode === 'rush' ? 1.3 : o.mode === 'night' ? 1.15 : 1);
+      if (!mw || o.offGrid || o.idle === 'нет света') continue;
+      if (!o._ps || this.sim.time - (o._psT || 0) > 30) {
+        o._psT = this.sim.time;
+        const p35 = g.objs(side, 'ps35').find((q) => !q.build && Math.hypot(q.x - o.x, q.y - o.y) < 10000);
+        // фидер ПС 35 питается с шин 110 кВ (мимо трансформаторов 110/10 района) — ключ «h<id>»
+        o._ps = p35?.ps != null ? 'h' + p35.ps : g.econ.nearestPS(side, o.x, o.y)?.id;
+      }
+      if (o._ps != null) out.set(o._ps, (out.get(o._ps) || 0) + mw);
+    }
+    return out;
+  }
   plants(side) { return this.g.objs(side).filter((o) => (FACT[o.kind] || ASSEMBLY[o.kind]) && this.ready(o)); }
   // Мощность завода сейчас (0…∼2): уровень, выход на мощность, узлы, свет, рабочие, режим
   power(o) {
@@ -153,9 +171,13 @@ export class DWResearch {
       const p35 = g.objs(o.side, 'ps35').filter((q) => !q.build && Math.hypot(q.x - o.x, q.y - o.y) < 10000).sort((a, b) => (b.supply ?? 0) - (a.supply ?? 0))[0];
       const ps = p35 || g.econ.nearestPS(o.side, o.x, o.y);
       const sup = ps ? (ps.supply ?? 1) : 1;
+      // «уступать свет городу»: при нехватке на подстанции завод встаёт первым (его нагрузка снимается)
+      if (o.yieldPower && !p35 && ps && (sup < 0.97 || (ps.shed || 0) > 0)) { o.idle = 'уступил свет городу'; o.offGrid = true; return 0; }
+      o.offGrid = false;
       if (sup < 0.45) { o.idle = 'нет света'; return 0; }
       k *= Math.min(1, sup);
     }
+    if ((o.evacUntil || 0) > this.sim.time) { o.idle = 'эвакуация района (ГО)'; return 0; }
     if (F.workers) k *= T.labor;
     k *= MODES[o.mode || 'normal'].k;
     return k;

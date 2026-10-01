@@ -16,7 +16,7 @@ const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
 const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', ps35: '35', mobps: 'МПС', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС',
   quarry: 'КАР', mine: 'РУД', oilfield: 'НП', truckstop: 'СТФ', weigh: 'ВК', steel: 'МЗ', concrete: 'ЖБИ', asphalt: 'АБЗ', chem: 'ХК', engine: 'ДВ', turbine: 'ТРД', explosive: 'ПЗ', electronics: 'ЭЛК', composite: 'КМП', optics: 'ОПТ', battery: 'АКБ', cable: 'КАБ', trafo: 'ТРЗ', netfab: 'СЕТ', ewfab: 'РЭБ', decoyfab: 'МАК', autoplant: 'АВТ', terminal: 'ТЕРМ', missile: 'РЗ', uground: 'ПЦ', minifab: 'ЦЕХ', mlaunch: 'КР', rivlaunch: 'КР', airbase: 'АВБ', workshop: 'СЦ' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
-const AD_GLYPH = { dummy: 'МАК', mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
+const AD_GLYPH = { light: 'ПРЖ', dummy: 'МАК', mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
 // Высота на экране: логарифмически сжата, иначе дрон на 2 км «улетал» бы от своей точки
 export const dispH = (alt) => (alt <= 0 ? 0 : 12 + Math.min(alt, 3000) / 3000 * 110);
@@ -80,23 +80,244 @@ function drawFlows(ctx, g, side, toS, z, dpr) {
 }
 
 // Стройка: бетонные основания узлов, башенный кран, кольцо готовности
-function construction(ctx, o, toS, z, dpr, k) {
+// Стройка: котлован → фундамент и стены (растут) → отделка; ограждение, башенный кран с
+// грузом, рабочие в жилетах, экскаватор и бетономешалка, пыль, сварка, вагончики строителей
+function construction(ctx, o, toS, z, dpr, k, now, night) {
+  k = Math.max(0, Math.min(1, k));
+  const B = o.build || {};
+  const stalled = B.wait || B.needMat; // нет бригады или материалов — стройка стоит
+  const ca = Math.cos(o.angle), sa = Math.sin(o.angle);
+  const W2 = o.w / 2 + 14, H2 = o.h / 2 + 14;
+  const P = (u, v) => toS(o.x + u * ca - v * sa, o.y + u * sa + v * ca);
+  const seed = (typeof o.id === 'number' ? o.id : 7) * 13.7;
+  const rnd = (i) => hash(seed + i * 3.1);
+  const tt = now / 1000;
+  // площадка: утоптанный грунт
+  ctx.fillStyle = 'rgba(122,104,78,0.55)';
+  ctx.beginPath(); for (const [u, v] of [[-W2, -H2], [W2, -H2], [W2, H2], [-W2, H2]]) ctx.lineTo(...P(u, v)); ctx.closePath(); ctx.fill();
+  // узлы: котлован / фундамент / стены по фазе
+  const phase = k < 0.3 ? 0 : k < 0.75 ? 1 : 2;
   for (const c of o.comps) {
     const cs = Math.cos(c.angle), sn = Math.sin(c.angle);
-    ctx.fillStyle = k < 0.35 ? 'rgba(110,98,78,0.85)' : 'rgba(150,148,140,0.9)';
-    ctx.beginPath();
-    for (const [u, v] of [[-c.w / 2, -c.h / 2], [c.w / 2, -c.h / 2], [c.w / 2, c.h / 2], [-c.w / 2, c.h / 2]]) { const [px, py] = toS(c.x + u * cs - v * sn, c.y + u * sn + v * cs); ctx.lineTo(px, py); }
-    ctx.closePath(); ctx.fill();
-    if (k > 0.35 && z > 0.5) { ctx.strokeStyle = 'rgba(90,88,82,0.9)'; ctx.lineWidth = Math.max(1, 0.4 * z); ctx.stroke(); }
+    const pts = [[-c.w / 2, -c.h / 2], [c.w / 2, -c.h / 2], [c.w / 2, c.h / 2], [-c.w / 2, c.h / 2]].map(([u, v]) => toS(c.x + u * cs - v * sn, c.y + u * sn + v * cs));
+    if (phase === 0) {
+      // котлован: тёмная земля, отвал рядом
+      ctx.fillStyle = 'rgba(70,56,40,0.9)';
+      ctx.beginPath(); for (const p of pts) ctx.lineTo(...p); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(150,126,92,0.9)'; ctx.lineWidth = Math.max(1, 0.5 * z); ctx.stroke();
+      continue;
+    }
+    // фундамент
+    ctx.fillStyle = 'rgba(158,156,148,0.95)';
+    ctx.beginPath(); for (const p of pts) ctx.lineTo(...p); ctx.closePath(); ctx.fill();
+    // стены растут: смещение вверх (2.5D) по прогрессу фазы
+    const grow = phase === 1 ? (k - 0.3) / 0.45 : 1;
+    const hgt = Math.min(14, 3 + Math.min(c.w, c.h) * 0.25) * grow * z;
+    if (hgt > 1 && z > 0.25) {
+      ctx.fillStyle = phase === 2 ? 'rgba(176,170,158,0.95)' : 'rgba(140,138,130,0.95)';
+      ctx.beginPath(); for (const p of pts) ctx.lineTo(p[0], p[1] - hgt); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(80,78,72,0.8)'; ctx.lineWidth = Math.max(0.8, 0.3 * z);
+      for (const p of pts) { ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0], p[1] - hgt); ctx.stroke(); }
+      ctx.beginPath(); for (const p of pts) ctx.lineTo(p[0], p[1] - hgt); ctx.closePath(); ctx.stroke();
+      // арматура / леса — сетка поверх
+      if (z > 0.9) {
+        ctx.strokeStyle = phase === 1 ? 'rgba(160,82,40,0.75)' : 'rgba(200,170,90,0.6)';
+        ctx.lineWidth = Math.max(0.6, 0.18 * z);
+        const n = Math.max(2, Math.round(Math.max(c.w, c.h) / 6));
+        for (let i = 1; i < n; i++) {
+          const a = pts[0], b = pts[1], f = i / n;
+          const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
+          ctx.beginPath(); ctx.moveTo(x, y - hgt); ctx.lineTo(x + (pts[3][0] - pts[0][0]), y - hgt + (pts[3][1] - pts[0][1])); ctx.stroke();
+        }
+      }
+    }
   }
+  if (z > 0.18) {
+    // ограждение стройки: бело-оранжевый забор по периметру
+    ctx.setLineDash([5 * Math.max(0.5, z), 4 * Math.max(0.5, z)]);
+    ctx.strokeStyle = '#e9772a'; ctx.lineWidth = Math.max(1, 0.9 * z);
+    ctx.beginPath(); for (const [u, v] of [[-W2, -H2], [W2, -H2], [W2, H2], [-W2, H2]]) ctx.lineTo(...P(u, v)); ctx.closePath(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // отвалы и материалы: щебень, поддоны кирпича, арматура
+  if (z > 0.35) {
+    for (let i = 0; i < 4; i++) {
+      const [px, py] = P((rnd(i) - 0.5) * o.w, (i % 2 ? 1 : -1) * (H2 - 7));
+      const r = (3 + rnd(i + 9) * 3) * z * 0.6;
+      ctx.fillStyle = i === 0 ? 'rgba(110,92,66,0.95)' : i === 1 ? 'rgba(150,146,138,0.95)' : i === 2 ? 'rgba(170,82,52,0.95)' : 'rgba(96,70,52,0.95)';
+      if (i === 3) { ctx.fillRect(px - r * 1.6, py - r * 0.4, r * 3.2, r * 0.8); } else { ctx.beginPath(); ctx.ellipse(px, py, r * 1.4, r, o.angle, 0, Math.PI * 2); ctx.fill(); }
+    }
+  }
+  // вагончики строителей у ограды
+  if (z > 0.3) {
+    for (let i = 0; i < 3; i++) {
+      const [px, py] = P(-W2 + 10 + i * 9, H2 + 9);
+      const w = 7 * z, h = 3.2 * z;
+      ctx.save(); ctx.translate(px, py); ctx.rotate(o.angle);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-w / 2 + 1.2 * z, -h / 2 + 1.2 * z, w, h);
+      ctx.fillStyle = i === 1 ? '#3f6fa6' : '#d5d0c2'; ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.fillStyle = 'rgba(60,70,80,0.9)'; ctx.fillRect(-w / 2 + w * 0.15, -h / 2 + h * 0.25, w * 0.18, h * 0.4); ctx.fillRect(w * 0.15, -h / 2 + h * 0.25, w * 0.18, h * 0.4);
+      if (night > 0.4) { ctx.fillStyle = 'rgba(255,214,120,0.85)'; ctx.fillRect(-w / 2 + w * 0.15, -h / 2 + h * 0.25, w * 0.18, h * 0.4); }
+      ctx.restore();
+    }
+  }
+  // техника: экскаватор (котлован) или бетономешалка (стены)
+  if (z > 0.45 && !stalled) {
+    const [mx, my] = P(Math.sin(tt * 0.3 + seed) * o.w * 0.3, -H2 * 0.55);
+    ctx.save(); ctx.translate(mx, my); ctx.rotate(o.angle);
+    const s = z * 1.1;
+    if (phase === 0) {
+      ctx.fillStyle = '#e2b12a'; ctx.fillRect(-4 * s, -2.5 * s, 8 * s, 5 * s);
+      ctx.strokeStyle = '#c6951c'; ctx.lineWidth = 1.6 * s;
+      const arm = Math.sin(tt * 1.6 + seed) * 0.6;
+      ctx.beginPath(); ctx.moveTo(2 * s, 0); ctx.lineTo(8 * s * Math.cos(arm), 8 * s * Math.sin(arm)); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#d8d6cf'; ctx.fillRect(-6 * s, -2.2 * s, 12 * s, 4.4 * s);
+      ctx.fillStyle = '#e46a2b'; ctx.beginPath(); ctx.ellipse(1.5 * s, 0, 4 * s, 2 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.6 * s;
+      const r = tt * 3; ctx.beginPath(); ctx.moveTo(1.5 * s + Math.cos(r) * 3 * s, Math.sin(r) * 1.5 * s); ctx.lineTo(1.5 * s - Math.cos(r) * 3 * s, -Math.sin(r) * 1.5 * s); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // рабочие в оранжевых жилетах
+  if (z > 0.6 && !stalled) {
+    const n = Math.min(60, 6 + Math.round((o.w * o.h) / 900));
+    for (let i = 0; i < n; i++) {
+      const u = Math.sin(tt * (0.25 + rnd(i) * 0.3) + i * 2.1) * o.w * 0.42, v = Math.cos(tt * (0.2 + rnd(i + 4) * 0.25) + i) * o.h * 0.42;
+      const [px, py] = P(u, v);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(px + 0.4 * z, py + 0.4 * z, 0.55 * z, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ff7a1a'; ctx.beginPath(); ctx.arc(px, py, 0.5 * z, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f3e04a'; ctx.beginPath(); ctx.arc(px, py - 0.25 * z, 0.25 * z, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // пыль: в котловане гуще
+  if (z > 0.25 && !stalled && window.GFX !== 'low') {
+    const nd = phase === 0 ? 7 : 4;
+    for (let i = 0; i < nd; i++) {
+      const life = (tt * 0.22 + rnd(i + 50)) % 1;
+      const [px, py] = P((rnd(i + 60) - 0.5) * o.w, (rnd(i + 70) - 0.5) * o.h);
+      const r = (4 + life * 14) * Math.max(0.4, z * 0.6);
+      ctx.fillStyle = `rgba(180,160,128,${(0.28 * (1 - life)).toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(px + life * 8 * z, py - life * 10 * z, r, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // сварка: вспышки на стенах (видно особенно ночью)
+  if (phase >= 1 && z > 0.5 && !stalled && Math.sin(tt * 7 + seed) > 0.55) {
+    const c = o.comps[Math.floor(rnd(Math.floor(tt / 2)) * o.comps.length)];
+    if (c) {
+      const [px, py] = toS(c.x, c.y);
+      const r = (1.5 + Math.random() * 1.5) * Math.max(0.6, z * 0.4) * (1 + night);
+      const gr = ctx.createRadialGradient(px, py - 4 * z, 0, px, py - 4 * z, r * 4);
+      gr.addColorStop(0, 'rgba(220,240,255,0.95)'); gr.addColorStop(1, 'rgba(120,170,255,0)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(px, py - 4 * z, r * 4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // башенный кран: решётчатая мачта, стрела вращается, груз на тросе раскачивается
   const [sx, sy] = toS(o.x, o.y);
-  if (z > 0.4) {
-    // кран: мачта и стрела
-    const hgt = 30 * z * 0.5;
-    ctx.strokeStyle = '#e0b030'; ctx.lineWidth = Math.max(1.5, 0.8 * z);
-    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, sy - hgt); ctx.lineTo(sx + 22 * z * 0.5, sy - hgt); ctx.moveTo(sx, sy - hgt); ctx.lineTo(sx - 8 * z * 0.5, sy - hgt); ctx.stroke();
+  if (z > 0.25) {
+    const cranes = Math.max(1, Math.min(4, Math.round(Math.max(o.w, o.h) / 140)));
+    for (let ci = 0; ci < cranes; ci++) {
+      const [bx, by] = P((ci - (cranes - 1) / 2) * o.w * 0.5, H2 * 0.3 * (ci % 2 ? -1 : 1));
+      const hgt = (38 + 14 * rnd(ci + 80) + Math.min(20, Math.max(o.w, o.h) * 0.03)) * z * 0.62;
+      const jib = (30 + Math.min(40, Math.max(o.w, o.h) * 0.08)) * z;
+      const ang = stalled ? rnd(ci) * 6 : tt * 0.18 * (ci % 2 ? -1 : 1) + rnd(ci) * 6;
+      const ex = bx + Math.cos(ang) * jib, ey = by - hgt + Math.sin(ang) * jib * 0.45;
+      ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = Math.max(1, 0.8 * z);
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + hgt * 0.6, by + hgt * 0.25); ctx.stroke(); // тень мачты
+      ctx.strokeStyle = '#e0b030'; ctx.lineWidth = Math.max(1.4, 0.7 * z);
+      ctx.beginPath(); ctx.moveTo(bx - 1.2 * z, by); ctx.lineTo(bx - 1.2 * z, by - hgt); ctx.moveTo(bx + 1.2 * z, by); ctx.lineTo(bx + 1.2 * z, by - hgt); ctx.stroke();
+      if (z > 0.8) { ctx.lineWidth = Math.max(0.6, 0.25 * z); ctx.beginPath(); for (let y = 0; y < hgt; y += 3 * z) { ctx.moveTo(bx - 1.2 * z, by - y); ctx.lineTo(bx + 1.2 * z, by - y - 1.5 * z); } ctx.stroke(); }
+      ctx.lineWidth = Math.max(1.4, 0.7 * z);
+      ctx.beginPath(); ctx.moveTo(bx - Math.cos(ang) * jib * 0.3, by - hgt - Math.sin(ang) * jib * 0.13); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.fillStyle = '#6b6a64'; ctx.fillRect(bx - Math.cos(ang) * jib * 0.3 - 2 * z, by - hgt - Math.sin(ang) * jib * 0.13 - 1.5 * z, 4 * z, 3 * z); // противовес
+      // трос и груз
+      const sw = stalled ? 0 : Math.sin(tt * 1.3 + ci) * 2 * z;
+      const drop = (10 + 6 * Math.sin(tt * 0.4 + ci)) * z;
+      const lx = bx + Math.cos(ang) * jib * 0.7, ly = by - hgt + Math.sin(ang) * jib * 0.7 * 0.45;
+      ctx.strokeStyle = 'rgba(40,40,40,0.8)'; ctx.lineWidth = Math.max(0.6, 0.2 * z);
+      ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + sw, ly + drop); ctx.stroke();
+      ctx.fillStyle = phase === 0 ? '#8a7a5a' : '#a8a49a'; ctx.fillRect(lx + sw - 2 * z, ly + drop, 4 * z, 2 * z);
+      if (night > 0.4) { ctx.fillStyle = Math.sin(tt * 3 + ci) > 0 ? 'rgba(255,60,40,0.95)' : 'rgba(255,60,40,0.3)'; ctx.beginPath(); ctx.arc(ex, ey, Math.max(1.2, 0.5 * z), 0, Math.PI * 2); ctx.fill(); }
+    }
   }
-  ring(ctx, sx, sy - 14 * dpr, 9 * dpr, Math.max(0, Math.min(1, k)), '#ffd36b', dpr);
+  ring(ctx, sx, sy - 14 * dpr, 9 * dpr, k, stalled ? '#ef5a4a' : '#ffd36b', dpr);
+  if (z > 0.15) {
+    const label = B.wait ? 'ждёт бригаду' : B.needMat ? 'ждёт материалы' : `стройка ${Math.round(k * 100)}%`;
+    ctx.font = `700 ${Math.round(10.5 * dpr)}px "PT Sans Narrow", sans-serif`; ctx.textAlign = 'center';
+    ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.65)'; ctx.strokeText(label, sx, sy - 27 * dpr);
+    ctx.fillStyle = stalled ? '#ff9a8a' : '#ffe39a'; ctx.fillText(label, sx, sy - 27 * dpr);
+  }
+}
+
+// Слой «энергосеть»: ЛЭП цветом по загрузке (зелёная → жёлтая → красная, серая — обрыв,
+// пунктир — отключена защитой), станции — по выработке, подстанции — по питанию района
+function drawGridLayer(ctx, g, side, toS, z, dpr, now) {
+  const col = (k) => (k < 0.6 ? '110,220,120' : k < 0.85 ? '255,210,90' : '255,90,70');
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,14,20,0.35)'; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  for (const l of g.lines) {
+    if (l.side !== side || !l.pylons?.length) continue;
+    const k = l.load || 0;
+    ctx.lineWidth = (l.kv >= 330 ? 4 : l.kv >= 110 ? 2.6 : 1.6) * dpr;
+    ctx.setLineDash(l.cable ? [3 * dpr, 4 * dpr] : l.cut?.trip ? [10 * dpr, 6 * dpr] : []);
+    ctx.strokeStyle = l.cut ? 'rgba(150,150,150,0.8)' : `rgba(${col(k)},${0.6 + 0.4 * Math.min(1, k)})`;
+    ctx.beginPath(); for (const p of l.pylons) ctx.lineTo(...toS(p.x, p.y)); ctx.stroke();
+    if (!l.cut && k > 0.85 && Math.floor(now / 400) % 2) { ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.stroke(); }
+    if (z > 0.06 && LINE_LABEL(l)) {
+      const m = l.pylons[Math.floor(l.pylons.length / 2)], [mx, my] = toS(m.x, m.y);
+      const txt = l.cut ? (l.cut.trip ? 'откл.' : 'обрыв') : `${Math.round(k * 100)}%`;
+      ctx.setLineDash([]); ctx.font = `700 ${Math.round(10.5 * dpr)}px "PT Sans Narrow", sans-serif`; ctx.textAlign = 'center';
+      ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(txt, mx, my - 4 * dpr);
+      ctx.fillStyle = l.cut ? '#cfcfcf' : `rgb(${col(k)})`; ctx.fillText(txt, mx, my - 4 * dpr);
+    }
+  }
+  ctx.setLineDash([]);
+  for (const o of g.objs(side)) {
+    if (o.build && !o.build.up) continue;
+    const gen = ['tpp', 'hpp', 'chp', 'wpp', 'spp', 'solar'].includes(o.kind), ps = ['ps330', 'ps110', 'ps35'].includes(o.kind);
+    if (!gen && !ps) continue;
+    const [sx, sy] = toS(o.x, o.y);
+    if (gen) {
+      const r = Math.max(5 * dpr, Math.sqrt(o.gen || 0) * 1.1 * dpr);
+      ctx.fillStyle = 'rgba(120,190,255,0.85)'; ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2 * dpr; ctx.stroke();
+      ctx.font = `700 ${Math.round(11 * dpr)}px "PT Sans Narrow", sans-serif`; ctx.textAlign = 'center'; ctx.fillStyle = '#dff0ff';
+      ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; const t = `${Math.round(o.gen || 0)} МВт`; ctx.strokeText(t, sx, sy + r + 12 * dpr); ctx.fillText(t, sx, sy + r + 12 * dpr);
+    } else {
+      const sup = o.kind === 'ps330' ? 1 : o.supply ?? 1, r = (o.kind === 'ps330' ? 7 : o.kind === 'ps35' ? 4 : 5.5) * dpr;
+      ctx.fillStyle = o.unstable || sup < 0.7 ? 'rgba(255,90,70,0.95)' : sup < 0.95 ? 'rgba(255,210,90,0.95)' : 'rgba(110,220,120,0.95)';
+      ctx.beginPath(); ctx.rect(sx - r, sy - r, r * 2, r * 2); ctx.fill(); ctx.strokeStyle = '#111'; ctx.lineWidth = 1 * dpr; ctx.stroke();
+      if (o.kind === 'ps110' && z > 0.04) {
+        const t = `${Math.round(sup * 100)}%${o.plantMW ? ` · заводы ${Math.round(o.plantMW)} МВт` : ''}`;
+        ctx.font = `700 ${Math.round(10 * dpr)}px "PT Sans Narrow", sans-serif`; ctx.textAlign = 'center'; ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(t, sx, sy + r + 11 * dpr); ctx.fillStyle = '#f2f2e8'; ctx.fillText(t, sx, sy + r + 11 * dpr);
+      }
+    }
+  }
+  ctx.restore();
+}
+const LINE_LABEL = (l) => l.kv >= 110;
+
+// Маскировочная сеть над площадкой: пятна хаки и зелени, края провисают
+function drawCamo(ctx, o, toS, z) {
+  const ca = Math.cos(o.angle), sa = Math.sin(o.angle), W2 = o.w / 2 + 6, H2 = o.h / 2 + 6;
+  const P = (u, v) => toS(o.x + u * ca - v * sa, o.y + u * sa + v * ca);
+  ctx.fillStyle = 'rgba(78,92,52,0.42)';
+  ctx.beginPath();
+  const n = 10;
+  for (let i = 0; i <= n; i++) ctx.lineTo(...P(-W2 + (2 * W2 * i) / n, -H2 + (i % 2) * 3));
+  for (let i = 0; i <= n; i++) ctx.lineTo(...P(W2 - (i % 2) * 3, -H2 + (2 * H2 * i) / n));
+  for (let i = 0; i <= n; i++) ctx.lineTo(...P(W2 - (2 * W2 * i) / n, H2 - (i % 2) * 3));
+  for (let i = 0; i <= n; i++) ctx.lineTo(...P(-W2 + (i % 2) * 3, H2 - (2 * H2 * i) / n));
+  ctx.closePath(); ctx.fill();
+  if (z > 0.4) {
+    const cnt = Math.min(80, Math.round((o.w * o.h) / 300));
+    for (let i = 0; i < cnt; i++) {
+      const u = (hash(o.id * 3.3 + i) - 0.5) * 2 * W2, v = (hash(o.id * 7.1 + i * 1.7) - 0.5) * 2 * H2;
+      const [px, py] = P(u, v);
+      ctx.fillStyle = i % 3 === 0 ? 'rgba(102,86,52,0.55)' : i % 3 === 1 ? 'rgba(52,70,38,0.55)' : 'rgba(128,124,84,0.45)';
+      ctx.beginPath(); ctx.ellipse(px, py, (3 + hash(i) * 5) * z * 0.6, (2 + hash(i + 3) * 3) * z * 0.6, o.angle + i, 0, Math.PI * 2); ctx.fill();
+    }
+  }
 }
 
 // Тракторы (посевная) и комбайны (уборка) ходят челноком по текущему полю агрофирмы
@@ -208,7 +429,7 @@ function drawLineEnds(ctx, g, world, side, toS, inView, z) {
   const known = (id) => id == null || id === 'import' || g.known(side, g.obj(id));
   for (const ln of world.power?.lines || []) {
     const pl = ln.pylons;
-    if (!pl || pl.length < 2) continue;
+    if (!pl || pl.length < 2 || ln.cable) continue;
     if (!(ln.feed ? known(ln.a) : known(ln.a) && known(ln.b))) continue;
     const big = ln.kv >= 330, sp = big ? 7.5 : 4, Hw = big ? 30 : 20;
     for (const [end, nb] of [[pl[0], pl[1]], [pl[pl.length - 1], pl[pl.length - 2]]]) {
@@ -472,10 +693,11 @@ export function drawDW(ctx, sim, view, side, ui) {
   const up = (alt) => Math.min(90 * dpr, dispH(alt) * K3 * Math.max(z, 0.35)); // смещение вверх в пикселях
   const detail = z >= 0.3;
 
+  if (ui.gridLayer) drawGridLayer(ctx, g, side, toS, z, dpr, now);
   // ---------- Объекты ----------
   for (const o of g.objects) {
     if (o.kind === 'import' || !inView(o.x, o.y, Math.max(o.w, o.h)) || !g.known(side, o)) continue;
-    if (o.build && !o.build.up && !o.build.grid) { construction(ctx, o, toS, z, dpr, 1 - (o.build.until - t) / o.build.total); continue; }
+    if (o.build && !o.build.up && !o.build.grid) { construction(ctx, o, toS, z, dpr, 1 - (o.build.until - t) / o.build.total, now, night); continue; }
     // крупные объекты (ТЭС, ГЭС, подстанции) видны в объёме и издали — пока на экране больше ~60 px
     if (detail || Math.max(o.w, o.h) * z > 60 * dpr) {
       // Сначала дальние узлы (по y экрана), чтобы высокие не перекрывались неверно
@@ -499,6 +721,7 @@ export function drawDW(ctx, sim, view, side, ui) {
           ctx.beginPath(); ctx.ellipse(sx, sy, (c.w * 0.8 + 4) * z, (c.h * 0.8 + 4) * z, c.angle, 0, Math.PI * 2); ctx.fill();
         }
       }
+      if (o.camo && o.side === side && z > 0.15) drawCamo(ctx, o, toS, z);
       if (fenced) drawFence(ctx, o, toS, z, dpr, 'front');
       // Пар градирен и дым труб — пока блоки работают
       const units = o.comps.filter((c) => c.k === 'unit' && c.state === 'ok').length;
@@ -609,6 +832,14 @@ export function drawDW(ctx, sim, view, side, ui) {
       ctx.fillStyle = 'rgba(25,20,16,0.6)';
       ctx.beginPath(); ctx.arc(sx, sy, Math.max(3 * dpr, 3 * z), 0, Math.PI * 2); ctx.fill();
       continue;
+    }
+    // прожектор ночью: луч в небо медленно ходит по сектору
+    if (a.type === 'light' && night > 0.3 && a.state === 'ready') {
+      const ang = -Math.PI / 2 + Math.sin(now / 2600 + a.id) * 0.7, L = 260 * dpr;
+      const ex = sx + Math.cos(ang) * L, ey = sy + Math.sin(ang) * L, w = 26 * dpr;
+      const gr = ctx.createLinearGradient(sx, sy, ex, ey);
+      gr.addColorStop(0, `rgba(255,250,215,${0.45 * night})`); gr.addColorStop(1, 'rgba(255,250,215,0)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex - Math.sin(ang) * w, ey + Math.cos(ang) * w); ctx.lineTo(ex + Math.sin(ang) * w, ey - Math.cos(ang) * w); ctx.closePath(); ctx.fill();
     }
     // макет ЗРК выглядит как настоящий ЗРК (у своих подписан «МАК»)
     const vt = a.type === 'dummy' || a.type === 'lrsam' ? 'sam' : a.type;
@@ -1234,12 +1465,22 @@ export function drawDWPreview(ctx, sim, view, side, ui, mw) {
     const [fx0] = toS(g.frontX + (side === 'blue' ? -14000 : 14000), 0);
     ctx.setLineDash([10 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(140,255,140,0.5)'; ctx.beginPath(); ctx.moveTo(fx0, 0); ctx.lineTo(fx0, canvas.height); ctx.stroke(); ctx.setLineDash([]);
   }
-  if (ui.mode?.startsWith('strike:')) {
+  if (ui.mode?.startsWith('strike:') || ui.mode === 'combo') {
+    const type = ui.mode === 'combo' ? (Object.entries(DW_DRONES).find(([k, D]) => D.side === side && D.cls === 'cruise' && g.res?.stock(side, k) > 0)?.[0] || (side === 'red' ? 'kh101' : 'flamingo')) : ui.mode.slice(7);
+    const pts = g.launchPoints(side, DW_DRONES[type]);
+    // зоны разведанных ЗРК, которые накрывают маршрут, — красным
+    if (pts.length && g.routeRisk) {
+      const mwp = { x: (mx - canvas.width / 2) / z + cam.x, y: (my - canvas.height / 2) / z + cam.y };
+      const rk = g.routeRisk(side, pts[0], [...(ui.route || []), mwp], DW_DRONES[type].cls === 'cruise');
+      for (const { a } of rk.hit) {
+        const [ax, ay] = toS(a.x, a.y), R = DW_AD[a.type].range * z;
+        ctx.fillStyle = 'rgba(239,90,74,0.10)'; ctx.strokeStyle = 'rgba(239,90,74,0.7)'; ctx.lineWidth = 1.2 * dpr;
+        ctx.beginPath(); ctx.arc(ax, ay, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    }
     ctx.strokeStyle = 'rgba(255,200,120,0.8)';
     ctx.lineWidth = 1.5 * dpr;
     ctx.setLineDash([6 * dpr, 5 * dpr]);
-    const type = ui.mode.slice(7);
-    const pts = g.launchPoints(side, DW_DRONES[type]);
     if (pts.length) {
       const [ax, ay] = toS(pts[0].x, pts[0].y);
       ctx.beginPath(); ctx.moveTo(ax, ay);

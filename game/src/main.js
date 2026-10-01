@@ -41,6 +41,8 @@ let world = null, chunks = null, sim = null, cfg = null;
 let dwui = null; // интерфейс режима «Война дронов»
 let role = 'single'; // single | host | guest
 let net = null;
+const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 
 // ================= Состояние интерфейса =================
 const ui = { selected: new Set(), box: null, marks: [], soldier: null, underground: false };
@@ -52,7 +54,7 @@ let timeScale = 1;
 let paused = false;
 let fortView = 'off';
 let interiorsForce = false;
-let showLabels = true;
+let showLabels = lsGet('labels', '1') !== '0';
 let dig = null;
 const fireOpts = { rounds: 3, fuse: 'ground' };
 let dpr = window.devicePixelRatio || 1;
@@ -63,14 +65,22 @@ const MAX_ZOOM = 28;
 let digRng = new Rng(1);
 
 // ================= Стартовое меню =================
+// Версия игры (альфа — в разработке); остальные режимы пока закрыты
+export const GAME_VERSION = '0.13.0';
+const OPEN_MODES = new Set(['drones']);
 const menu = {
-  side: 'blue', mode: 'zones', role: 'defend', startHour: 5, fog: true, difficulty: 'normal', duration: 3600, prep: 300,
+  side: 'blue', mode: 'drones', role: 'defend', startHour: 12, fog: true, difficulty: 'normal', duration: 0, prep: 120,
   seed: Number(params.get('seed')) || Math.floor(Math.random() * 1e6), tab: 'single',
   map: params.get('seed') ? 'random' : 'main', // «Война дронов»: основная выверенная карта или случайная
   gfx: (() => { try { return params.get('gfx') || localStorage.getItem('gfx') || 'high'; } catch { return 'high'; } })(),
 };
 window.GFX = menu.gfx;
 
+// «Война дронов»: чем стороны отличаются
+const DW_FACTION = {
+  blue: { sub: 'Западная техника, точность и РЭБ', points: ['Точные ЗРК IRIS-T и Patriot, ЗСУ «Гепард»', 'Дальние дроны FP-1, «Лютый», «Бобёр» и «Сакер-ИИ»', 'Крылатые ракеты «Фламинго» и «Нептун» с наземных пусковых', 'Тепловизоры у мобильных огневых групп — ночью точнее'], kit: 'Столица — Арденск · ТЭС, ГЭС на р. Вельча, ВЭС и СЭС в тылу' },
+  red: { sub: 'Массовые удары и тяжёлая ПВО', points: ['Массовые «Герани» и «Герберы», «Ланцеты» и «Молнии»', 'ЗРК «Бук-М2», С-300, «Панцирь-С1»', 'Х-101 с бомбардировщиков и «Калибры» с реки', 'Больше дешёвых дронов — ПВО противника тратит ракеты'], kit: 'Столица — Кардагор · ТЭС, ГЭС на р. Сухая Карда, ВЭС и СЭС в тылу' },
+};
 function buildMenu() {
   const f = $('factions');
   f.innerHTML = '';
@@ -79,9 +89,10 @@ function buildMenu() {
     const d = document.createElement('div');
     d.className = 'faction' + (menu.side === side ? ' sel' : '');
     const kit = ['tank', 'ifv', 'apc', 'arty', 'mortar'].map((t) => F.units[t].name).join(' · ');
+    const dw = menu.mode === 'drones' ? DW_FACTION[side] : null;
     d.innerHTML = `<div class="flag"><i style="background:${F.flag[0]}"></i><i style="background:${F.flag[1]}"></i></div>
-      <b style="color:${F.fill}">${F.country}</b><div class="army">${F.army} · ${F.motto}</div>
-      <ul>${F.doctrine.map((x) => `<li>${x}</li>`).join('')}</ul><div class="kit">Техника: ${kit}</div>`;
+      <b style="color:${F.fill}">${F.country}</b><div class="army">${dw ? dw.sub : `${F.army} · ${F.motto}`}</div>
+      <ul>${(dw ? dw.points : F.doctrine).map((x) => `<li>${x}</li>`).join('')}</ul><div class="kit">${dw ? dw.kit : `Техника: ${kit}`}</div>`;
     d.onclick = () => { menu.side = side; buildMenu(); };
     f.appendChild(d);
   }
@@ -100,9 +111,15 @@ function buildMenu() {
   mo.innerHTML = '';
   for (const [k, m] of Object.entries(MODES)) {
     const b = document.createElement('button');
-    b.textContent = m.name;
-    b.className = menu.mode === k ? 'sel' : '';
-    b.onclick = () => { if (k !== menu.mode && (k === 'drones' || menu.mode === 'drones')) { menu.duration = k === 'drones' ? 0 : 3600; menu.prep = k === 'drones' ? 120 : 300; } menu.mode = k; buildMenu(); };
+    const open = OPEN_MODES.has(k);
+    b.className = 'mode-b' + (menu.mode === k ? ' sel' : '') + (open ? '' : ' locked');
+    b.innerHTML = `<b>${m.name}</b><small>${open ? 'доступно' : 'Заблокировано · в разработке'}</small>${open ? '' : '<svg class="i"><path d="M6 11h12v10H6zM8 11V8a4 4 0 0 1 8 0v3M12 15v2"/></svg>'}`;
+    b.title = open ? m.desc : 'Режим в разработке — пока недоступен';
+    b.onclick = () => {
+      if (!open) return;
+      if (k !== menu.mode && (k === 'drones' || menu.mode === 'drones')) { menu.duration = k === 'drones' ? 0 : 3600; menu.prep = k === 'drones' ? 120 : 300; }
+      menu.mode = k; buildMenu();
+    };
     mo.appendChild(b);
   }
   $('mode-desc').textContent = MODES[menu.mode].desc;
@@ -132,6 +149,20 @@ function buildMenu() {
   $('mp-card').style.display = menu.tab === 'mp' ? 'block' : 'none';
   $('tab-single').classList.toggle('active', menu.tab === 'single');
   $('tab-mp').classList.toggle('active', menu.tab === 'mp');
+  $('tab-settings').classList.toggle('active', menu.tab === 'settings');
+  $('play-grid').style.display = menu.tab === 'settings' ? 'none' : '';
+  $('settings-grid').style.display = menu.tab === 'settings' ? '' : 'none';
+  $('start-row').style.display = menu.tab === 'settings' ? 'none' : '';
+  // Настройки
+  const setOpts = (id, label, list, cur, set) => {
+    const row = $(id);
+    row.innerHTML = `<span>${label}</span>`;
+    for (const [v, name] of list) { const b = document.createElement('button'); b.textContent = name; b.className = cur === v ? 'sel' : ''; b.onclick = () => { set(v); buildMenu(); }; row.appendChild(b); }
+  };
+  setOpts('opt-labels', 'Подписи на карте', [[true, 'Показывать'], [false, 'Скрыть']], showLabels, (v) => { showLabels = v; lsSet('labels', v ? '1' : '0'); $('btn-labels').classList.toggle('active', v); });
+  const hints = lsGet('dw-advice', '1') !== '0';
+  setOpts('opt-hints', 'Подсказки «что сделать»', [[true, 'Показывать'], [false, 'Скрыть']], hints, (v) => { lsSet('dw-advice', v ? '1' : '0'); document.body.classList.toggle('noadvice', !v); });
+  $('set-about').innerHTML = `«Линия фронта», версия <b>${GAME_VERSION}</b> — альфа, в разработке. Открыт режим «Война дронов»; «Захват зон», «Активный фронт» и «Наступление и оборона» — в разработке.`;
   $('btn-start').style.display = menu.tab === 'single' || (role === 'host' && net?.guestReady) ? '' : 'none';
   $('start-hint').textContent = menu.tab === 'single'
     ? `Вы: ${FACTIONS[menu.side].country}. Противник: ${FACTIONS[menu.side === 'blue' ? 'red' : 'blue'].country} (ИИ).`
@@ -139,6 +170,12 @@ function buildMenu() {
 }
 $('tab-single').onclick = () => { menu.tab = 'single'; buildMenu(); };
 $('tab-mp').onclick = () => { menu.tab = 'mp'; buildMenu(); };
+$('tab-settings').onclick = () => { menu.tab = 'settings'; buildMenu(); };
+$('menu-help').onclick = () => toggleHelp(true);
+$('set-tut').onclick = () => { try { localStorage.removeItem('dw-tut'); } catch { /* ignore */ } $('set-tut-ok').textContent = 'обучение покажется в начале партии'; };
+$('ver-label').textContent = `v${GAME_VERSION}`;
+document.body.classList.toggle('noadvice', lsGet('dw-advice', '1') === '0');
+$('btn-labels').classList.toggle('active', showLabels);
 $('opt-seed').onchange = (e) => { menu.seed = Number(e.target.value) || 1; menu.map = 'random'; };
 $('seed-rnd').onclick = () => { menu.seed = Math.floor(Math.random() * 1e6); buildMenu(); };
 $('mp-url').value = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host || 'localhost:8080'}/ws`;
@@ -612,6 +649,7 @@ addEventListener('keydown', (e) => {
   // Shift+1…7 — вкладки меню «Войны дронов»; M — слой миникарты
   if (dwui && e.shiftKey && /^Digit[1-7]$/.test(c)) { dwui.tabByIndex(+c.slice(5) - 1); return; }
   if (dwui && c === 'KeyM') { cycleMiniLayer(); return; }
+  if (dwui && c === 'KeyG') { dwui.state.gridLayer = !dwui.state.gridLayer; log(dwui.state.gridLayer ? 'Слой «энергосеть»: загрузка ЛЭП и подстанций (G — скрыть)' : 'Слой «энергосеть» скрыт'); dwui.build(); return; }
   const speedKeys = { Digit1: 0.5, Digit2: 1, Digit3: 2, Digit4: 4, ...(dwui ? { Digit5: 8 } : {}) };
   if (speedKeys[c]) { requestSpeed(speedKeys[c]); return; }
   if (c === 'KeyL') toggleLabels();
@@ -1196,7 +1234,7 @@ function requestSpeed(v) {
 }
 setSpeed(timeScale);
 
-function toggleLabels() { showLabels = !showLabels; $('btn-labels').classList.toggle('active', showLabels); }
+function toggleLabels() { showLabels = !showLabels; lsSet('labels', showLabels ? '1' : '0'); $('btn-labels').classList.toggle('active', showLabels); }
 function cycleFortView() {
   fortView = FORT_VIEWS[(FORT_VIEWS.indexOf(fortView) + 1) % FORT_VIEWS.length];
   ui.underground = fortView === 'underground';

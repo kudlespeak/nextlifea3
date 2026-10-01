@@ -2350,6 +2350,15 @@ function drawPowerLines(ctx, world, q, ppm) {
     const hid = (id) => id !== 'import' && id != null && fogHidden(world, ln.side, id);
     if (ln.feed ? hid(ln.a) : hid(ln.a) || hid(ln.b)) continue;
     const pl = ln.pylons, big = ln.kv >= 330;
+    if (ln.cable) {
+      // подземный кабель: противник его не видит; свои — засыпанная траншея и столбики-указатели
+      if (world.fog?.on && world.fog.side !== ln.side) continue;
+      ctx.strokeStyle = 'rgba(96,74,52,0.55)'; ctx.lineWidth = Math.max(2.6, 1.5 / ppm); ctx.setLineDash([]);
+      ctx.beginPath(); for (const p of pl) ctx.lineTo(p.x, p.y); ctx.stroke();
+      ctx.strokeStyle = 'rgba(230,120,40,0.8)'; ctx.lineWidth = Math.max(0.6, 1 / ppm); ctx.setLineDash([6, 14]);
+      ctx.beginPath(); for (const p of pl) ctx.lineTo(p.x, p.y); ctx.stroke(); ctx.setLineDash([]);
+      continue;
+    }
     const sp = big ? 7.5 : 4, Hw = big ? 30 : 20, Ht = big ? 40 : 28;
     for (let i = 1; i < pl.length; i++) {
       const a = pl[i - 1], b = pl[i];

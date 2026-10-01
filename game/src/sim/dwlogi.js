@@ -27,6 +27,7 @@ export const VEH = {
   grainx: { name: 'Зерновоз на экспорт', speed: 19, cls: 'civil' },
   cargo: { name: 'Грузовик с продукцией заводов', speed: 18, cls: 'civil' },
   sapper: { name: 'Машина сапёров', speed: 17, cls: 'crew' },
+  mixer: { name: 'Бетоновоз на стройку', speed: 16, cls: 'civil' },
 };
 // Доход с фуры: пошлина при ввозе и выручка за экспорт на обратном рейсе
 export const TRANSIT = { import: 2, export: 2 };

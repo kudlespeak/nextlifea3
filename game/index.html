@@ -141,7 +141,7 @@
     #hint b { color: var(--accent-2); }
     #loading { top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 14px; pointer-events: none; transition: opacity 0.3s; }
 
-    #help { inset: 0; position: fixed; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); z-index: 10; }
+    #help { inset: 0; position: fixed; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); z-index: 30; }
     #help.show { display: flex; }
     #help .box { width: min(760px, calc(100vw - 30px)); max-height: calc(100vh - 60px); overflow-y: auto; padding: 18px 22px; position: relative; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 12px; }
     #help h2 { margin: 0 0 6px; font: 700 20px "PT Sans Narrow", sans-serif; }
@@ -153,18 +153,43 @@
 
 
     /* Стартовое меню */
-    #menu-screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 30% 20%, #2a2f22 0%, #12140d 70%); overflow-y: auto; padding: 20px; }
+    #menu-screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: stretch; justify-content: center; background: radial-gradient(ellipse at 18% 30%, #2b3122 0%, #15180f 55%, #0d0f0a 100%); overflow-y: auto; }
     #menu-screen.hide { display: none; }
-    .menu-box { width: min(1080px, 100%); display: flex; flex-direction: column; gap: 16px; }
-    .menu-title { display: flex; align-items: center; gap: 14px; }
-    .menu-title h1 { margin: 0; font: 700 38px "PT Sans Narrow", sans-serif; letter-spacing: 0.1em; }
-    .menu-title .mark { width: 26px; height: 26px; border: 3px solid var(--accent); transform: rotate(45deg); border-radius: 4px; }
-    .menu-title small { color: var(--muted); font-size: 14px; }
-    .tabs { display: flex; gap: 6px; }
-    .tabs button { font-size: 15px; padding: 9px 16px; }
+    .menu-bg { position: fixed; inset: 0; pointer-events: none; overflow: hidden;
+      background-image: repeating-linear-gradient(115deg, rgba(242,193,78,0.035) 0 1px, transparent 1px 46px), repeating-linear-gradient(25deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 64px); }
+    .menu-bg::after { content: ""; position: absolute; left: -10%; right: -10%; top: 58%; height: 3px; background: linear-gradient(90deg, transparent, rgba(239,90,74,0.5) 20%, rgba(239,90,74,0.5) 80%, transparent); transform: rotate(-4deg); filter: blur(0.5px); }
+    .menu-bg i { position: absolute; width: 26px; height: 14px; background: rgba(236,229,205,0.18); clip-path: polygon(0 0, 100% 50%, 0 100%, 18% 50%); animation: dfly 38s linear infinite; }
+    .menu-bg .d1 { top: 22%; animation-delay: -6s; } .menu-bg .d2 { top: 47%; animation-duration: 46s; animation-delay: -21s; transform: scale(0.75); } .menu-bg .d3 { top: 76%; animation-duration: 52s; animation-delay: -33s; }
+    @keyframes dfly { from { left: -6%; } to { left: 106%; } }
+    .menu-shell { position: relative; width: min(1180px, 100%); display: grid; grid-template-columns: 372px 1fr; gap: 26px; padding: 34px 28px; align-items: start; }
+    .menu-side { position: sticky; top: 34px; display: flex; flex-direction: column; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand .logo { width: 84px; height: 84px; flex: none; filter: drop-shadow(0 6px 18px rgba(242,193,78,0.18)); }
+    .brand h1 { margin: 0; font: 700 31px/1 "PT Sans Narrow", sans-serif; letter-spacing: 0.05em; color: #f3ecd2; white-space: nowrap; }
+    .brand-sub { margin-top: 6px; font: 700 15px "PT Sans Narrow", sans-serif; letter-spacing: 0.42em; color: var(--accent); }
+    .brand-tag { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.4; max-width: 30ch; }
+    .menu-nav { display: flex; flex-direction: column; gap: 6px; }
+    .menu-nav button { display: flex; align-items: center; gap: 12px; text-align: left; font: 700 18px "PT Sans Narrow", sans-serif; letter-spacing: 0.04em; padding: 12px 16px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); }
+    .menu-nav button svg.i { width: 22px; height: 22px; }
+    .menu-nav button:hover { border-color: var(--line-2); background: rgba(255,255,255,0.06); }
+    .menu-nav button.active { border-color: var(--accent); background: linear-gradient(90deg, rgba(242,193,78,0.2), rgba(242,193,78,0.04)); color: var(--accent-2); }
+    .menu-ver { display: flex; align-items: center; gap: 10px; font: 700 14px "PT Sans Narrow", sans-serif; color: var(--muted); letter-spacing: 0.05em; }
+    .menu-ver .dev { font-size: 11.5px; letter-spacing: 0.12em; padding: 3px 8px; border-radius: 5px; color: #1b1a12; background: repeating-linear-gradient(135deg, #f2c14e 0 8px, #e2ad34 8px 16px); }
+    .menu-ver-note { color: var(--muted); font-size: 12px; margin-top: -10px; }
+    .menu-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
     .menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .mcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .mcard { background: rgba(26,29,21,0.88); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; backdrop-filter: blur(3px); }
     .mcard h3 { margin: 0 0 10px; font: 700 14px "PT Sans Narrow", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+    .mode-b { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; text-align: left; border-radius: 10px; min-height: 64px; }
+    .mode-b b { font: 700 16px "PT Sans Narrow", sans-serif; }
+    .mode-b small { font-size: 11.5px; color: var(--muted); }
+    .mode-b.sel { border-color: var(--accent); background: rgba(242,193,78,0.14); color: var(--accent-2); }
+    .mode-b.locked { opacity: 0.55; cursor: not-allowed; background: repeating-linear-gradient(135deg, rgba(255,255,255,0.02) 0 10px, rgba(0,0,0,0.12) 10px 20px); }
+    .mode-b.locked small { color: #e9b64a; font-weight: 700; letter-spacing: 0.04em; }
+    .mode-b.locked svg.i { position: absolute; top: 9px; right: 9px; width: 16px; height: 16px; }
+    .set-note { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+    @media (max-width: 860px) { .menu-shell { grid-template-columns: 1fr; padding: 18px 16px; } .menu-side { position: static; } .modes { grid-template-columns: 1fr 1fr; } .menu-grid { grid-template-columns: 1fr; } }
     .factions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .faction { cursor: pointer; border: 2px solid var(--line); border-radius: 10px; padding: 12px; background: rgba(255,255,255,0.03); transition: border-color 0.15s, background 0.15s; }
     .faction:hover { border-color: var(--line-2); }
@@ -209,7 +234,10 @@
     .dw-tile.locked svg.ic { stroke: var(--muted); }
     .dw-subtabs svg.i, .dw-tip svg.i, .dw-sub svg.i { width: 16px; height: 16px; vertical-align: -3px; }
     #dw-title { font-size: 14px; color: var(--text, #eee); }
-    #dw-advice:empty { display: none; }
+    #dw-advice:empty, body.noadvice #dw-advice { display: none; }
+    .dw-whatif { margin: 6px 0; padding: 6px 8px; border-radius: 7px; background: rgba(239,90,74,0.09); border: 1px solid rgba(239,90,74,0.35); font-size: 12px; line-height: 1.35; }
+    .dw-town { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 5px 7px; border-bottom: 1px solid var(--line); font-size: 12px; align-items: center; }
+    .dw-town b { font-size: 13px; } .dw-town small { color: var(--muted); grid-column: 1 / -1; line-height: 1.35; } .dw-town button { padding: 1px 7px; font-size: 11.5px; }
     #dw-advice { padding: 6px 9px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
     .dw-tip { display: flex; align-items: center; gap: 7px; font-size: 12.5px; line-height: 1.25; padding: 5px 7px; border-radius: 7px; background: rgba(242,193,78,0.08); border: 1px solid rgba(242,193,78,0.28); cursor: pointer; }
     .dw-tip.bad { background: rgba(239,90,74,0.12); border-color: rgba(239,90,74,0.45); }
@@ -455,46 +483,88 @@
 
 
   <div id="menu-screen">
-    <div class="menu-box">
-      <div class="menu-title"><div class="mark"></div><div><h1>ЛИНИЯ ФРОНТА</h1><small>Тактика, логистика и позиционная война в степи</small></div></div>
-      <div class="tabs">
-        <button id="tab-single" class="active">Одиночная игра</button>
-        <button id="tab-mp">Мультиплеер</button>
-      </div>
-      <div class="menu-grid">
-        <div class="mcard" style="grid-column: 1 / -1">
-          <h3>Сторона</h3>
-          <div class="factions" id="factions"></div>
+    <div class="menu-bg" aria-hidden="true"><i class="d1"></i><i class="d2"></i><i class="d3"></i></div>
+    <div class="menu-shell">
+      <aside class="menu-side">
+        <div class="brand">
+          <svg class="logo" viewBox="0 0 120 120" aria-hidden="true">
+            <defs>
+              <linearGradient id="lg-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd978"/><stop offset="1" stop-color="#c7902a"/></linearGradient>
+              <radialGradient id="lg-fill" cx="0.5" cy="0.4" r="0.7"><stop offset="0" stop-color="#2c3222"/><stop offset="1" stop-color="#14170f"/></radialGradient>
+            </defs>
+            <path d="M60 5 L114 60 L60 115 L6 60Z" fill="url(#lg-fill)" stroke="url(#lg-edge)" stroke-width="5" stroke-linejoin="round"/>
+            <path d="M60 15 L104 60 L60 105 L16 60Z" fill="none" stroke="#f2c14e" stroke-opacity="0.25" stroke-width="1.5"/>
+            <g stroke="#f2c14e" stroke-width="3.2" stroke-linecap="round" fill="none">
+              <path d="M60 24 L47 94 M60 24 L73 94"/><path d="M43 37 H77 M46 52 H74 M51 74 H69"/><path d="M48 52 L60 37 L72 52 M51 74 L60 52 L69 74"/>
+            </g>
+            <g fill="#f2c14e"><circle cx="43" cy="40" r="2.4"/><circle cx="77" cy="40" r="2.4"/><circle cx="46" cy="55" r="2.2"/><circle cx="74" cy="55" r="2.2"/></g>
+            <path d="M12 66 L27 60 L37 68 L50 58 L62 69 L74 59 L86 68 L98 60 L108 64" fill="none" stroke="#ef5a4a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M25 31 L41 36 L25 41 L28 36Z" fill="#ece5cd"/><path d="M28 36 H18" stroke="#ece5cd" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="2 2"/>
+          </svg>
+          <div class="brand-t"><h1>ЛИНИЯ ФРОНТА</h1><div class="brand-sub">ВОЙНА ДРОНОВ</div></div>
         </div>
-        <div class="mcard">
-          <h3>Режим</h3>
-          <div class="opt-row" id="opt-mode"></div>
-          <div class="mode-desc" id="mode-desc"></div>
-          <div class="opt-row" id="opt-attacker" style="margin-top:8px"></div>
+        <p class="brand-tag">Тыл против тыла: энергосистема, заводы, логистика и небо над степью</p>
+        <nav class="menu-nav">
+          <button id="tab-single" class="active"><svg class="i"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg>Одиночная игра</button>
+          <button id="tab-mp"><svg class="i"><circle cx="8" cy="9" r="3"/><circle cx="17" cy="9" r="3"/><path d="M2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 2-5 5-5s5 2 5 5"/></svg>Мультиплеер</button>
+          <button id="tab-settings"><svg class="i"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>Настройки</button>
+          <button id="menu-help"><svg class="i"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>Справка</button>
+        </nav>
+        <div class="menu-ver"><span id="ver-label">v0.12</span><span class="dev">В РАЗРАБОТКЕ</span></div>
+        <div class="menu-ver-note">Альфа-версия: возможны ошибки и изменения баланса</div>
+      </aside>
+      <main class="menu-main">
+        <div class="menu-grid" id="play-grid">
+          <div class="mcard" style="grid-column: 1 / -1">
+            <h3>Режим</h3>
+            <div class="modes" id="opt-mode"></div>
+            <div class="mode-desc" id="mode-desc"></div>
+            <div class="opt-row" id="opt-attacker" style="margin-top:8px"></div>
+          </div>
+          <div class="mcard" style="grid-column: 1 / -1">
+            <h3>Сторона</h3>
+            <div class="factions" id="factions"></div>
+          </div>
+          <div class="mcard" style="grid-column: 1 / -1">
+            <h3>Условия</h3>
+            <div class="opt-row" id="opt-time"></div>
+            <div class="opt-row" id="opt-fog"></div>
+            <div class="opt-row" id="opt-diff"></div>
+            <div class="opt-row" id="opt-dur"></div>
+            <div class="opt-row" id="opt-prep"></div>
+            <div class="opt-row" id="opt-map"></div>
+            <div class="opt-row"><span>Карта (seed)</span><input class="txt" id="opt-seed" /><button id="seed-rnd">Случайная</button></div>
+          </div>
+          <div class="mcard" id="mp-card" style="grid-column: 1 / -1; display:none">
+            <h3>Сетевая игра — друг против друга</h3>
+            <div class="opt-row"><span>Сервер</span><input class="txt" id="mp-url" style="width:280px" /></div>
+            <div class="opt-row"><span>Создать игру</span><button id="mp-host">Создать комнату</button><span id="mp-code" style="font:700 22px 'PT Sans Narrow';color:var(--accent-2)"></span></div>
+            <div class="opt-row"><span>Подключиться</span><input class="txt" id="mp-join-code" placeholder="КОД" maxlength="4" /><button id="mp-join">Войти</button></div>
+            <div id="mp-status">Запустите сервер: <code>node game/server.js</code> и откройте игру по его адресу.</div>
+          </div>
         </div>
-        <div class="mcard">
-          <h3>Условия</h3>
-          <div class="opt-row" id="opt-time"></div>
-          <div class="opt-row" id="opt-fog"></div>
-          <div class="opt-row" id="opt-diff"></div>
-          <div class="opt-row" id="opt-dur"></div>
-          <div class="opt-row" id="opt-prep"></div>
-          <div class="opt-row" id="opt-map"></div>
-          <div class="opt-row" id="opt-gfx"></div>
-          <div class="opt-row"><span>Карта (seed)</span><input class="txt" id="opt-seed" /><button id="seed-rnd">Случайная</button></div>
+        <div class="menu-grid" id="settings-grid" style="display:none">
+          <div class="mcard" style="grid-column: 1 / -1">
+            <h3>Графика</h3>
+            <div class="opt-row" id="opt-gfx"></div>
+            <div class="set-note">«Экономная» — без людей, пыли, фар, погоды и огней окон: для слабых ПК и ноутбуков.</div>
+          </div>
+          <div class="mcard" style="grid-column: 1 / -1">
+            <h3>Интерфейс</h3>
+            <div class="opt-row" id="opt-labels"></div>
+            <div class="opt-row" id="opt-hints"></div>
+            <div class="opt-row"><span>Обучение</span><button id="set-tut">Пройти обучение заново</button><span id="set-tut-ok" class="set-note"></span></div>
+          </div>
+          <div class="mcard" style="grid-column: 1 / -1">
+            <h3>Об игре</h3>
+            <div class="set-note" id="set-about"></div>
+          </div>
         </div>
-        <div class="mcard" id="mp-card" style="grid-column: 1 / -1; display:none">
-          <h3>Сетевая игра — друг против друга, без ускорения времени</h3>
-          <div class="opt-row"><span>Сервер</span><input class="txt" id="mp-url" style="width:280px" /></div>
-          <div class="opt-row"><span>Создать игру</span><button id="mp-host">Создать комнату</button><span id="mp-code" style="font:700 22px 'PT Sans Narrow';color:var(--accent-2)"></span></div>
-          <div class="opt-row"><span>Подключиться</span><input class="txt" id="mp-join-code" placeholder="КОД" maxlength="4" /><button id="mp-join">Войти</button></div>
-          <div id="mp-status">Запустите сервер: <code>node game/server.js</code> и откройте игру по его адресу.</div>
+        <div class="start-row" id="start-row">
+          <span id="start-hint" style="color:var(--muted);font-size:13px"></span>
+          <button class="big" id="btn-start">В БОЙ ▶</button>
         </div>
-      </div>
-      <div class="start-row">
-        <span id="start-hint" style="color:var(--muted);font-size:13px"></span>
-        <button class="big" id="btn-start">В БОЙ</button>
-      </div>
+      </main>
     </div>
   </div>
 

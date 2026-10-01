@@ -270,32 +270,41 @@ export class DWInfra {
 
   // ---------------------------------------------------------------- Новые ЛЭП 110 кВ
   lineEnds(side) { return this.g.objs(side).filter((o) => ['ps330', 'ps110', 'tpp', 'hpp', 'chp', 'wpp', 'spp', 'solar'].includes(o.kind) && !(o.build && !o.build.up)); }
-  lineCheck(side, aId, bId) {
+  // cable: подземная кабельная вставка — втрое дороже, противник её не видит, обломки её не рвут
+  lineCheck(side, aId, bId, cable = false) {
     const a = this.g.obj(aId), b = this.g.obj(bId);
     if (!a || !b || a === b || a.side !== side || b.side !== side) return { err: 'Выберите две свои подстанции или станции' };
     const L = Math.hypot(a.x - b.x, a.y - b.y);
     if (L > LINE.maxKm * 1000) return { err: `Слишком далеко: до ${LINE.maxKm} км` };
-    if (this.g.lines.some((l) => l.kv === 110 && ((l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id)))) return { err: 'Эти объекты уже соединены ЛЭП 110 кВ' };
-    return { a, b, L, cost: Math.round((L / 1000) * LINE.perKm * (this.g.state?.k(side, 'build') ?? 1)) };
+    if (cable && L > 30000) return { err: 'Кабель — не длиннее 30 км' };
+    const same = this.g.lines.filter((l) => l.kv === 110 && ((l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))).length
+      + this.newLines.filter((l) => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id)).length;
+    if (same >= 2) return { err: 'Здесь уже две цепи ЛЭП 110 кВ' };
+    const k = (cable ? 3 : 1) * (this.g.state?.k(side, 'build') ?? 1);
+    return { a, b, L, second: same === 1, cable, time: cable ? 450 : LINE.time, cost: Math.round((L / 1000) * LINE.perKm * k) };
   }
-  buildLine(side, aId, bId) {
-    const q = this.lineCheck(side, aId, bId);
+  buildLine(side, aId, bId, cable = false) {
+    const q = this.lineCheck(side, aId, bId, cable);
     if (q.err) return q.err;
     const S = this.g.sides[side];
     const cost = this.matPrice(side, q.cost);
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.matPrice(side, q.cost, true);
     S.points -= cost; S.stats.spent += cost;
-    this.newLines.push({ side, a: q.a.id, b: q.b.id, kv: 110, pylons: this.linePylons(q.a, q.b, 110), until: this.sim.time + LINE.time, total: LINE.time, name: `${q.a.name} — ${q.b.name}` });
-    this.sim.msg(`Стройка ЛЭП 110 кВ «${q.a.name} — ${q.b.name}» (${(q.L / 1000).toFixed(1)} км, −${cost} оч., ${Math.round(LINE.time / 60)} мин)`, side);
+    // вторая цепь идёт в обход первой (другой трассой): один перебитый пролёт не гасит обе
+    const bow = q.second ? Math.min(1500, 350 + q.L * 0.08) * (this.g.lines.length % 2 ? 1 : -1) : 0;
+    this.newLines.push({ side, a: q.a.id, b: q.b.id, kv: 110, cable: q.cable || undefined, pylons: this.linePylons(q.a, q.b, 110, bow), until: this.sim.time + q.time, total: q.time, name: `${q.a.name} — ${q.b.name}` });
+    this.sim.msg(`Стройка ${q.cable ? 'кабельной линии' : q.second ? 'второй цепи ЛЭП' : 'ЛЭП'} 110 кВ «${q.a.name} — ${q.b.name}» (${(q.L / 1000).toFixed(1)} км, −${cost} оч., ${Math.round(q.time / 60)} мин)`, side);
     return null;
   }
   // Опоры ЛЭП от портала ОРУ одного объекта к порталу другого, провода заходят на шины
-  linePylons(a, b, kv) {
+  linePylons(a, b, kv, bow = 0) {
     const pa = portalOf(a, kv, [b.x, b.y]), pb = portalOf(b, kv, [a.x, a.y]);
     const A = pa.pt, B = pb.pt, span = kv >= 330 ? 330 : kv >= 110 ? 250 : 160, n = Math.max(2, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1]) / span));
     let pylons = [];
-    for (let i = 0; i <= n; i++) pylons.push({ x: A[0] + ((B[0] - A[0]) * i) / n, y: A[1] + ((B[1] - A[1]) * i) / n });
+    const L = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, nx = -(B[1] - A[1]) / L, ny = (B[0] - A[0]) / L;
+    // обход: трасса выгнута дугой (синус по длине) — у второй цепи свой коридор
+    for (let i = 0; i <= n; i++) { const f = i / n, o = bow * Math.sin(Math.PI * f); pylons.push({ x: A[0] + (B[0] - A[0]) * f + nx * o, y: A[1] + (B[1] - A[1]) * f + ny * o }); }
     // концевые опоры напротив порталов — провода заходят на ОРУ вдоль ряда, а не через площадку
     pylons = terminatePylons(terminatePylons(pylons, a, pa, false, this.world.mask), b, pb, true, this.world.mask);
     pylons[0].portal = true; pylons[pylons.length - 1].portal = true;
@@ -343,10 +352,10 @@ export class DWInfra {
       if (donor && Math.hypot(donor.x - o.x, donor.y - o.y) < 15000) {
         // рядом с действующей — забирает треть её района
         o.city = donor.city ?? 1;
-        const share = 0.33 * (donor.loadK ?? 1);
+        const share = (o.compact ? 0.15 : 0.33) * (donor.loadK ?? 1);
         donor.loadK = (donor.loadK ?? 1) - share;
         o.loadK = share; o.donor = donor.id;
-        this.sim.msg(`${o.name}: под напряжением — забрала треть района ${donor.name}; ЛЭП 110 кВ в работе (${plan.km.toFixed(0)} км)`, side);
+        this.sim.msg(`${o.name}: под напряжением — забрала ${o.compact ? '15%' : 'треть'} района ${donor.name}; ЛЭП 110 кВ в работе (${plan.km.toFixed(0)} км)`, side);
       } else {
         // далеко от городов — своя небольшая нагрузка (сёла, заводы, стоянки тылового района)
         o.city = 1; o.loadK = 0.12;
@@ -367,7 +376,7 @@ export class DWInfra {
   }
   addLine(d) {
     const id = 1000 + this.g.lines.length;
-    const ln = { id, kv: d.kv, a: d.a, b: d.b, side: d.side, pylons: d.pylons };
+    const ln = { id, kv: d.kv, a: d.a, b: d.b, side: d.side, pylons: d.pylons, cable: d.cable };
     this.world.power.lines.push(ln);
     this.g.lines.push({ ...ln, cut: null, repair: null, hp: 1, id: `L${id}` });
     this.world.power.version++;
@@ -383,7 +392,7 @@ export class DWInfra {
       this.sim.events.push({ type: 'net', ev: { k: 'line', ln } });
       const xs = d.pylons.map((p) => p.x), ys = d.pylons.map((p) => p.y);
       this.sim.events.push({ type: 'forts', bbox: { x0: Math.min(...xs) - 60, y0: Math.min(...ys) - 60, x1: Math.max(...xs) + 60, y1: Math.max(...ys) + 60 } });
-      this.sim.msg(`ЛЭП 110 кВ «${d.name}» под напряжением`, d.side);
+      this.sim.msg(`${d.cable ? 'Кабельная линия' : 'ЛЭП'} 110 кВ «${d.name}» под напряжением`, d.side);
     }
     this.newLines = this.newLines.filter((d) => !d.done);
   }

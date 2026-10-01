@@ -31,7 +31,7 @@ const FUEL_HA = 90; // га обработки на единицу топлив�
 const FARM_CAP = 15000; // т на току агрофирмы (уборка у всех в одно время — нужен запас)
 const ELEV_CAP = 40000; // т на элеваторе (1-й уровень)
 const TAX = 0.075; // оч/мин с 1000 жителей при полном довольстве
-export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, lrsam: 3.2, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04, dummy: 0.02 };
+export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, lrsam: 3.2, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04, dummy: 0.02, light: 0.05 };
 const CREW_SIZE = { mog: 4, spaag: 4, sam: 12, lrsam: 25, radar: 6, ew: 3, ewd: 5, icpt: 5, acoustic: 2 };
 const LAUNCH_UPKEEP = 0.8;
 export const LAUNCH_PER = 6; // пусков на исправную пусковую за 5 минут
@@ -68,6 +68,9 @@ export const BUILD = {
   ps330: { name: 'ПС 330/110 кВ', cost: 950, time: 3000, desc: 'второй опорный узел сети: заход 330 кВ от ближайшей ТЭС, ГЭС или ПС 330 (до 100 км) и ЛЭП 110 кВ к двум ближайшим ПС 110 — если главную ПС 330 выбьют, районы не останутся без питания. ЛЭП входят в смету: +40 оч/км (330 кВ), +25 оч/км (110 кВ)' },
   ps110: { name: 'ПС 110/10 кВ', cost: 340, time: 1500, desc: 'районная подстанция где угодно в 100 км от действующей ПС 110: рядом с городом забирает треть нагрузки соседней (удар по одной гасит меньше районов), в глубоком тылу питает свой район и заводы. ЛЭП 110 кВ прокладываются вместе с ней: +25 оч/км' },
   ps35: { name: 'ПС 35/10 кВ (промышленная)', cost: 160, time: 900, desc: 'питает заводы в радиусе 10 км по отдельному фидеру 35 кВ: веерные отключения в городе их не касаются; ЛЭП 35 кВ от ближайшей ПС 110 (до 100 км, +12 оч/км)' },
+  civdef: { name: 'Штаб ГО и укрытия', cost: 160, time: 600, near: 'city', desc: 'гражданская оборона: в 8 км страх после ударов вдвое меньше; по тревоге — сирены, люди в укрытиях, ближние заводы на 3 мин встают; в карточке города — эвакуация районов' },
+  jumper: { name: 'Аварийная перемычка 330/110 кВ', cost: 140, time: 300, near: 'ps330', desc: 'передвижной автотрансформатор у ПС 330 (до 1,5 км): +150 МВт в сеть 110 кВ, даже если АТ подстанции выбиты; ставится за 5 мин, работает 1 час (реконструкция — ещё час)' },
+  ktpb: { name: 'КТПБ 110/10 кВ (комплектная)', cost: 150, time: 600, desc: 'маленькая подстанция «из блоков»: дешёвая и быстрая, забирает 15% района ближайшей ПС 110 (до 15 км) — несколько КТПБ труднее выбить разом, чем одну большую ПС' },
   mobps: { name: 'Мобильная ПС 110/10 кВ', cost: 210, time: 420, near: 'ps110', desc: 'трансформатор на прицепе у ПС 110 кВ (до 1,5 км): +45 МВт мощности трансформации — выручает, пока сгоревшие трансформаторы в ремонте' },
   // ----- промышленность (строится с нуля, долго) -----
   steel: { name: 'Металлургический завод', cost: 520, time: 2400, desc: 'руда → сталь (для двигателей, кабеля, сеток, трансформаторов, грузовиков); нужен свет и 1500 рабочих' },
@@ -104,8 +107,8 @@ export const BUILD_GROUPS = [
   ['Промышленность: материалы', ['steel', 'chem', 'concrete', 'asphalt', 'cement', 'refinery', 'terminal']],
   ['Промышленность: комплектующие', ['engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery']],
   ['Промышленность: для тыла и ПВО', ['cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant']],
-  ['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство', ['elevator', 'agro', 'mill', 'dairy']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика: подстанции', ['ps330', 'ps110', 'ps35', 'mobps']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'coalmine', 'reserve', 'pontoon']]];
-const UPG = new Set(['workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery', 'steel', 'concrete', 'asphalt', 'chem', 'engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery', 'cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant', 'missile', 'uground', 'minifab', 'terminal', 'mlaunch', 'airbase']);
+  ['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство', ['elevator', 'agro', 'mill', 'dairy']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower', 'civdef']], ['Энергетика: подстанции', ['ps330', 'ps110', 'ktpb', 'ps35', 'mobps', 'jumper']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'coalmine', 'reserve', 'pontoon']]];
+const UPG = new Set(['jumper', 'workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery', 'steel', 'concrete', 'asphalt', 'chem', 'engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery', 'cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant', 'missile', 'uground', 'minifab', 'terminal', 'mlaunch', 'airbase']);
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
 
@@ -120,7 +123,7 @@ export class DWEconomy {
     this.farms = [];
     this.nextBuilt = 100000;
     this.side = {};
-    for (const side of ['blue', 'red']) this.side[side] = { launchLog: [], parts: 70, partsWarn: 0, lostGrain: 0, harvested: 0, exported: 0, taxAvg: 0 };
+    for (const side of ['blue', 'red']) this.side[side] = { launchLog: [], parts: 70, partsWarn: 0, lostGrain: 0, harvested: 0, exported: 0, taxAvg: 0, builders: 3 };
     this.setupPopulation();
     this.setupFarms();
     this.pendingCrop = [];
@@ -152,9 +155,15 @@ export class DWEconomy {
       (f.lost = f.lost || []).push({ kind: f.work.kind, until: this.sim.time + 600 });
       this.sim.msg(`${f.name}: ${f.work.kind === 'combine' ? 'комбайн' : 'трактор'} уничтожен ударом дрона — работы встали до замены техники`, f.side);
     }
+    const t = this.sim.time;
     for (const s of this.world.settlements) {
       const d = Math.hypot(s.x - x, s.y - y), R = s.type === 'city' ? 4000 : 2500;
-      if (d < R) s.fear = Math.min(1, s.fear + (0.12 + wh / 600) * (1 - d / R));
+      if (d >= R) continue;
+      // гражданская оборона: укрытия и штаб ГО рядом — страх вдвое меньше; люди в укрытиях (сирена или эвакуация) — ещё меньше
+      const go = this.g.objs(s.side, 'civdef').some((o) => !o.build && Math.hypot(o.x - s.x, o.y - s.y) < 8000) ? 0.5 : 1;
+      const hid = (s.evacUntil || 0) > t || (s.shelterUntil || 0) > t ? 0.6 : 1;
+      s.fear = Math.min(1, s.fear + (0.12 + wh / 600) * (1 - d / R) * go * hid);
+      if (wh >= 5) { s.strikes = (s.strikes || 0) + 1; s.lastStrike = t; }
     }
   }
   // Мобилизация: люди в расчётах ПВО, ремонтных бригадах и на стартовых позициях не работают
@@ -176,6 +185,8 @@ export class DWEconomy {
     for (const a of this.g.ad) if (a.side === side && !a.dead) u += UPKEEP[a.type] || 0;
     u += this.g.objs(side, 'launch').filter((o) => !o.build).length * LAUNCH_UPKEEP;
     u += this.g.res?.upkeep(side) || 0; // заводы: зарплаты, сырьё на ходу
+    u += Math.max(0, (this.side[side].builders ?? 3) - 3) * 0.4; // нанятые строительные бригады
+    u += this.g.objects.filter((o) => o.side === side && o.camo).length * 0.15; // уход за маскировкой
     return u;
   }
   // Налоги (оч/мин) и довольство по поселениям
@@ -376,6 +387,13 @@ export class DWEconomy {
   // Прибытие зерновоза (вызывается логистикой); true — обработано
   arrive(v) {
     const T = v.task, logi = this.logi;
+    if (T.type === 'mat') {
+      // бетоновоз довёз материалы на стройку
+      const o = this.g.obj(T.oid);
+      if (v.state !== 'back' && o?.build) { o.build.got = (o.build.got || 0) + 1; o.build.enroute = Math.max(0, (o.build.enroute || 1) - 1); }
+      v.dead = true; v.deadAt = this.sim.time;
+      return true;
+    }
     if (T.type === 'farmfuel') {
       const f = this.farms[T.farm];
       if (v.state === 'back') { logi.home(v); return true; }
@@ -406,6 +424,7 @@ export class DWEconomy {
     return false;
   }
   onLost(v) {
+    if (v.task?.type === 'mat') { const o = this.g.obj(v.task.oid); if (o?.build) o.build.enroute = Math.max(0, (o.build.enroute || 1) - 1); this.sim.msg('Бетоновоз на стройку уничтожен — материалы пропали', v.side); }
     if (v.task?.type === 'farmfuel') { const f = this.farms[v.task.farm]; if (f && f.tanker === v.id) f.tanker = null; }
     if (v.kind === 'grain') { const f = this.farms[v.task.farm]; if (f && f.truck === v.id) f.truck = null; const e = this.g.obj(v.task.to); if (e && v.state !== 'back') e.coming = Math.max(0, (e.coming || 0) - v.task.load); }
     if ((v.kind === 'grain' || v.kind === 'grainx') && v.state !== 'back') this.side[v.side].lostGrain += v.task.load || 0;
@@ -449,10 +468,13 @@ export class DWEconomy {
     if (B.near === 'rail' && !this.world.rails.items.some((r) => !r.siding && r.line.some(([px, py]) => Math.abs(px - x) < 400 && Math.abs(py - y) < 400 && Math.hypot(px - x, py - y) < 400))) return { err: 'Только у железной дороги (до 400 м)' };
     if (B.near === 'river' && !this.world.water.items.some((r) => r.kind === 'river' && r.line.some(([px, py]) => Math.abs(py - y) < 350 && Math.hypot(px - x, py - y) < 350))) return { err: 'Только на берегу реки (до 350 м)' };
     if (B.near === 'ps110' && !this.g.objs(side, 'ps110').some((q) => Math.hypot(q.x - x, q.y - y) < 1500)) return { err: 'Только рядом с ПС 110 кВ (до 1,5 км)' };
+    if (B.near === 'ps330' && !this.g.objs(side, 'ps330').some((q) => !q.build && Math.hypot(q.x - x, q.y - y) < 1500)) return { err: 'Только рядом с ПС 330 кВ (до 1,5 км)' };
     const live = (k) => this.g.objs(side, k).filter((q) => !(q.build && !q.build.up));
     const dist = (q) => Math.hypot(q.x - x, q.y - y);
     if (kind === 'ps110' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна действующая ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 110 кВ' };
     if (kind === 'ps110' && live('ps110').some((q) => dist(q) < 1200)) return { err: 'Слишком близко к другой ПС 110 кВ (нужно от 1,2 км)' };
+    if (kind === 'ktpb' && !live('ps110').some((q) => dist(q) < 15000)) return { err: 'КТПБ — в 15 км от действующей ПС 110 (забирает часть её района)' };
+    if (kind === 'ktpb' && live('ps110').some((q) => dist(q) < 700)) return { err: 'Слишком близко к другой подстанции (нужно от 700 м)' };
     if (kind === 'ps35' && !live('ps110').some((q) => dist(q) < 100000)) return { err: 'Нужна ПС 110 кВ не дальше 100 км — от неё пойдёт ЛЭП 35 кВ' };
     if (kind === 'ps330' && ![...live('ps330'), ...live('tpp'), ...live('hpp')].some((q) => dist(q) < 100000)) return { err: 'Нужна ТЭС, ГЭС или ПС 330 кВ не дальше 100 км — для захода 330 кВ' };
     if (kind === 'mobps' && this.g.objs(side, 'mobps').some((q) => dist(q) < 1500)) return { err: 'У этой подстанции мобильная ПС уже есть' };
@@ -504,6 +526,41 @@ export class DWEconomy {
     }
     return { x, y, angle: ang, gate, gateQ: gq, drive, lay };
   }
+  hireBuilders(side) {
+    const E = this.side[side], S = this.g.sides[side];
+    if ((E.builders ?? 3) >= 12) return 'Больше 12 бригад не нанять';
+    const cost = 60 + 20 * (E.builders ?? 3);
+    if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
+    S.points -= cost; S.stats.spent += cost;
+    E.builders = (E.builders ?? 3) + 1;
+    this.sim.msg(`Нанята строительная бригада (всего ${E.builders}; содержание +0,4 оч/мин)`, side);
+    return null;
+  }
+  // Эвакуация района: 10 мин люди в укрытиях (страх от ударов меньше), заводы в 6 км стоят
+  civEvac(side, si) {
+    const q = this.world.settlements[si], S = this.g.sides[side];
+    if (!q || q.side !== side || q.type !== 'city') return 'Эвакуировать можно свой город';
+    if ((q.evacUntil || 0) > this.sim.time) return 'Эвакуация уже идёт';
+    if (S.points < 30) return 'Не хватает очков: нужно 30';
+    S.points -= 30; S.stats.spent += 30;
+    q.evacUntil = this.sim.time + 600;
+    let n = 0;
+    for (const o of this.g.res?.plants(side) || []) if (Math.hypot(o.x - q.x, o.y - q.y) < 6000) { o.evacUntil = q.evacUntil; n++; }
+    this.sim.msg(`${q.name}: эвакуация районов на 10 мин — люди в укрытиях${n ? `, ${n} завод(ов) остановлены` : ''}`, side);
+    return null;
+  }
+  // Сирены ГО по тревоге: у городов со штабом ГО люди уходят в укрытия, ближние заводы — на 3 мин в простой
+  sirens(side) {
+    const t = this.sim.time;
+    const hq = this.g.objs(side, 'civdef').filter((o) => !o.build);
+    if (!hq.length) return;
+    const cities = this.settlementsOf(side).filter((q) => q.type === 'city' && hq.some((o) => Math.hypot(o.x - q.x, o.y - q.y) < 8000));
+    for (const q of cities) {
+      q.shelterUntil = t + 180;
+      for (const o of this.g.res?.plants(side) || []) if (Math.hypot(o.x - q.x, o.y - q.y) < 6000) o.evacUntil = Math.max(o.evacUntil || 0, t + 180);
+    }
+    if (cities.length) this.sim.msg(`Сирены ГО: ${cities.map((q) => q.name).join(', ')} — население в укрытиях, ближние заводы на 3 мин остановлены`, side);
+  }
   cost(side, kind) { return Math.round(BUILD[kind].cost * (this.g.state?.k(side, 'build') ?? 1)); }
   nearName(x, y, side) {
     let best = null, bd = Infinity;
@@ -516,14 +573,16 @@ export class DWEconomy {
     const site = this.siteFor(side, kind, x, y);
     if (site.err) return site.err;
     // подстанции — вместе с заходами ЛЭП: цена и срок растут с длиной линий
-    const plan = ['ps330', 'ps110', 'ps35'].includes(kind) && this.g.infra ? this.g.infra.substationPlan(side, kind, site.x, site.y) : null;
+    const plan = ['ps330', 'ps110', 'ps35', 'ktpb'].includes(kind) && this.g.infra ? this.g.infra.substationPlan(side, kind === 'ktpb' ? 'ps110' : kind, site.x, site.y) : null;
     const cost0 = this.cost(side, kind) + (plan?.cost || 0), cost = this.g.infra ? this.g.infra.matPrice(side, cost0) : cost0;
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.g.infra?.matPrice(side, cost0, true); // стройматериалы — скидка 20%
     S.points -= cost; S.stats.spent += cost;
     const nm = this.nearName(site.x, site.y, side);
     const name = kind === 'decoy' ? `ПС 110 кВ «${nm}-${2 + (this.nextBuilt % 3)}»` : kind === 'store' ? `Магазин, ${nm}` : kind === 'fuel' ? `АЗС «${side === 'blue' ? 'Велойл' : 'Кардойл'}», ${nm}` : kind === 'pontoon' ? `Понтонная переправа у моста «${this.g.obj(site.bridge)?.name.replace(/^Мост через /, '')}»` : `${B.name} «${nm}»`;
-    const o = this.addObject({ id: this.nextBuilt++, side, kind, name, mimic: kind === 'decoy' ? 'ps110' : undefined, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, L: site.L, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time + (plan?.time || 0), total: B.time + (plan?.time || 0) }, built: true });
+    const compact = kind === 'ktpb'; // КТПБ — та же ПС 110/10, только «из блоков» (один трансформатор)
+    if (compact) kind = 'ps110';
+    const o = this.addObject({ id: this.nextBuilt++, side, kind, name, compact: compact || undefined, L: compact ? 1 : site.L, mimic: kind === 'decoy' ? 'ps110' : undefined, x: site.x, y: site.y, angle: site.angle, w: site.lay.w, h: site.lay.h, gate: site.gate, gateQ: site.gateQ, drive: site.drive, bridge: site.bridge, level: 1, build: { until: this.sim.time + B.time + (plan?.time || 0), total: B.time + (plan?.time || 0) }, built: true });
     this.sim.msg(`Стройка: ${name} — готово через ${Math.round((B.time + (plan?.time || 0)) / 60)} мин (−${cost} оч.${plan?.km ? `, с ЛЭП ${plan.km.toFixed(0)} км` : ''})`, side);
     return o ? null : 'Не удалось';
   }
@@ -604,10 +663,43 @@ export class DWEconomy {
     this.sim.events.push({ type: 'net', ev });
     this.g.flowTimer = 0;
   }
-  updateBuilds() {
-    const t = this.sim.time;
+  // Стройки: бригад ограниченное число (остальные ждут), материалы на площадку везут бетоновозы
+  // с бетонного или цементного завода (или со склада распредцентра); без них стройка встаёт
+  updateBuilds(dt = 0) {
+    const t = this.sim.time, g = this.g;
+    for (const side of ['blue', 'red']) {
+      const E = this.side[side];
+      const sites = g.objects.filter((o) => o.side === side && o.build && !o.build.grid && o.build.until > t - 1).sort((a, b) => a.id - b.id);
+      let free = E.builders ?? 3;
+      E.buildWait = 0;
+      for (const o of sites) {
+        const B = o.build;
+        if (free > 0) {
+          free--;
+          if (B.wait) { B.wait = false; this.sim.msg(`${o.name}: бригада приступила к стройке`, side); }
+        } else { if (!B.wait) { B.wait = true; this.sim.msg(`${o.name}: нет свободной бригады — стройка ждёт (нанять бригаду — вкладка «Стройка»)`, side); } E.buildWait++; }
+        if (B.wait) { B.until += dt; continue; }
+        // материалы: доля готовности не больше, чем довезено
+        if (B.need === undefined) B.need = B.up ? 1 : Math.max(1, Math.min(8, Math.round((BUILD[o.kind]?.cost || 150) / 150)));
+        B.got = B.got || 0;
+        const k = 1 - (B.until - t) / B.total;
+        const cap = 0.12 + 0.88 * (B.got / B.need);
+        const stall = k > cap && B.got < B.need;
+        if (stall) { B.until += dt; if (!B.needMat) { B.needMat = true; } } else B.needMat = false;
+        // заказ бетоновоза: не больше двух в пути на стройку
+        B.matT = (B.matT || 0) - dt;
+        if (B.got + (B.enroute || 0) < B.need && (B.enroute || 0) < 2 && B.matT <= 0) {
+          B.matT = 25;
+          const src = g.objs(side).filter((q) => ['concrete', 'cement', 'hub'].includes(q.kind) && !q.build && q.comps.some((c) => c.state !== 'destroyed'))
+            .sort((a, b) => (a.kind === 'hub') - (b.kind === 'hub') || Math.hypot(a.x - o.x, a.y - o.y) - Math.hypot(b.x - o.x, b.y - o.y))[0];
+          const v = src && this.logi.spawn(side, 'mixer', this.logi.gate(src), this.logi.gate(o), { type: 'mat', oid: o.id });
+          if (v) B.enroute = (B.enroute || 0) + 1;
+          else if (!src) { B.got = B.need; } // некому везти — материалы на месте (старый запас)
+        }
+      }
+    }
     for (const o of this.g.objects) {
-      if (!o.build || o.build.grid || t < o.build.until) continue;
+      if (!o.build || o.build.grid || o.build.wait || o.build.needMat || t < o.build.until) continue;
       if (!o.build.up && this.needsGrid(o) && !o.grid) {
         o.build.grid = true;
         this.sim.msg(`${o.name}: стройка окончена, но объект не подключён к сети — подключите его (карточка объекта)`, o.side);
@@ -640,6 +732,7 @@ export class DWEconomy {
     if (o.kind === 'bess') { o.charge = 1; o.ps = this.nearestPS(o.side, o.x, o.y)?.id; }
     if (o.kind === 'solar') o.ps = this.nearestPS(o.side, o.x, o.y)?.id;
     if (!up && ['ps330', 'ps110', 'ps35', 'mobps'].includes(o.kind)) this.g.infra?.substationReady(o);
+    if (o.kind === 'jumper') { o.ps = this.g.objs(o.side, 'ps330').filter((q) => !q.build).sort((a, b) => Math.hypot(a.x - o.x, a.y - o.y) - Math.hypot(b.x - o.x, b.y - o.y))[0]?.id; o.expire = this.sim.time + 3600; this.g.flowTimer = 0; this.sim.msg(`${o.name}: в работе — +150 МВт в сеть 110 кВ на 1 час`, o.side); }
   }
   nearCity(o) {
     let best = null, bd = Infinity;
@@ -679,7 +772,7 @@ export class DWEconomy {
       let moved = 0;
       for (const q of ss) {
         q.pop *= 1 + 0.004 * (q.happy - 0.75) * dtMin;
-        if (q.fear > 0.5 && q.type === 'city') { const m = q.pop * 0.003 * dtMin * q.fear; q.pop -= m; moved += m; }
+        if (q.fear > 0.5 && q.type === 'city') { const m = q.pop * 0.003 * dtMin * q.fear; q.pop -= m; moved += m; q.left = (q.left || 0) + m; }
       }
       if (moved > 0) { const calm = ss.filter((q) => q.fear < 0.3); const tot = calm.reduce((a, q) => a + q.pop, 0) || 1; for (const q of calm) q.pop += (moved * q.pop) / tot; }
       for (const q of ss) q.pop = Math.max(300, q.pop);
@@ -731,7 +824,7 @@ export class DWEconomy {
   }
   // ---------------------------------------------------------------- Главный цикл
   update(dt) {
-    this.updateBuilds();
+    this.updateBuilds(dt);
     this.farmT -= dt;
     if (this.farmT <= 0) { this.updateFarms(1 - this.farmT); this.farmT = 1; }
     this.grainT -= dt;
