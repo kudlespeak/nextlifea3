@@ -1591,6 +1591,9 @@ function frameBody(now) {
     ctx.imageSmoothingQuality = 'low';
     drawLevel(0, false, need);
     for (let l = Math.max(1, L - 2); l < L; l++) drawLevel(l, false, need);
+    // при отдалении в кэше остались чанки на уровень детальнее — уменьшенные, они совпадают с
+    // готовыми соседями (ширина дорог, разметка), а растянутая грубая подложка дала бы «ступеньки»
+    if (L + 1 < LEVELS.length) { ctx.imageSmoothingQuality = 'high'; drawLevel(L + 1, false, need); }
     ctx.restore();
     ctx.imageSmoothingQuality = 'high';
   }

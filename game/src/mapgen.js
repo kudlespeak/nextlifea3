@@ -63,7 +63,7 @@ function newWorld(seed, W, H, res = 4) {
 // connectRoadNet); случайные карты проходят те же проверки
 export const MAIN_SEED = 1337;
 // Версия генератора: увеличить после любых изменений карты (иначе браузер возьмёт старую копию из кэша)
-export const MAPGEN_VERSION = 'v10.5';
+export const MAPGEN_VERSION = 'v10.6';
 
 export function generateWorld(seed, layout = 'front') {
   if (layout === 'dronewar') return generateDroneWarWorld(seed);
@@ -820,6 +820,7 @@ function generateDroneWarWorld(seed) {
   snapRoadEnds(world);
   connectRoadNet(world, rng);
   fixCrossings(world);
+  pruneStubs(world);
   placeBusStops(world);
   // ---------- Мосты: где дороги и ж/д пересекают реки ----------
   const bridges = [];
@@ -1109,20 +1110,49 @@ function buildRingRoad(world, rng, C, R) {
     pts.push([C[0] + Math.cos(a) * r, C[1] + Math.sin(a) * r]);
   }
   const line = resample(catmullRom([...pts, pts[0], pts[1], pts[2]], 6), 10);
-  // ж/д объездная пересекает (переезд или путепровод), а у реки возле трассы — обрывается, не доходя
-  // 40 м: конец примкнёт к трассе «Т», а не ляжет кругом в воду
-  const majors = world.roadList.filter((r) => r.type === 'highway' || r.type === 'local');
-  const nearMajor = (p) => majors.some((r) => r.bbox.x0 - 60 < p[0] && r.bbox.x1 + 60 > p[0] && r.bbox.y0 - 60 < p[1] && r.bbox.y1 + 60 > p[1] && distToLine(p[0], p[1], r.line) < 55);
-  const bad = (p) => p[0] < 300 || p[1] < 300 || p[0] > world.W - 300 || p[1] > world.H - 300 || mask.near(p[0], p[1], 14, M.CITY | M.BUILD | M.VILLAGE | M.SETTLE)
-    || (mask.near(p[0], p[1], 90, M.WATER) && nearMajor(p));
+  // ж/д объездная пересекает (переезд или путепровод), трассу — путепроводом (развязку строит fixCrossings)
+  const bad = (p) => p[0] < 300 || p[1] < 300 || p[0] > world.W - 300 || p[1] > world.H - 300 || mask.near(p[0], p[1], 14, M.CITY | M.BUILD | M.VILLAGE | M.SETTLE);
+  // трассу кольцо пересекает только под углом, близким к прямому (путепровод с развязкой); там, где
+  // оно шло бы почти вдоль трассы, кольцо прерывается, а концы примыкают к трассе под прямым углом
+  const hws = world.roadList.filter((r) => r.type === 'highway');
+  const hwFoot = (p, maxD) => {
+    let best = null;
+    for (const h of hws) for (let i = 1; i < h.line.length; i++) {
+      const a = h.line[i - 1], b = h.line[i];
+      if (Math.min(a[0], b[0]) > p[0] + maxD || Math.max(a[0], b[0]) < p[0] - maxD || Math.min(a[1], b[1]) > p[1] + maxD || Math.max(a[1], b[1]) < p[1] - maxD) continue;
+      const f = footOn(p, a, b), d = Math.hypot(f[0] - p[0], f[1] - p[1]);
+      if (d < maxD && (!best || d < best.d)) { const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; best = { f, d, t: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] }; }
+    }
+    return best;
+  };
+  const shallow = line.map((p, i) => {
+    const h = hwFoot(p, 260);
+    if (!h) return false;
+    const a = line[(i + line.length - 1) % line.length], b = line[(i + 1) % line.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return Math.abs(((b[0] - a[0]) * h.t[0] + (b[1] - a[1]) * h.t[1]) / L) > 0.55;
+  });
+  const badAt = (i) => bad(line[i]) || shallow[i];
   // ищем начало в «плохой» точке, чтобы куски не рвались на стыке замыкания
-  let start = line.findIndex(bad);
+  let start = line.findIndex((p, i) => badAt(i));
   if (start < 0) start = 0;
-  const ring = [...line.slice(start), ...line.slice(0, start)];
+  const order = [...line.keys()].slice(start).concat([...line.keys()].slice(0, start));
   const runs = [];
   let cur = [];
-  for (const p of ring) { if (bad(p)) { if (cur.length) runs.push(cur); cur = []; } else cur.push(p); }
+  for (const i of order) { if (badAt(i)) { if (cur.length) runs.push(cur); cur = []; } else cur.push(line[i]); }
   if (cur.length) runs.push(cur);
+  // конец у трассы — дугой к ней под прямым углом (Т-примыкание)
+  for (const run of runs) for (const end of [0, 1]) {
+    if (run.length < 3) continue;
+    const E = end ? run[run.length - 1] : run[0], Pv = end ? run[run.length - 2] : run[1];
+    const h = hwFoot(E, 330);
+    if (!h) continue;
+    const ox = E[0] - Pv[0], oy = E[1] - Pv[1], oL = Math.hypot(ox, oy) || 1;
+    const nx = (E[0] - h.f[0]) / (h.d || 1), ny = (E[1] - h.f[1]) / (h.d || 1);
+    const k1 = Math.min(90, h.d / 3), k2 = Math.min(110, h.d / 2);
+    const arc = resample(catmullRom([Pv, E, [E[0] + (ox / oL) * k1, E[1] + (oy / oL) * k1], [h.f[0] + nx * k2, h.f[1] + ny * k2], h.f], 10), 10).slice(1);
+    if (arc.some(([x, y], j) => j < arc.length - 3 && mask.has(x, y, M.BUILD | M.WATER | M.RAIL))) continue;
+    if (end) run.push(...arc.slice(1)); else run.unshift(...arc.slice(1).reverse());
+  }
   const made = [];
   for (const run of runs) {
     if (lineLen(run) < 700) continue;
@@ -1134,10 +1164,12 @@ function buildRingRoad(world, rng, C, R) {
     r.ring = true;
     made.push(r);
   }
-  // круговые развязки: пересечения кольца с трассой и загородными дорогами
+  // круговые развязки: пересечения кольца с загородными дорогами под заметным углом (> 40°) — у
+  // острого «икса» въезды легли бы почти вдоль друг друга; такие и пересечения с трассой (путепровод и
+  // съезды) достраивает fixCrossings
   for (const r of made)
     for (const o of world.roadList) {
-      if (o === r || o.ring || (o.type !== 'highway' && o.type !== 'local')) continue;
+      if (o === r || o.ring || o.type !== 'local') continue;
       if (o.bbox.x0 > r.bbox.x1 || o.bbox.x1 < r.bbox.x0 || o.bbox.y0 > r.bbox.y1 || o.bbox.y1 < r.bbox.y0) continue;
       for (let i = 1; i < r.line.length; i++) for (let j = 1; j < o.line.length; j++) {
         const a = r.line[i - 1], b = r.line[i], c = o.line[j - 1], d = o.line[j];
@@ -1145,6 +1177,8 @@ function buildRingRoad(world, rng, C, R) {
         const t = segCross(r.line[i - 1], r.line[i], o.line[j - 1], o.line[j]);
         if (t < 0) continue;
         const x = r.line[i - 1][0] + (r.line[i][0] - r.line[i - 1][0]) * t, y = r.line[i - 1][1] + (r.line[i][1] - r.line[i - 1][1]) * t;
+        const ua = [r.line[i][0] - r.line[i - 1][0], r.line[i][1] - r.line[i - 1][1]], ub = [o.line[j][0] - o.line[j - 1][0], o.line[j][1] - o.line[j - 1][1]];
+        if (Math.abs(ua[0] * ub[0] + ua[1] * ub[1]) / (Math.hypot(...ua) * Math.hypot(...ub) || 1) > 0.76) continue;
         if (!world.roundabouts.some((q) => Math.hypot(q.x - x, q.y - y) < 80) && !mask.near(x, y, 40, M.WATER | M.RAIL)) world.roundabouts.push({ x, y, r: o.type === 'highway' ? 26 : 18 });
       }
     }
@@ -1290,7 +1324,8 @@ function fixCrossings(world) {
       // второстепенная дорога — под прямым углом на ±straight м от оси главной (подход разной длины,
       // пока новая трасса не обходит застройку и воду)
       let ok = cos <= 0.26 && !hw;
-      if (!ok) for (const reach of hw ? [190, 150, 250, 120] : [110, 80, 150]) {
+      // при остром угле S-образному доводу нужно больше места — пробуем и длинные подходы
+      if (!ok) for (const reach of hw ? (cos > 0.7 ? [320, 420, 250, 190] : [190, 150, 250, 320, 120]) : [110, 80, 150]) {
         if (n0.s < reach + 10 || Ls - n0.s < reach + 10) continue;
         const A = pointAt(minor.line, n0.s - reach), B = pointAt(minor.line, n0.s + reach);
         const ctrl = [A.p, [P[0] - nx * Math.min(straight, reach / 2.5), P[1] - ny * Math.min(straight, reach / 2.5)], P, [P[0] + nx * Math.min(straight, reach / 2.5), P[1] + ny * Math.min(straight, reach / 2.5)], B.p];
@@ -1307,11 +1342,12 @@ function fixCrossings(world) {
       // развязка «ромб»: путепровод и четыре съезда (с второстепенной — на проезжую часть своей стороны)
       const X = { x: P[0], y: P[1], main, minor, kind: 'interchange', tx: t[0], ty: t[1], nx, ny, ramps: [] };
       const half = main.width / 2 - 3;
+      const n1 = along(minor.line, P); // положение на второстепенной — уже после довода под прямой угол
       // съезд — плавная кривая: уходит со второстепенной в 150 м от трассы и вливается в неё через ~400 м
       // съезд не пересекает чужие дороги (свои — трасса и второстепенная — не в счёт)
       const onRoad = (ln) => ln.some(([x, y]) => mask.has(x, y, M.ROAD) && distToLine(x, y, minor.line) > 22 && distToLine(x, y, main.line) > 30);
       for (const s of [-1, 1]) for (const d of [-1, 1]) {
-        const S = pointAt(minor.line, n0.s + s * 150).p;
+        const S = pointAt(minor.line, n1.s + s * 150).p;
         const M1 = [P[0] + t[0] * d * 110 + nx * s * 95, P[1] + t[1] * d * 110 + ny * s * 95];
         const M2 = [P[0] + t[0] * d * 260 + nx * s * (half + 16), P[1] + t[1] * d * 260 + ny * s * (half + 16)];
         const E = [P[0] + t[0] * d * 400 + nx * s * half, P[1] + t[1] * d * 400 + ny * s * half];
@@ -1329,6 +1365,53 @@ function fixCrossings(world) {
   const old = world.roads;
   world.roads = new SpatialIndex(world.W, world.H, old.cell);
   for (const r of world.roadList) { r.bbox = bboxOf(r.line, r.width + 6); world.roads.insert(r); }
+}
+
+// Обрубки: короткая дорога, конец которой ни к чему не ведёт (ни к дороге, ни к объекту, ни к
+// застройке) — остаток после обрезок и переносов; таких на карте быть не должно
+function pruneStubs(world) {
+  const { mask } = world;
+  const objNear = (p) => world.infra.some((o) => Math.hypot(o.x - p[0], o.y - p[1]) < Math.max(o.w || 0, o.h || 0) / 2 + 45);
+  // «Клин»: дорога подходит к другой почти вдоль неё и последние десятки метров идёт рядом (две
+  // полосы асфальта бок о бок) — параллельный хвост срезаем, конец примыкает к соседке поперёк
+  const twinsOf = (r, p) => world.roadList.filter((o) => o !== r && (o.type === 'local' || o.type === 'village' || o.type === 'highway') && o.bbox.x0 - 40 < p[0] && o.bbox.x1 + 40 > p[0] && o.bbox.y0 - 40 < p[1] && o.bbox.y1 + 40 > p[1] && distToLine(p[0], p[1], o.line) < 30);
+  for (const r of [...world.roadList]) {
+    if (r.type !== 'local' && r.type !== 'village') continue;
+    for (const end of [0, 1]) {
+      const L = end ? [...r.line].reverse() : r.line;
+      // из соседок у конца — та, вдоль которой хвост тянется дольше всего
+      let o = null, k = 0, len = 0;
+      for (const c of twinsOf(r, L[0])) {
+        let kk = 0, ll = 0;
+        while (kk + 1 < L.length && distToLine(L[kk + 1][0], L[kk + 1][1], c.line) < 30) { ll += Math.hypot(L[kk + 1][0] - L[kk][0], L[kk + 1][1] - L[kk][1]); kk++; }
+        if (ll > len) { o = c; k = kk; len = ll; }
+      }
+      if (!o || len < 45) continue;
+      if (k >= L.length - 2) { world.roadList = world.roadList.filter((q) => q !== r); break; }
+      const rest = L.slice(k + 1);
+      let f = null, fd = Infinity;
+      for (let j = 1; j < o.line.length; j++) { const q = footOn(rest[0], o.line[j - 1], o.line[j]), d = Math.hypot(q[0] - rest[0][0], q[1] - rest[0][1]); if (d < fd) { fd = d; f = q; } }
+      rest.unshift(f);
+      r.line = end ? rest.reverse() : rest;
+      r.bbox = bboxOf(r.line, r.width + 6);
+      world.untwinned = (world.untwinned || 0) + 1;
+    }
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    const kill = new Set();
+    for (const r of world.roadList) {
+      if (r.type === 'street' || r.type === 'avenue' || r.type === 'highway' || lineLen(r.line) > 160) continue;
+      const free = (e) => !objNear(e) && !mask.near(e[0], e[1], 30, M.VILLAGE | M.CITY | M.CITYZONE | M.SETTLE | M.BUILD)
+        && !world.roadList.some((o) => o !== r && !kill.has(o) && o.bbox.x0 - 20 < e[0] && o.bbox.x1 + 20 > e[0] && o.bbox.y0 - 20 < e[1] && o.bbox.y1 + 20 > e[1] && distToLine(e[0], e[1], o.line) < o.width / 2 + 4);
+      if (free(r.line[0]) || free(r.line[r.line.length - 1])) kill.add(r);
+    }
+    if (!kill.size) break;
+    world.roadList = world.roadList.filter((r) => !kill.has(r));
+    world.prunedStubs = (world.prunedStubs || 0) + kill.size;
+  }
+  const old = world.roads;
+  world.roads = new SpatialIndex(world.W, world.H, old.cell);
+  for (const r of world.roadList) world.roads.insert(r);
 }
 
 // Дорога cut идёт вдоль дороги host (ближе 30 м): этот участок вырезаем, оставшиеся куски
@@ -1777,7 +1860,7 @@ function buildFieldsDW(world, rng, massifs) {
   const roadPts = [];
   for (const r of fieldRoads) {
     const pts = resample(r.line, 60);
-    for (let i = 1; i + 1 < pts.length; i++) roadPts.push({ x: pts[i][0], y: pts[i][1], tx: pts[i + 1][0] - pts[i - 1][0], ty: pts[i + 1][1] - pts[i - 1][1], half: r.width / 2 + (r.type === 'highway' ? 4 : 0) });
+    for (let i = 1; i + 1 < pts.length; i++) roadPts.push({ x: pts[i][0], y: pts[i][1], tx: pts[i + 1][0] - pts[i - 1][0], ty: pts[i + 1][1] - pts[i - 1][1], half: r.width / 2 + (r.type === 'highway' ? 4 : 0), r });
     let acc = 1400;
     for (let i = 1; i + 1 < pts.length; i++) {
       acc += 60;
@@ -1790,10 +1873,10 @@ function buildFieldsDW(world, rng, massifs) {
   }
   const RB = 600, rbins = new Map();
   for (const p of roadPts) { const k = `${Math.floor(p.x / RB)},${Math.floor(p.y / RB)}`; (rbins.get(k) || rbins.set(k, []).get(k)).push(p); }
-  const nearRoad = (x, y, maxD) => {
+  const nearRoad = (x, y, maxD, noHw = false) => {
     let best = null, bd = maxD;
     const ix = Math.floor(x / RB), iy = Math.floor(y / RB), n = Math.ceil(maxD / RB);
-    for (let dx = -n; dx <= n; dx++) for (let dy = -n; dy <= n; dy++) for (const p of rbins.get(`${ix + dx},${iy + dy}`) || []) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } }
+    for (let dx = -n; dx <= n; dx++) for (let dy = -n; dy <= n; dy++) for (const p of rbins.get(`${ix + dx},${iy + dy}`) || []) { if (noHw && p.r.type === 'highway') continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } }
     return best;
   };
   // ----- Межевание вдоль дорог: ряды участков по обе стороны, границы повторяют изгибы дороги -----
@@ -1998,8 +2081,10 @@ function buildFieldsDW(world, rng, massifs) {
   // Концы, не дотянутые до дороги, цепляются к соседней грунтовке (сеть полевых дорог); грунтовка,
   // ни одним концом ни к чему не примыкающая, — лишняя, её нет
   world.fieldTracks = [];
+  const hws = world.roadList.filter((r) => r.type === 'highway');
   const clearTo = (e, p) => {
     const d = Math.hypot(p[0] - e[0], p[1] - e[1]);
+    for (const h of hws) for (let i = 1; i < h.line.length; i++) if (segCross(e, p, h.line[i - 1], h.line[i]) >= 0) return false;
     if (d <= 8) return true;
     for (let t = 12; t < d - 12; t += 10) {
       const x = e[0] + ((p[0] - e[0]) * t) / d, y = e[1] + ((p[1] - e[1]) * t) / d;
@@ -2011,9 +2096,14 @@ function buildFieldsDW(world, rng, massifs) {
   for (const T of tk) {
     const L = T.line;
     [[L[0], 0], [L[L.length - 1], 1]].forEach(([e, k]) => {
-      const nr = nearRoad(e[0], e[1], 320);
-      if (!nr || !clearTo(e, [nr.x, nr.y])) return;
-      if (Math.hypot(nr.x - e[0], nr.y - e[1]) > 8) { if (k) L.push([nr.x, nr.y]); else L.unshift([nr.x, nr.y]); }
+      // съезд в поле — только с обычной дороги (на трассу с разделителем грунтовки не выходят), к кромке
+      // полотна по кратчайшему пути
+      const nr = nearRoad(e[0], e[1], 320, true);
+      if (!nr) return;
+      let f = null, fd = Infinity;
+      for (let i = 1; i < nr.r.line.length; i++) { const q = footOn(e, nr.r.line[i - 1], nr.r.line[i]), d = Math.hypot(q[0] - e[0], q[1] - e[1]); if (d < fd) { fd = d; f = q; } }
+      if (!f || fd > 320 || !clearTo(e, f) || hws.some((h) => distToLine(f[0], f[1], h.line) < 35)) return;
+      if (fd > 8) { if (k) L.push(f); else L.unshift(f); }
       T.hooked[k] = true;
     });
   }
