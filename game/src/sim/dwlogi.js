@@ -25,6 +25,8 @@ export const VEH = {
   tanker: { name: 'Бензовоз', speed: 18, cls: 'civil' },
   grain: { name: 'Зерновоз', speed: 17, cls: 'civil' },
   grainx: { name: 'Зерновоз на экспорт', speed: 19, cls: 'civil' },
+  cargo: { name: 'Грузовик с продукцией заводов', speed: 18, cls: 'civil' },
+  sapper: { name: 'Машина сапёров', speed: 17, cls: 'crew' },
 };
 // Доход с фуры: пошлина при ввозе и выручка за экспорт на обратном рейсе
 export const TRANSIT = { import: 2, export: 2 };
@@ -310,6 +312,17 @@ export class DWLogistics {
     v.path = r.path; v.ws = r.ws; v.pi = 1; v.state = state; v.offroad = !!r.offroad;
     return true;
   }
+  // Во сколько раз рейс погранпереход → распредцентр длиннее «обычного» (25 км): 1…4
+  haul(side) {
+    const L = this.side[side];
+    if (L._haul === undefined) {
+      const r = this.route(this.gate(L.border), this.gate(L.hub));
+      let len = 0;
+      if (r) for (let i = 1; i < r.path.length; i++) len += Math.hypot(r.path[i][0] - r.path[i - 1][0], r.path[i][1] - r.path[i - 1][1]);
+      L._haul = Math.max(1, Math.min(4, len / 25000));
+    }
+    return L._haul;
+  }
   // Сторона: снабжение магазина «отрезано», если к нему нет дороги от распредцентра
   reachable(side, o) { return !!this.route(this.gate(this.side[side].hub), this.gate(o)); }
 
@@ -325,12 +338,18 @@ export class DWLogistics {
       // Импорт: фура с погранперехода на склад, где товара меньше всего
       L.importT -= dt;
       if (L.importT <= 0) {
-        L.importT = (11 + sim.rng.float(0, 6)) / (1 + 0.25 * Math.min(2, Math.max(0, hubLv - 1))); // пропускная способность погранперехода — не больше ×1,5
+        // дальний рейс (погранпереход у края большой карты): фуры идут реже, но каждая везёт больше —
+        // на дороге не сотни машин, а доход в минуту прежний
+        const haul = this.haul(side);
+        L.importT = haul * (11 + sim.rng.float(0, 6)) / (1 + 0.25 * Math.min(2, Math.max(0, hubLv - 1))); // пропускная способность погранперехода — не больше ×1,5
         const to = hubs.slice().sort((a, b) => a.stock / this.hubCap(a) - b.stock / this.hubCap(b))[0] || L.hub;
-        if (borderOk) this.spawn(side, 'fura', this.gate(L.border), this.gate(to), { type: 'import', hub: to.id });
+        const furas = this.vehicles.filter((v) => !v.dead && v.side === side && v.kind === 'fura').length;
+        if (borderOk && furas < 36) this.spawn(side, 'fura', this.gate(L.border), this.gate(to), { type: 'import', hub: to.id, k: haul });
       }
       // Развоз по магазинам: кому нужнее — с ближайшего склада, где есть товар
       L.deliverT -= dt;
+      // развозных машин в рейсе не больше, чем позволяет парк (на большой карте сёла далеко)
+      if (L.deliverT <= 0 && this.vehicles.filter((v) => !v.dead && v.side === side && v.kind === 'van').length >= 40 + 10 * hubs.length) L.deliverT = 3;
       if (L.deliverT <= 0) {
         L.deliverT = (5 + sim.rng.float(0, 4)) / Math.max(1, hubs.length * 0.8);
         const cand = L.markets.filter((m) => !(m.build && !m.build.up) && m.comps.some((c) => c.state !== 'destroyed') && (m.stock + (m.coming || 0)) <= this.sale(m).cap - this.sale(m).load);
@@ -410,9 +429,12 @@ export class DWLogistics {
       if (v.dead) continue;
       if (v.state === 'work') { this.work(v, dt); continue; }
       if (v.state === 'idle') continue;
+      if (v.restUntil) { if (sim.time < v.restUntil) continue; v.restUntil = 0; }
+      if ((v.kind === 'fura' || v.kind === 'cargo') && this.roadside(v)) continue;
       // по грунтовкам и узким сельским дорогам — медленнее (асфальт дорожников это исправляет)
-      const narrow = !v.offroad && v.ws && (v.ws[v.pi] ?? 8) < 7 ? 0.7 : 1;
-      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * narrow * g.holeSlow(v.x, v.y) * dt; // у ямы — объезд по обочине
+      const wsNow = v.ws ? (v.ws[v.pi] ?? 8) : 8;
+      const narrow = !v.offroad && wsNow < 7 ? 0.7 : !v.offroad && wsNow >= 20 ? 1.35 : 1; // по трассе — быстрее
+      let step = VEH[v.kind].speed * PACE_V * (v.offroad ? 0.75 : 1) * narrow * g.holeSlow(v.x, v.y) * (v.kind === 'sapper' ? 1 : g.uxoBlock(v.x, v.y)) * dt; // у ямы — объезд по обочине; у неразорвавшейся БЧ — стоят
       while (step > 0 && v.pi < v.path.length) {
         const [tx, ty] = v.path[v.pi];
         const dx = tx - v.x, dy = ty - v.y, d = Math.hypot(dx, dy);
@@ -423,6 +445,21 @@ export class DWLogistics {
       if (v.pi >= v.path.length) this.arrive(v);
     }
     this.vehicles = this.vehicles.filter((v) => !v.dead || sim.time - v.deadAt < 240);
+  }
+  // Дальние рейсы: после ~10 минут за рулём фура встаёт на ближайшей стоянке у трассы (водителю
+  // нужен отдых; стоянка, кафе и мотель зарабатывают), на пункте весового контроля — короткая
+  // остановка (сбор). Стоящая фура — удобная цель для «охотников»
+  roadside(v) {
+    const sim = this.sim, t = sim.time;
+    if ((v._rsT = (v._rsT || 0) + 1) % 8) return false; // проверка раз в несколько кадров
+    const stops = this._stops || (this._stops = this.g.objects.filter((o) => o.kind === 'truckstop' || o.kind === 'weigh'));
+    for (const o of stops) {
+      if (o.side !== v.side || Math.abs(o.x - v.x) > 260 || Math.abs(o.y - v.y) > 260) continue;
+      if (!o.comps.some((c) => c.state !== 'destroyed')) continue;
+      if (o.kind === 'weigh' && v.weighed !== o.id) { v.weighed = o.id; v.restUntil = t + 20; this.earn(v.side, 0.3, o.x, o.y, 'transit'); return true; }
+      if (o.kind === 'truckstop' && !v.rested && t - v.t0 > 600) { v.rested = true; v.restUntil = t + 90; o.guests = (o.guests || 0) + 1; this.earn(v.side, 0.6, o.x, o.y, 'trade'); return true; }
+    }
+    return false;
   }
   // Начисление с отметкой «+N» на карте
   earn(side, v, x, y, kind) {
@@ -442,28 +479,29 @@ export class DWLogistics {
     const T = this.g.adType(a);
     if (a.type === 'mog') return a.ammo < T.ammo * 0.5 ? 1 - a.ammo / T.ammo : 0;
     if (a.type === 'spaag') return a.ammo < T.ammo * 0.5 || (a.mMax && a.missiles < a.mMax / 2) ? 1 : 0;
-    if (a.type === 'sam') return a.missiles <= a.mMax - 2 ? 1.5 - a.missiles / a.mMax : 0;
+    if (a.type === 'sam' || a.type === 'lrsam') return a.missiles <= a.mMax - 2 ? 1.5 - a.missiles / a.mMax : 0;
     if (a.type === 'icpt') return a.stock <= 4 ? 1 - a.stock / 8 : 0;
     return 0;
   }
   arrive(v) {
     const g = this.g, sim = this.sim, L = this.side[v.side];
     const T = v.task;
+    if (g.res?.arrive(v)) return;
     if (g.econ?.arrive(v)) return;
     if (v.state === 'back') {
-      if (v.kind === 'fura' && T.type === 'export' && T.loaded && L.border.comps.some((c) => c.state !== 'destroyed')) { this.earn(v.side, TRANSIT.export, v.x, v.y, 'transit'); L.stats.exports++; }
+      if (v.kind === 'fura' && T.type === 'export' && T.loaded && L.border.comps.some((c) => c.state !== 'destroyed')) { this.earn(v.side, TRANSIT.export * (T.k || 1), v.x, v.y, 'transit'); L.stats.exports++; }
       this.home(v);
       return;
     }
     if (T.type === 'import') {
-      const hub = g.obj(T.hub) || L.hub;
-      hub.stock = Math.min(this.hubCap(hub), hub.stock + 4); // излишек уходит транзитом дальше
-      g.econ?.onImport(v.side);
+      const hub = g.obj(T.hub) || L.hub, k = T.k || 1;
+      hub.stock = Math.min(this.hubCap(hub), hub.stock + 4 * k); // излишек уходит транзитом дальше
+      for (let i = 0; i < Math.round(k); i++) g.econ?.onImport(v.side);
       L.stats.imports++;
-      this.earn(v.side, TRANSIT.import, v.x, v.y, 'transit');
+      this.earn(v.side, TRANSIT.import * k, v.x, v.y, 'transit');
       // обратно — с экспортным грузом со складов распредцентра (если склад работает)
       const hubOk = L.hub.comps.some((c) => c.k === 'hall' && c.state === 'ok');
-      v.task = { type: 'export', loaded: hubOk };
+      v.task = { type: 'export', loaded: hubOk, k };
       if (!this.send(v, this.gate(L.border), 'back')) this.home(v);
       return;
     }
@@ -487,6 +525,7 @@ export class DWLogistics {
       if (!this.send(v, this.gate(g.obj(T.depot) || L.arsenal), 'back')) this.home(v);
       return;
     }
+    if (T.type === 'sapper') { g.sapperArrive(v); return; }
     if (T.type === 'fire' || T.type === 'repair') { v.state = 'work'; v.workLeft = 0; return; }
     this.home(v);
   }
@@ -525,6 +564,7 @@ export class DWLogistics {
       return;
     }
     if (T.type === 'repair') g.crewWork(v, dt);
+    if (T.type === 'sapper') g.sapperWork(v, dt);
   }
   home(v) {
     const L = this.side[v.side];
@@ -544,6 +584,7 @@ export class DWLogistics {
     if ((v.kind === 'van' || v.kind === 'tanker') && v.task.type === 'deliver') { const m = this.g.obj(v.task.to); if (m) m.coming = Math.max(0, (m.coming || 0) - (v.task.load || 1)); }
     if (v.kind === 'crew') this.g.crewLost(v);
     this.g.econ?.onLost(v);
+    this.g.res?.onLost(v);
     this.sim.msg(`Потеря на дороге: ${VEH[v.kind].name.toLowerCase()} (${why})`, v.side);
   }
 }

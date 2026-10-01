@@ -64,7 +64,7 @@ export class DWState {
     this.side = {};
     for (const side of ['blue', 'red']) {
       this.side[side] = {
-        laws: {}, lawT: 0, tax: 1, mobil: 0, project: null, projects: [], tech: { energy: 0, economy: 0, military: 0 }, research: null,
+        laws: {}, lawT: 0, tax: 1, mobil: 0, project: null, projects: [], tech: { energy: 3, economy: 3, military: 3 }, research: null, // всё исследовано с начала (исследований в игре нет)
         infl: 0, rate: 1, rep: 70, debts: [], contracts: [], offerT: this.sim.time + 600, eventT: this.sim.time + 900, temp: [], log: [],
         mil: [], inc: [], hist: [], ecoWin: 0,
       };

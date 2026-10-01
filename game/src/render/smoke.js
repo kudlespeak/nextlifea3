@@ -28,6 +28,11 @@ function sources(g, sim) {
       const big = c.k === 'tank' || c.k === 'coal' ? 3 : c.k === 'unit' || c.k === 'shop' || c.k === 'hall' ? 2 : c.k === 'gsu' || c.k === 'at' || c.k === 'tr' ? 1.6 : 1;
       out.push({ x: c.x, y: c.y, k: big, oil: c.k === 'tank' || c.k === 'tr' || c.k === 'gsu' || c.k === 'at', seed: c.x * 0.37 + c.y * 0.11 });
     }
+  // работающие заводы: светлый дым из труб, печей и колонн (идёт выпуск продукции)
+  for (const o of g.objects) {
+    if (!o.built || o.idle || (o.build && !o.build.up) || !/^(steel|chem|turbine|explosive|concrete|asphalt|cement|refinery|missile)$/.test(o.kind)) continue;
+    for (const c of o.comps) if ((c.k === 'chimney' || c.k === 'furnace' || c.k === 'column') && c.state === 'ok' && c.fire <= 0) out.push({ x: c.x, y: c.y, k: 0.55, light: true, seed: c.x * 0.29 + c.y * 0.07 });
+  }
   for (const f of sim.fires || []) if (f.until > sim.time) out.push({ x: f.x, y: f.y, k: Math.min(1.6, f.r / 20), seed: f.x * 0.21 });
   for (const f of g.fieldFires || []) out.push({ x: f.x, y: f.y, k: 0.8 + f.r / 60, light: true, seed: f.y * 0.17 });
   for (const f of g.fx || []) if (f.t === 'impact' && sim.time - f.t0 < 150) out.push({ x: f.x, y: f.y, k: 0.35 + Math.min(0.6, (f.wh || 10) / 80), fade: 1 - (sim.time - f.t0) / 150, seed: f.x * 0.13 });

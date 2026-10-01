@@ -6,6 +6,7 @@ import { DW_AD, DW_DRONES, COMP, GTU } from './dronewar.js';
 import { BUILD, upgradeCost } from './dwecon.js';
 import { SALE } from './dwlogi.js';
 import { PROJECTS, TECH } from './dwstate.js';
+import { FACT, recipe } from './dwres.js';
 
 // Доктрины штаба: экономист копит и строит, ястреб бьёт, черепаха закапывается в оборону
 const DOCTRINES = {
@@ -66,6 +67,8 @@ export class DroneWarAI {
     if (this.goal && !this.finishing()) this.reserve += this.goal.cost * 0.8;
     if (t > this.next.plan) { this.next.plan = t + 30; this.plan(); this.govern(); }
     if (t > (this.next.prod ?? 0)) { this.next.prod = t + 12; this.produce(); }
+    if (t > (this.next.ind ?? t + 20)) { this.next.ind = t + 25; this.industry(); } else if (this.next.ind === undefined) this.next.ind = t + 20;
+    if (!g.prep && t > (this.next.cruise ?? t + 600)) { this.next.cruise = t + 420 / this.k + this.sim.rng.float(0, 240); this.cruise(); } else if (this.next.cruise === undefined) this.next.cruise = t + 600;
     this.doGoal();
     this.defense();
     if (t > this.next.shelter) { this.next.shelter = t + 90; this.shelters(); }
@@ -136,6 +139,7 @@ export class DroneWarAI {
     let type = 'mog';
     if (have('radar') < 2 && spend() > DW_AD.radar.cost) type = 'radar';
     else if (have('sam') < (this.k > 1 ? 3 : 2) && spend() > DW_AD.sam.cost + 100 && ['tpp', 'ps330'].includes(worst.kind)) type = 'sam';
+    else if (have('lrsam') < 1 + (S.points > 4000 ? 1 : 0) && spend() > DW_AD.lrsam.cost + 200 && (g.sides[this.enemy].stats.launched > 60 || g.drones.some((d) => d.side === this.enemy && DW_DRONES[d.type].cls === 'cruise')) && ['tpp', 'ps330'].includes(worst.kind)) type = 'lrsam';
     else if (have('spaag') < 4 && spend() > DW_AD.spaag.cost + 60 && ['tpp', 'ps330', 'factory'].includes(worst.kind)) type = 'spaag';
     else if (['tpp', 'ps330', 'ps110'].includes(worst.kind) && !g.ad.some((a) => !a.dead && a.side === this.side && a.type === 'ew' && Math.hypot(a.x - worst.x, a.y - worst.y) < 2000) && spend() > DW_AD.ew.cost) type = 'ew';
     else if (have('dummy') < 2 && have('sam') >= 1 && rng.chance(0.5)) type = 'dummy'; // макеты рядом с настоящими ЗРК
@@ -190,7 +194,20 @@ export class DroneWarAI {
     if (T.loiter) want[T.loiter.k] = 6;
     if (T.recon) want[T.recon.k] = 5;
     for (const [k, d] of Object.entries(DW_DRONES)) if (d.side === side && d.cls === 'hunter' && R.droneOk(side, k)) want[k] = 3;
-    const list = Object.entries(want).map(([k, w]) => [k, w - R.stock(side, k) - R.queued(side, k)]).filter(([, gap]) => gap > 0).sort((a, b) => b[1] - a[1]);
+    for (const [k, d] of Object.entries(DW_DRONES)) if (d.side === side && d.cls === 'cruise' && g.objs(side, 'missile').some((o) => !o.build)) want[k] = d.wh >= 400 ? 2 : 3;
+    // заказы — только когда есть где собирать, и очередь короткая (сборка долгая, деньги платятся вперёд)
+    const asm = R.plants(side).filter((o) => o.kind === 'workshop' || o.kind === 'uground' || o.kind === 'minifab');
+    if (!asm.length) return;
+    const inQueue = R.side[side].queue.reduce((a, q) => a + q.n, 0);
+    if (inQueue >= 4 + 3 * asm.length) return;
+    // заказываем то, что реально собрать: для каждой нужной детали есть свой завод или запас
+    const makes = new Set(R.plants(side).flatMap((o) => Object.keys(FACT[o.kind]?.out || {})));
+    const BASIC = new Set(['shahed', 'fp1', 'bober', 'gerbera', 'grif']); // до своих заводов — из импортных деталей
+    const feasible = (k) => BASIC.has(k) || Object.entries(recipe(k)).every(([r, n]) => makes.has(r) || R.side[side].pool[r] + R.side[side].imp[r] >= n);
+    // застрявшие заказы (детали делать некому) — отменяем, деньги возвращаются
+    const Q = R.side[side].queue;
+    for (let i = Q.length - 1; i >= 0; i--) if (!feasible(Q[i].k) && !R.canBuild(side, Q[i].k)) R.cancel(side, i);
+    const list = Object.entries(want).filter(([k]) => feasible(k)).map(([k, w]) => [k, w - R.stock(side, k) - R.queued(side, k)]).filter(([, gap]) => gap > 0).sort((a, b) => b[1] - a[1]);
     // минимальный запас ударных держим всегда (даже «экономист» не остаётся без дронов)
     const strikeStock = T.strike.reduce((q, d) => q + R.stock(side, d.k) + R.queued(side, d.k), 0);
     for (const [k, gap] of list) {
@@ -202,15 +219,58 @@ export class DroneWarAI {
       if (!R.order(side, k, n)) this.pay('off', cost);
     }
   }
-  research() {
-    const g = this.g, R = g.res, side = this.side, S = this.S;
-    if (R.side[side].cur) return;
-    const order = ['loiter', 'sat', 'mass', 'energy', 'icpt', 'heavy', 'hunter', 'industry', 'export', 'robot', 'workshop', 'ewd', 'retail', 'reserve'];
-    for (const id of order) {
-      if (!R.available(side, id)) continue;
-      if (S.points - R.cost(side, id) >= 40) R.start(side, id);
-      return;
+  // Промышленность с нуля: цепочка заводов по порядку (сначала то, без чего не собрать ни одного
+  // дрона), потом ракеты, ПВО против ракет, тыловые заводы. Нехватку для сборки — по импорту
+  industry() {
+    const g = this.g, R = g.res, side = this.side, S = this.S, rng = this.sim.rng;
+    if (g.winner) return;
+    const own = (k) => g.objs(side, k).length;
+    const ORDER = ['workshop', 'chem', 'composite', 'steel', 'engine', 'explosive', 'electronics', 'workshop', 'terminal',
+      side === 'red' ? 'airbase' : 'mlaunch', 'missile', 'turbine', 'optics', 'battery', 'refinery', 'concrete', 'netfab', 'asphalt', 'cable',
+      side === 'red' ? 'rivlaunch' : 'airbase', 'decoyfab', 'ewfab', 'autoplant', 'workshop', 'minifab', 'trafo', 'uground', 'missile'];
+    const seen = {};
+    let next = null;
+    for (const k of ORDER) { seen[k] = (seen[k] || 0) + 1; if (own(k) < seen[k]) { next = k; break; } }
+    if (next && !g.objects.some((o) => o.side === side && o.build && !o.build.up && o.kind === next)) {
+      const cost = g.econ.cost(side, next);
+      const reserve = Math.min(this.reserve ?? 30, 250) + 120; // заводы важнее накоплений на гражданскую стройку
+      if (S.points - cost >= reserve) {
+        const cap = g.sides[side].base;
+        const cities = g.world.settlements.filter((q) => q.side === side && q.type === 'city');
+        const anchor = next === 'minifab' ? g.world.settlements.filter((q) => q.side === side && q.type === 'village')[rng.int(0, 20)] || cap : next === 'rivlaunch' ? cap : cities[rng.int(0, cities.length - 1)] || cap;
+        const dir = side === 'blue' ? -1 : 1; // в тыл, подальше от фронта
+        const p = this.spot(next, anchor.x + dir * rng.float(1500, 6000), anchor.y, next === 'rivlaunch' ? 0 : 400, next === 'airbase' ? 6000 : next === 'rivlaunch' ? 2500 : 3500);
+        if (p && !g.buildCivil(side, next, p[0], p[1])) this.pay('off', cost);
+      }
     }
+    // режимы: ночная смена на заводах сборки, если денег много; аврал — когда противник на грани
+    for (const o of g.objs(side)) if (['workshop', 'missile', 'engine', 'explosive'].includes(o.kind) && !o.build) {
+      const want = this.finishing() ? 'rush' : S.points > 2500 ? 'night' : 'normal';
+      if ((o.mode || 'normal') !== want) R.setMode(side, o.id, want);
+    }
+    // импорт: сборка стоит из-за нехватки — докупаем по 4 штуки недостающего
+    const T = R.side[side];
+    const first = T.queue.find((q) => !R.canBuild(side, q.k));
+    if (first && S.points > 500 && !T.cur.drone) for (const r of R.missing(side, first.k)) { if ((T.incoming?.[r] || 0) < 4 && S.points - R.importCost(side, r, 4) > 400) R.buyImport(side, r, 4); }
+    T.export = S.points < 300; // свободные материалы — на экспорт, когда туго с деньгами
+  }
+  // Крылатые ракеты: по самой ценной разведанной цели; если ударные дроны есть — сначала волна
+  // дронов (вскрыть и разрядить ПВО), ракеты — через 5 минут
+  cruise() {
+    const g = this.g, side = this.side, rng = this.sim.rng;
+    const types = Object.entries(DW_DRONES).filter(([k, d]) => d.side === side && d.cls === 'cruise' && g.res.stock(side, k) > 0);
+    if (!types.length) return;
+    const [k, D] = types.sort((a, b) => b[1].wh - a[1].wh)[0];
+    if (!g.launchPoints(side, D).length) return;
+    const cand = g.objs(this.enemy).filter((o) => g.known(side, o) && ['tpp', 'ps330', 'refinery', 'missile', 'steel', 'turbine', 'chp', 'hpp', 'oil', 'chem', 'airbase', 'workshop'].includes(o.kind) && o.comps.some((c) => c.state === 'ok'));
+    if (!cand.length) return;
+    const o = cand.sort((a, b) => (VALUE[b.kind] || 6) - (VALUE[a.kind] || 6))[rng.int(0, Math.min(2, cand.length - 1))];
+    const c = o.comps.filter((q) => q.state === 'ok').sort((a, b) => (COMP[b.k]?.cost || 0) - (COMP[a.k]?.cost || 0))[0];
+    const n = Math.min(g.res.stock(side, k), D.wh >= 400 ? 2 : 3);
+    const swarm = this.next.strike && this.next.strike - this.sim.time > 120;
+    if (swarm) { this.next.strike = this.sim.time; this.strike(); }
+    g.launch(side, k, n, c.x, c.y, { oid: o.id, cid: c.id, delay: swarm ? 300 : 0 });
+    this.intent = `крылатые ракеты «${D.short}» по «${o.name}»${swarm ? ' после волны дронов' : ''}`;
   }
 
   // ---------- Разведка и удары ----------
@@ -226,7 +286,8 @@ export class DroneWarAI {
     this.scouted = this.scouted || new Set();
     let best = null, bs = -Infinity;
     for (let k = 0; k < 24; k++) {
-      const x = this.side === 'blue' ? rng.float(g.frontX + 1500, W - 1500) : rng.float(1500, g.frontX - 1500), y = rng.float(1500, H - 1500);
+      const cx0 = g.world.core?.x0 ?? 0, cx1 = g.world.core?.x1 ?? W;
+      const x = this.side === 'blue' ? rng.float(g.frontX + 1500, cx1 + 6000) : rng.float(cx0 - 6000, g.frontX - 1500), y = rng.float(1500, H - 1500);
       const key = `${Math.floor(x / C)},${Math.floor(y / C)}`;
       const s = (this.scouted.has(key) ? 0 : 10) - Math.abs(x - g.frontX) / 8000 + rng.float(0, 2);
       if (s > bs) { bs = s; best = [x, y, key]; }
@@ -481,7 +542,6 @@ export class DroneWarAI {
     const g = this.g, S = this.S, side = this.side, St = g.state, T = St.side[side], D = this.doctrine;
     const mor = S.morale ?? 100, sum = g.econ.summary(side);
     const law = (id, on) => { if (!!T.laws[id] !== on && !St.cooldown(T)) St.setLaw(side, id, on); };
-    this.research();
     // новые объекты — сразу к сети (без подключения они не работают)
     for (const o of g.objs(side)) {
       if (!g.econ.needsGrid(o) || o.grid) continue;
@@ -534,7 +594,7 @@ export class DroneWarAI {
     // Завод разбит и стоит близко к фронту — эвакуация вглубь тыла
     const fac = g.objs(side, 'factory')[0];
     if (fac && !fac.build && fac.comps.filter((c) => c.k === 'shop' && c.state === 'destroyed').length >= 2 && S.points > 700) {
-      const rx = side === 'blue' ? 3000 : g.world.W - 3000;
+      const rx = side === 'blue' ? (g.world.core?.x0 ?? 0) + 3000 : (g.world.core?.x1 ?? g.world.W) - 3000;
       for (let k = 0; k < 30; k++) { const x = rx + (side === 'blue' ? 1 : -1) * k * 150, y = 4000 + ((k * 2300) % (g.world.H - 8000)); if (!IF.evacCheck(side, fac.id, x, y).err) { IF.evacuate(side, fac.id, x, y); break; } }
     }
     if (mor > 80 && this.goal && S.points < this.goal.cost * 0.5 && this.goal.roi > 1.2 && !T.debts.some((d) => d.kind === 'bonds')) St.takeCredit(side, 'bonds');
@@ -551,7 +611,7 @@ export class DroneWarAI {
   // Маршрут в обход известных позиций ПВО: одна-две точки сбоку
   route(o, knownAD) {
     const g = this.g, rng = this.sim.rng;
-    const sx = this.side === 'blue' ? 400 : g.world.W - 400;
+    const sx = this.side === 'blue' ? (g.world.core?.x0 ?? 0) + 400 : (g.world.core?.x1 ?? g.world.W) - 400;
     const pts = [];
     const mid = { x: (sx + o.x) / 2, y: o.y + rng.float(-2500, 2500) };
     const threat = (p) => knownAD.filter((a) => Math.hypot(a.x - p.x, a.y - p.y) < (a.type === 'sam' ? 8000 : 2500)).length;

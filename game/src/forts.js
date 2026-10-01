@@ -210,7 +210,7 @@ export function buildFortifications(world, rng, frontX) {
       .filter((b) => Math.abs(b.dir[1]) > 0.75 && b.len > 180 && Math.abs(b.mid[0] - targetX) < spreadX)
       .filter((b) => b.mid[1] > margin && b.mid[1] < world.H - margin && b.mid[0] > margin && b.mid[0] < world.W - margin)
       // только настоящие, сплошные посадки в поле — не обрывки в городе и сёлах
-      .filter((b) => b.pts.length >= b.len / 2.5 && !world.mask.has(b.mid[0], b.mid[1], M.CITYZONE | M.VILLAGE | M.SETTLE | M.CITY))
+      .filter((b) => (b.n ?? b.pts.length) >= b.len / 2.5 && !world.mask.has(b.mid[0], b.mid[1], M.CITYZONE | M.VILLAGE | M.SETTLE | M.CITY))
       .sort((a, b) => Math.abs(a.mid[0] - targetX) - Math.abs(b.mid[0] - targetX));
     const out = [];
     for (const b of cand) {

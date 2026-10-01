@@ -13,7 +13,8 @@ import { drawExtras } from './dwextra.js';
 
 const SIDE_COL = { blue: '#6fa6ff', red: '#ff7d72' };
 const ST_COL = { ok: '#7ddc6a', damaged: '#f0c34a', destroyed: '#ef5a4a' };
-const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС' };
+const GLYPH = { tpp: 'ТЭС', ps330: '330', ps110: '110', bridge: 'М', oil: 'НБ', ammo: 'АР', factory: 'ЗД', launch: 'СП', hub: 'РЦ', decoy: 'МКТ', refinery: 'НПЗ', watertower: 'ВОД', railterm: 'ЖДТ', port: 'ПОРТ', coalmine: 'ШХ', cement: 'ЦЗ', elevator: 'ЭЛ', agro: 'МД', housing: 'ЖК', hospital: 'БЛ', school: 'ШК', mill: 'МК', dairy: 'МФ', solar: 'СЭС', bess: 'АКБ', pontoon: 'ПН', autopark: 'АБ', reserve: 'ГР', border: 'ПП', mall: 'ТЦ', market: 'СМ', store: 'маг', firest: 'ПЧ', rembase: 'РБ', fuel: 'АЗС', hpp: 'ГЭС', chp: 'ТЭЦ', wpp: 'ВЭС', spp: 'СЭС',
+  quarry: 'КАР', mine: 'РУД', oilfield: 'НП', truckstop: 'СТФ', weigh: 'ВК', steel: 'МЗ', concrete: 'ЖБИ', asphalt: 'АБЗ', chem: 'ХК', engine: 'ДВ', turbine: 'ТРД', explosive: 'ПЗ', electronics: 'ЭЛК', composite: 'КМП', optics: 'ОПТ', battery: 'АКБ', cable: 'КАБ', trafo: 'ТРЗ', netfab: 'СЕТ', ewfab: 'РЭБ', decoyfab: 'МАК', autoplant: 'АВТ', terminal: 'ТЕРМ', missile: 'РЗ', uground: 'ПЦ', minifab: 'ЦЕХ', mlaunch: 'КР', rivlaunch: 'КР', airbase: 'АВБ', workshop: 'СЦ' };
 const VEH_COL = { fura: '#e8e2cc', van: '#cfd8e0', tanker: '#f0d060', grain: '#d8b85a', grainx: '#e0c060', supply: null, crew: '#ff9a3a', fire: '#ff4a3a' };
 const AD_GLYPH = { dummy: 'МАК', mog: 'МОГ', spaag: 'ЗСУ', sam: 'ЗРК', ew: 'РЭБ', ewd: 'КРЭБ', acoustic: 'АП', radar: 'РЛС', icpt: 'ПХ' };
 
@@ -610,7 +611,7 @@ export function drawDW(ctx, sim, view, side, ui) {
       continue;
     }
     // макет ЗРК выглядит как настоящий ЗРК (у своих подписан «МАК»)
-    const vt = a.type === 'dummy' ? 'sam' : a.type;
+    const vt = a.type === 'dummy' || a.type === 'lrsam' ? 'sam' : a.type;
     if (z >= 1.3) {
       const heading = a.state === 'moving' ? a.heading : a.heading;
       const hk = vt === 'sam' ? `sam:${a.side}:hull` : `dwad:${a.type}:${a.side}:hull`;
@@ -889,11 +890,76 @@ export function drawDW(ctx, sim, view, side, ui) {
     }
     // Ночью у реактивных — факел двигателя
     if (d.type === 'geran3' && night > 0.3) { ctx.fillStyle = 'rgba(255,170,80,0.8)'; ctx.beginPath(); ctx.arc(sx - Math.cos(d.heading) * 8 * dpr, sy - Math.sin(d.heading) * 8 * dpr, 2 * dpr, 0, Math.PI * 2); ctx.fill(); }
+    if (D.cls === 'cruise') {
+      // крылатая ракета: белый инверсионный след за ракетой, на обзоре — подпись
+      ctx.strokeStyle = 'rgba(240,240,236,0.55)'; ctx.lineWidth = 2 * dpr;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - Math.cos(d.heading) * 26 * dpr, sy - Math.sin(d.heading) * 26 * dpr); ctx.stroke();
+    }
     if (!own && z < 1.2) {
       ctx.font = `700 ${9 * dpr}px "PT Sans", sans-serif`;
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffb0a6';
-      ctx.fillText(D.cls === 'strike' || D.cls === 'decoy' ? (D.speed > 80 ? 'реакт.' : 'БПЛА') : D.cls === 'recon' ? 'разв.' : D.cls === 'loiter' ? 'барраж.' : '', sx + 7 * dpr, sy - 4 * dpr);
+      ctx.fillText(D.cls === 'cruise' ? 'КР' : D.cls === 'strike' || D.cls === 'decoy' ? (D.speed > 80 ? 'реакт.' : 'БПЛА') : D.cls === 'recon' ? 'разв.' : D.cls === 'loiter' ? 'барраж.' : '', sx + 7 * dpr, sy - 4 * dpr);
+    }
+    if (d.stray) { ctx.fillStyle = 'rgba(60,58,54,0.5)'; ctx.beginPath(); ctx.arc(sx - Math.cos(d.heading) * 10 * dpr, sy - Math.sin(d.heading) * 10 * dpr, 4 * dpr, 0, Math.PI * 2); ctx.fill(); } // дымит
+  }
+
+  // ---------- Истребители ----------
+  for (const j of g.jets || []) {
+    if (j.state === 'ground' || !inView(j.x, j.y, 200)) continue;
+    const own = j.side === side;
+    if (!own && !g.ad.some((a) => !a.dead && a.side === side && DW_AD[a.type]?.radar && Math.hypot(a.x - j.x, a.y - j.y) < 40000)) continue;
+    const [gx, gy] = toS(j.x, j.y), sy = gy - up(Math.min(500, j.alt)); // высота в 2,5D — условная, иначе самолёт «улетает» с экрана
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(gx + up(Math.min(500, j.alt)) * 0.7, gy + up(Math.min(500, j.alt)) * 0.8, 5 * dpr, 2.5 * dpr, j.heading, 0, Math.PI * 2); ctx.fill();
+    if (z >= 0.6) {
+      const k = Math.max(z * 1.0, 8 * dpr);
+      const r = spriteFor(`dwd:jet_${j.side}:0`, () => buildDrone(`jet_${j.side}`, 0), j.heading, k, { shadow: false }, now);
+      if (r) drawSprite(ctx, r, gx, sy, k, r.residual);
+    } else {
+      const s2 = 6 * dpr;
+      ctx.save(); ctx.translate(gx, sy); ctx.rotate(j.heading);
+      ctx.fillStyle = own ? SIDE_COL[j.side] : '#ff5a4a'; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.2 * dpr;
+      ctx.beginPath(); ctx.moveTo(s2, 0); ctx.lineTo(-s2 * 0.5, s2 * 0.8); ctx.lineTo(-s2 * 0.2, 0); ctx.lineTo(-s2 * 0.5, -s2 * 0.8); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    if (z < 1.2) { ctx.font = `700 ${9 * dpr}px "PT Sans", sans-serif`; ctx.textAlign = 'left'; ctx.fillStyle = own ? '#cfe2ff' : '#ffb0a6'; ctx.fillText(`истребитель${own ? ` · ракет ${j.missiles}` : ''}`, gx + 8 * dpr, sy - 4 * dpr); }
+  }
+
+  // ---------- Падающие корпуса сбитых дронов: кувырок и дымный шлейф ----------
+  for (const w of g.wrecks || []) {
+    if (!inView(w.x, w.y, 200)) continue;
+    const [gx, gy] = toS(w.x, w.y), sy = gy - up(w.alt);
+    const age = t - w.t0;
+    for (let i = 1; i <= 6; i++) {
+      const bx = gx - Math.cos(w.heading) * i * 5 * dpr, by = sy - Math.sin(w.heading) * i * 5 * dpr - i * 2.5 * dpr;
+      ctx.fillStyle = `rgba(${w.out === 'glide' ? '70,68,64' : '40,36,32'},${0.45 * (1 - i / 7)})`;
+      ctx.beginPath(); ctx.arc(bx, by, (2 + i * 0.9) * dpr, 0, Math.PI * 2); ctx.fill();
+    }
+    if (w.out !== 'air') { ctx.fillStyle = Math.floor(now / 90) % 2 ? 'rgba(255,170,70,0.9)' : 'rgba(255,220,120,0.9)'; ctx.beginPath(); ctx.arc(gx, sy, 2 * dpr, 0, Math.PI * 2); ctx.fill(); } // горит
+    if (z >= 1.2) {
+      const k = Math.max(z * 1.1, 5 * dpr);
+      const r = spriteFor(`dwd:${w.type}:${w.variant || 0}`, () => buildDrone(w.type, w.variant || 0), w.heading + age * w.spin, k, { shadow: false }, now);
+      if (r) drawSprite(ctx, r, gx, sy, k, r.residual);
+    }
+  }
+  // ---------- Неразорвавшиеся боевые части: корпус на земле, оцепление, сапёры ----------
+  for (const u of g.uxo || []) {
+    if (!inView(u.x, u.y, 60) || u.side !== side) continue; // свои НВБ (на своей земле)
+    const [sx, sy] = toS(u.x, u.y);
+    if (z >= 0.8) {
+      const k = Math.max(z * 1.1, 4 * dpr);
+      const r = spriteFor(`dwd:${u.type}:${u.variant || 0}`, () => buildDrone(u.type, u.variant || 0), u.heading + 0.6, k, { shadow: false }, now);
+      if (r) drawSprite(ctx, r, sx, sy, k, r.residual);
+      // оцепление красно-белой лентой
+      ctx.setLineDash([3 * dpr, 3 * dpr]); ctx.lineWidth = 1.5 * dpr;
+      ctx.strokeStyle = '#e8463a'; ctx.beginPath(); ctx.arc(sx, sy, Math.max(10 * dpr, 30 * z), 0, Math.PI * 2); ctx.stroke();
+      ctx.lineDashOffset = 3 * dpr; ctx.strokeStyle = '#f2efe8'; ctx.beginPath(); ctx.arc(sx, sy, Math.max(10 * dpr, 30 * z), 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]); ctx.lineDashOffset = 0;
+    }
+    if (z > 0.08) {
+      ctx.fillStyle = '#e8463a'; ctx.beginPath(); ctx.arc(sx, sy - 12 * dpr, 6 * dpr, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = `800 ${8 * dpr}px "PT Sans", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', sx, sy - 12 * dpr); ctx.textBaseline = 'alphabetic';
+      if (z > 0.3) { ctx.font = `700 ${9 * dpr}px "PT Sans", sans-serif`; ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.strokeText(u.sapper ? 'НВБ · сапёры' : 'НВБ', sx, sy - 22 * dpr); ctx.fillStyle = '#ffd36b'; ctx.fillText(u.sapper ? 'НВБ · сапёры' : 'НВБ', sx, sy - 22 * dpr); }
     }
   }
 
@@ -920,6 +986,12 @@ export function drawDW(ctx, sim, view, side, ui) {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(GLYPH[o.mimic && o.side !== side ? o.mimic : o.kind] || '?', sx, sy + 0.5 * dpr); // макет противник видит как настоящий объект
       if (fire) { ctx.fillStyle = '#ff8a3a'; ctx.beginPath(); ctx.arc(sx + w / 2, sy - 8 * dpr, 3.5 * dpr, 0, Math.PI * 2); ctx.fill(); }
+      // простой завода (нет сырья, света, рабочих) — красный «!»; причина — подписью вблизи
+      if (o.idle && o.side === side) {
+        ctx.fillStyle = '#ef5a4a'; ctx.beginPath(); ctx.arc(sx - w / 2, sy - 8 * dpr, 5 * dpr, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = `800 ${8 * dpr}px "PT Sans", sans-serif`; ctx.fillText('!', sx - w / 2, sy - 7.5 * dpr);
+        if (z > 0.25) { ctx.font = `600 ${9 * dpr}px "PT Sans", sans-serif`; ctx.lineWidth = 3 * dpr; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(o.idle, sx, sy - 18 * dpr); ctx.fillStyle = '#ffb0a6'; ctx.fillText(o.idle, sx, sy - 18 * dpr); }
+      }
       if (o.kind === 'ps110' && o.supply !== undefined && o.side === side) {
         ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - w / 2, sy + 9 * dpr, w, 3 * dpr);
         ctx.fillStyle = o.supply > 0.8 ? '#ffe27a' : o.supply > 0.4 ? '#f0a040' : '#ef5a4a';

@@ -395,6 +395,69 @@ function launcherTruck(M, side, st) {
   }
 }
 
+
+// ------------------------------------------------------------ Сырьё и промышленность
+// Карьер: уступы, спускающиеся к забою (светлые бермы и тёмные откосы), экскаватор и самосвал на дне
+function quarryPit(M, w, h, st) {
+  const SAND = mat('#b7a27a', { fn(o, x, y) { mix(o, [140, 120, 90], vnoise(x * 0.08, y * 0.08, 0) * 0.5); } });
+  const SLOPE = mat('#8a7658', { fn(o, x, y) { mix(o, [90, 74, 52], vnoise(x * 0.2, y * 0.2, 1) * 0.5); } });
+  const n = 5;
+  for (let i = 0; i < n; i++) {
+    const k = 1 - i / n, ww = w * k, hh = h * k;
+    M.box(-ww / 2, ww / 2, -hh / 2, hh / 2, 0, 0.12 + i * 0.02, i % 2 ? SLOPE : SAND);
+  }
+  M.box(-w * 0.12, w * 0.12, -h * 0.1, h * 0.1, 0, 0.25, mat('#5f6a6c')); // вода в зумпфе
+  if (st === 'destroyed') { M.box(-6, 6, -3, 3, 0.2, 2, SOOT); return; }
+  // экскаватор: гусеницы, кабина, стрела с ковшом
+  const Y = mat('#d3a02a');
+  M.box(-w * 0.25 - 3, -w * 0.25 + 3, -2.2, 2.2, 0.2, 1.2, BLACK);
+  M.box(-w * 0.25 - 2.5, -w * 0.25 + 2.5, -2, 2, 1.2, 3.6, Y);
+  M.seg([-w * 0.25 + 2, 0, 3], [-w * 0.25 + 8, 0, 6], 0.5, 0.4, Y);
+  M.seg([-w * 0.25 + 8, 0, 6], [-w * 0.25 + 11, 0, 1.5], 0.4, 0.4, Y);
+  // самосвал
+  M.box(w * 0.1 - 4, w * 0.1 + 4, h * 0.15 - 1.8, h * 0.15 + 1.8, 0.4, 3.2, mat('#c7b38a'));
+  M.box(w * 0.1 + 4, w * 0.1 + 6, h * 0.15 - 1.6, h * 0.15 + 1.6, 0.4, 3.6, mat('#d9b23a'));
+}
+// Станок-качалка: рама, балансир с «головой», противовес
+function pumpjack(M, w, st) {
+  const R = mat('#7a3b2a'), G = mat('#5c6056');
+  M.box(-w / 2, w / 2, -1.2, 1.2, 0, 0.6, CONC_DK);
+  if (st === 'destroyed') { M.seg([-w / 2, 0, 0.6], [w / 2, 0.8, 1.2], 0.5, 0.4, SOOT); return; }
+  M.seg([-1, -1, 0.6], [0, 0, 5], 0.25, 0.2, G); M.seg([-1, 1, 0.6], [0, 0, 5], 0.25, 0.2, G);
+  M.seg([1.5, -1, 0.6], [0, 0, 5], 0.25, 0.2, G); M.seg([1.5, 1, 0.6], [0, 0, 5], 0.25, 0.2, G);
+  M.box(-w / 2 + 0.5, w / 2 - 0.5, -0.35, 0.35, 5, 5.7, st === 'damaged' ? SOOT : R); // балансир
+  M.box(w / 2 - 1, w / 2 + 0.3, -0.5, 0.5, 4, 6.2, R); // «голова»
+  M.cylY(-w / 2 + 1.5, 2.2, 1.4, -0.6, 0.6, G, 12); // противовес
+}
+// Доменная печь: высокий кожух с колошником, наклонный мост, трубы воздухонагревателей
+function blastFurnace(M, w, st) {
+  const r = w / 2;
+  if (st === 'destroyed') { M.cylZ(0, 0, r, r * 0.9, 0, 8, SOOT, 16); M.seg([0, 0, 8], [r * 2, r, 1], 1.2, 0.8, RUST); return; }
+  const SH = mat('#6e5a4a', { fn(o, x, y, z) { mix(o, [40, 30, 25], vnoise(x, y, z * 0.3) * 0.4); } });
+  M.cylZ(0, 0, r, r * 0.8, 0, 30, st === 'damaged' ? SOOT : SH, 16);
+  M.cylZ(0, 0, r * 0.55, r * 0.45, 30, 42, SH, 12);
+  for (const a of [0.6, 1.4, 2.2]) M.cylZ(Math.cos(a) * r * 1.8, Math.sin(a) * r * 1.8, r * 0.4, r * 0.4, 0, 34, mat('#8a8279'), 12, mat('#5e5a54'));
+  M.seg([-r * 2.4, 0, 0], [0, 0, 38], 1.2, 1, STEEL); // наклонный мост скипового подъёмника
+}
+// Взлётно-посадочная полоса: бетон, осевая разметка, торцевые «зебры»
+function runway(M, w, h) {
+  M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 0.1, mat('#7f7d77', { fn(o, x, y) {
+    mix(o, [60, 58, 54], vnoise(x * 0.05, y * 0.05, 0) * 0.3);
+    if (Math.abs(y) < 0.5 && fr(x / 30) < 0.5) set(o, [230, 228, 220]);
+    if (Math.abs(x) > w / 2 - 40 && fr(y / 3) < 0.45 && Math.abs(y) < h / 2 - 3) set(o, [230, 228, 220]);
+    if (fr((x + w / 2) / 300) < 0.004) mix(o, [40, 40, 40], 0.4); // швы плит
+  } }));
+}
+// Ракетная пусковая установка: колёсное шасси, пакет из двух транспортно-пусковых контейнеров
+function missileLauncher(M, side, st) {
+  const cm = mat(side === 'red' ? '#59603f' : '#4f5c3a');
+  if (st === 'destroyed') { M.box(-6, 6, -1.3, 1.3, 0, 1.6, SOOT); M.seg([-5, 0, 1.6], [4, 1.5, 0.5], 0.7, 0.6, RUST); return; }
+  for (const x of [-4.2, -2.8, -1.4, 3.6]) for (const sg of [1, -1]) M.cylY(x, 0.55, 0.55, sg > 0 ? 0.9 : -1.3, sg > 0 ? 1.3 : -0.9, BLACK, 10);
+  M.box(-6, 2.8, -1.3, 1.3, 1.0, 1.5, cm);
+  M.box(2.8, 5.2, -1.3, 1.3, 1.0, 3.2, cm);
+  M.box(5.18, 5.22, -1.1, 1.1, 2.1, 3.0, GLASS);
+  for (const y of [-0.55, 0.55]) M.box(-6, 2.2, y - 0.5, y + 0.5, 1.6, 2.6, mat('#6b7259')); // контейнеры
+}
 // ------------------------------------------------------------ Гражданские здания логистики и торговли
 function warehouse(M, w, h, st) {
   // Складской корпус класса А: светлые сэндвич-панели, доки для фур вдоль длинной стороны
@@ -498,6 +561,20 @@ export function buildVehicle(kind, side, variant = 0) {
     M.box(1.8, 6.5, -0.5, 0.5, 0.6, 1.1, mat('#2b2b2b'));
     cab(M, 4.4, 6.7, 1.25, ['#e8e8e4', '#1f4f8f', '#a83a2a', '#3a3a3a'][variant % 4], 3.6);
     M.box(-8.2, 5.0, -1.28, 1.28, 1.2, 4.0, mat(TRAILER[variant % TRAILER.length], { fn(o, x, y, z, n) { if (Math.abs(n[2]) < 0.5 && fr(x * 0.6) < 0.04) mix(o, [0, 0, 0], 0.15); } }));
+  } else if (kind === 'cargo') {
+    // Грузовик заводов: трёхосный бортовой под тентом цвета хаки, у бортов — ящики и контейнеры
+    const kh = mat(side === 'red' ? '#5d6244' : '#566447');
+    wheelsRow(M, [3.1, -1.6, -3.0], 1.2, 0.52);
+    cab(M, 2.1, 4.1, 1.2, side === 'red' ? '#5d6244' : '#566447', 3.1);
+    M.loft([[1.2, rect(-4.4, 1.9, -1.25, 1.25)], [3.0, rect(-4.4, 1.9, -1.25, 1.25)], [3.5, rect(-4.4, 1.9, -0.6, 0.6)]], kh, mat('#6c7354'));
+  } else if (kind === 'sapper') {
+    // Сапёры: бронированный пикап с прицепом-контейнером для обезвреженных боеприпасов
+    const cm = mat('#5a5f47');
+    wheelsRow(M, [1.6, -1.4], 0.95, 0.42);
+    M.box(-2.6, 2.6, -0.95, 0.95, 0.6, 1.3, cm);
+    cab(M, 0.2, 2.6, 0.95, '#5a5f47', 2.3);
+    M.box(-6.2, -3.2, -0.9, 0.9, 0.5, 1.9, mat('#d6c24a', { fn(o, x) { if (fr(x * 0.8) < 0.5) set(o, [30, 30, 30]); } })); // прицеп в «зебру»
+    M.cylY(-4.7, 0.4, 0.4, -1.2, -0.85, mat('#1a1a1a'), 10); M.cylY(-4.7, 0.4, 0.4, 0.85, 1.2, mat('#1a1a1a'), 10);
   } else if (kind === 'grain') {
     // Зерновоз-самосвал: трёхосное шасси, высокий кузов под тентом
     wheelsRow(M, [2.9, -1.5, -2.9], 1.2, 0.52);
@@ -681,6 +758,27 @@ function droneSaker(M) {
   for (const sg of [1, -1]) M.plate([[-0.9, 0, 0.35], [-0.65, 0, 0.35], [-0.8, sg * 0.45, 0.7], [-0.95, sg * 0.45, 0.7]], body, [0, -sg * 0.7, 0.7]);
   M.dome(0.7, 0, 0.12, 0.12, 0.12, 0.1, mat('#15171a', { spec: 0.6 }), 2, 8);
 }
+
+// Крылатые ракеты: длинный цилиндр, выдвинутое крыло, оперение, у «Фламинго» — двигатель сверху
+function cruiseMissile(M, L, R, color, opts = {}) {
+  const body = mat(color, { fn(o, x, y, z) { mix(o, [60, 62, 60], vnoise(x * 2, y * 2, z * 2) * 0.15); } });
+  M.cylX(0, R, R, R, -L / 2, L / 2 - R * 2, body, 12);
+  M.dome(L / 2 - R * 2, 0, R, R * 2.2, R, R, body, 2, 12);
+  const wx = opts.wingX ?? 0, ws = opts.span ?? L * 0.45;
+  M.box(wx - R * 1.6, wx + R * 0.6, -ws / 2, ws / 2, R * 0.9, R * 1.05, body);
+  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) M.plate([[-L / 2, 0, R], [-L / 2 + R * 2.5, 0, R], [-L / 2 + R * 0.6, Math.cos(a) * R * 2.2, R + Math.sin(a) * R * 2.2], [-L / 2, Math.cos(a) * R * 2.2, R + Math.sin(a) * R * 2.2]], body, [0, -Math.sin(a), Math.cos(a)]);
+  if (opts.topEngine) M.cylX(0, R * 2.2, R * 0.7, R * 0.6, -L / 2, -L / 2 + L * 0.3, mat('#4a4d4a'), 10);
+}
+// Истребитель (сверху и в профиль для 2.5D): фюзеляж, треугольное крыло, кили
+function fighterJet(M, color) {
+  const body = mat(color, { fn(o, x, y, z) { mix(o, [70, 75, 80], vnoise(x, y, z) * 0.2); } });
+  M.cylX(0, 1.2, 0.9, 0.8, -8, 6, body, 12);
+  M.dome(6, 0, 0.4, 3, 0.8, 0.8, body, 2, 12);
+  M.dome(3, 0, 1.6, 2.2, 0.55, 0.5, GLASS, 2, 10);
+  M.loft([[1.0, [[3, 0], [-5, 5.5], [-6.5, 5.5], [-6.5, -5.5], [-5, -5.5]]], [1.25, [[2.8, 0], [-5, 5.3], [-6.3, 5.3], [-6.3, -5.3], [-5, -5.3]]]], body);
+  for (const sg of [1, -1]) M.loft([[1.4, rect(-8, -5.5, sg * 1.3 - 0.06, sg * 1.3 + 0.06)], [4.2, rect(-8, -7, sg * 1.6 - 0.06, sg * 1.6 + 0.06)]], body);
+  M.box(-7.6, -5.8, -3, 3, 1.0, 1.15, body); // стабилизатор
+}
 // Цветовые варианты: серые, ночные чёрные, светлые; у западных — серо-зелёные и тёмные
 const PAL = {
   shahed: ['#8a8f8a', '#26282a', '#b9b7ad'], geran_h: ['#5c6154', '#26282a', '#8a8f8a'], gerbera: ['#d9d6c8', '#c7c3b4', '#e2e0d4'],
@@ -689,6 +787,9 @@ const PAL = {
 const DRONE_BUILD = {
   shahed: (M, c) => droneShahed(M, 1, c), geran3: droneGeran3, gerbera: (M, c) => droneShahed(M, 0.72, c), fp1: (M, c) => droneFP1(M, 1, c), fp2: droneFP2, lyutyi: droneLyutyi, bober: droneBober,
   geran_h: droneHunter, molniya: droneMolniya, saker: droneSaker, grif: (M, c) => droneFP1(M, 0.85, c),
+  flamingo: (M) => cruiseMissile(M, 12, 0.45, '#b9bdb6', { topEngine: true, span: 6 }), neptune: (M) => cruiseMissile(M, 5.1, 0.19, '#8e9a86', { span: 2.4 }),
+  kh101: (M) => cruiseMissile(M, 7.4, 0.32, '#2e3134', { span: 4.2 }), kalibr: (M) => cruiseMissile(M, 6.2, 0.27, '#9da19a', { span: 3.1 }),
+  jet_blue: (M) => fighterJet(M, '#7b8692'), jet_red: (M) => fighterJet(M, '#8f978c'), bomber: (M) => fighterJet(M, '#9ea2a6'),
   lancet: (M) => droneLancet(M), warmate: (M) => droneLancet(M, 0.8), orlan: droneOrlan, leleka: droneLeleka, sting: (M) => droneInterceptor(M, 'blue'), elka: (M) => droneInterceptor(M, 'red'),
 };
 export function buildDrone(type, variant = 0) {
@@ -773,6 +874,11 @@ export function buildComp(k, w, h, st, shelterLevel, side) {
     case 'kiosk': kiosk(M, w, h, st); break;
     case 'garage': garage(M, w, h, st); break;
     case 'launcher': launcherTruck(M, side, st); break;
+    case 'pit': quarryPit(M, w, h, st); break;
+    case 'pumpjack': pumpjack(M, w, st); break;
+    case 'furnace': blastFurnace(M, w, st); break;
+    case 'runway': runway(M, w, h); break;
+    case 'mlauncher': missileLauncher(M, side, st); break;
     default: M.box(-w / 2, w / 2, -h / 2, h / 2, 0, 3, CONCRETE);
   }
   return M;

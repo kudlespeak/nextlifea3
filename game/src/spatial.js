@@ -60,8 +60,14 @@ export class PointBins {
     const k = Math.floor(vals[1] / this.cell) * 100000 + Math.floor(vals[0] / this.cell);
     let bin = this.bins.get(k);
     if (!bin) this.bins.set(k, (bin = []));
+    else if (!Array.isArray(bin)) this.bins.set(k, (bin = Array.from(bin))); // упакованную корзину — обратно в массив
     bin.push(...vals);
     this.count++;
+  }
+  // Упаковать корзины в Float32Array: на большой карте деревьев миллионы — вдвое меньше памяти,
+  // и копия мира для потоков отрисовки и кэша делается быстро
+  pack() {
+    for (const [k, bin] of this.bins) if (Array.isArray(bin)) this.bins.set(k, Float32Array.from(bin));
   }
   // Вызывает fn(массив, индекс) для каждой точки в прямоугольнике
   forEach(b, fn) {
@@ -96,17 +102,34 @@ export const M = {
   GREEN: 2048, // придорожная лесополоса — поля сюда не заходят
 };
 
+// Маска хранится плитками 128×128 ячеек: плитка заводится при первой записи. Большая карта с
+// пустыми полями в тылу почти не занимает памяти (у каждого потока отрисовки своя копия мира)
+const TB = 7, TS = 1 << TB, TM = TS - 1;
 export class Mask {
   constructor(W, H, res = 4) {
     this.res = res;
     this.w = Math.ceil(W / res);
     this.h = Math.ceil(H / res);
-    this.data = new Uint16Array(this.w * this.h);
+    this.tw = Math.ceil(this.w / TS);
+    this.tiles = new Array(this.tw * Math.ceil(this.h / TS)).fill(null);
+  }
+  cell(ix, iy) {
+    const t = this.tiles[(iy >> TB) * this.tw + (ix >> TB)];
+    return t ? t[((iy & TM) << TB) | (ix & TM)] : 0;
+  }
+  or(ix, iy, flag) {
+    const k = (iy >> TB) * this.tw + (ix >> TB);
+    const t = this.tiles[k] || (this.tiles[k] = new Uint16Array(TS * TS));
+    t[((iy & TM) << TB) | (ix & TM)] |= flag;
+  }
+  and(ix, iy, keep) {
+    const t = this.tiles[(iy >> TB) * this.tw + (ix >> TB)];
+    if (t) t[((iy & TM) << TB) | (ix & TM)] &= keep;
   }
   get(x, y) {
     const ix = Math.floor(x / this.res), iy = Math.floor(y / this.res);
     if (ix < 0 || iy < 0 || ix >= this.w || iy >= this.h) return 0;
-    return this.data[iy * this.w + ix];
+    return this.cell(ix, iy);
   }
   has(x, y, flags) {
     return (this.get(x, y) & flags) !== 0;
@@ -124,7 +147,7 @@ export class Mask {
     const res = this.res;
     const ix0 = Math.max(0, Math.floor(b.x0 / res)), ix1 = Math.min(this.w - 1, Math.floor(b.x1 / res));
     const iy0 = Math.max(0, Math.floor(b.y0 / res)), iy1 = Math.min(this.h - 1, Math.floor(b.y1 / res));
-    for (let iy = iy0; iy <= iy1; iy++) for (let ix = ix0; ix <= ix1; ix++) this.data[iy * this.w + ix] &= ~flag;
+    for (let iy = iy0; iy <= iy1; iy++) for (let ix = ix0; ix <= ix1; ix++) this.and(ix, iy, ~flag);
   }
   stampDisc(x, y, r, flag) {
     const res = this.res;
@@ -134,7 +157,7 @@ export class Mask {
     for (let iy = iy0; iy <= iy1; iy++)
       for (let ix = ix0; ix <= ix1; ix++) {
         const dx = (ix + 0.5) * res - x, dy = (iy + 0.5) * res - y;
-        if (dx * dx + dy * dy <= r2) this.data[iy * this.w + ix] |= flag;
+        if (dx * dx + dy * dy <= r2) this.or(ix, iy, flag);
       }
   }
   stampLine(line, width, flag) {
@@ -167,7 +190,7 @@ export class Mask {
       for (let k = 0; k + 1 < xs.length; k += 2) {
         const a = Math.max(ix0, Math.ceil(xs[k] / res - 0.5));
         const b = Math.min(ix1, Math.floor(xs[k + 1] / res - 0.5));
-        for (let ix = a; ix <= b; ix++) this.data[iy * this.w + ix] |= flag;
+        for (let ix = a; ix <= b; ix++) this.or(ix, iy, flag);
       }
     }
   }

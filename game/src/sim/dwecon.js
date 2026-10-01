@@ -31,8 +31,8 @@ const FUEL_HA = 90; // га обработки на единицу топлив�
 const FARM_CAP = 15000; // т на току агрофирмы (уборка у всех в одно время — нужен запас)
 const ELEV_CAP = 40000; // т на элеваторе (1-й уровень)
 const TAX = 0.075; // оч/мин с 1000 жителей при полном довольстве
-export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04, dummy: 0.02 };
-const CREW_SIZE = { mog: 4, spaag: 4, sam: 12, radar: 6, ew: 3, ewd: 5, icpt: 5, acoustic: 2 };
+export const UPKEEP = { mog: 0.25, spaag: 0.9, sam: 1.8, lrsam: 3.2, radar: 0.5, ew: 0.4, ewd: 1.2, icpt: 0.35, acoustic: 0.04, dummy: 0.02 };
+const CREW_SIZE = { mog: 4, spaag: 4, sam: 12, lrsam: 25, radar: 6, ew: 3, ewd: 5, icpt: 5, acoustic: 2 };
 const LAUNCH_UPKEEP = 0.8;
 export const LAUNCH_PER = 6; // пусков на исправную пусковую за 5 минут
 export const BUILD = {
@@ -64,9 +64,43 @@ export const BUILD = {
   coalmine: { name: 'Угольная шахта', cost: 300, time: 360, desc: 'свой уголь: ТЭС +10%, уголь идёт даже при разбитом угольном складе' },
   cement: { name: 'Цементный завод', cost: 220, time: 300, desc: 'стройматериалы +3 в минуту (нужен свет): стройка и ремонт на 20% дешевле, пока есть запас' },
   reserve: { name: 'Госрезерв', cost: 200, time: 240, desc: '+2 резервных автотрансформатора; запас топлива, если нефтебаза разрушена' },
+  // ----- промышленность (строится с нуля, долго) -----
+  steel: { name: 'Металлургический завод', cost: 520, time: 2400, desc: 'руда → сталь (для двигателей, кабеля, сеток, трансформаторов, грузовиков); нужен свет и 1500 рабочих' },
+  concrete: { name: 'Бетонный завод (ЖБИ)', cost: 200, time: 1200, desc: 'песок и щебень → бетон: бетонные укрытия трансформаторов вдвое дешевле и быстрее' },
+  asphalt: { name: 'Асфальтобетонный завод', cost: 180, time: 1200, desc: 'щебень и нефть → асфальт: ямы на дорогах и мосты чинят втрое быстрее' },
+  chem: { name: 'Химический комбинат', cost: 420, time: 1800, desc: 'нефть → химсырьё (для взрывчатки, электроники, композитов, оптики, АКБ, макетов); горит сильно' },
+  engine: { name: 'Завод двигателей', cost: 380, time: 1500, mil: true, desc: 'сталь → поршневые двигатели для «Гераней», FP-1, ложных целей, грузовиков' },
+  turbine: { name: 'Завод турбореактивных двигателей', cost: 560, time: 2400, mil: true, desc: 'сталь и электроника → ТРД для реактивных дронов и крылатых ракет' },
+  explosive: { name: 'Пороховой завод', cost: 360, time: 1500, mil: true, desc: 'химсырьё → взрывчатка (боевые части дронов и ракет)' },
+  electronics: { name: 'Завод электроники', cost: 400, time: 1500, mil: true, desc: 'химсырьё → платы, навигация, связь; без света стоит' },
+  composite: { name: 'Композитный завод', cost: 320, time: 1200, mil: true, desc: 'химсырьё → планеры и корпуса дронов и ракет' },
+  optics: { name: 'Оптический завод', cost: 300, time: 1200, mil: true, desc: 'химсырьё → камеры и тепловизоры («охотники», разведчики, барражирующие)' },
+  battery: { name: 'Завод аккумуляторов', cost: 300, time: 1200, mil: true, desc: 'химсырьё и сталь → АКБ для барражирующих боеприпасов и разведчиков' },
+  cable: { name: 'Кабельный завод', cost: 220, time: 900, desc: 'сталь → кабель и провод: ремонт ЛЭП на 40% быстрее' },
+  trafo: { name: 'Трансформаторный завод', cost: 400, time: 1800, desc: 'сталь и кабель → свои резервные трансформаторы (вместо закупки)' },
+  netfab: { name: 'Сеточный завод', cost: 180, time: 900, desc: 'сталь → антидроновые сетки: сетки над дорогами и мостами вдвое дешевле' },
+  ewfab: { name: 'Завод станций РЭБ', cost: 340, time: 1500, mil: true, desc: 'электроника → станции и купола РЭБ вдвое дешевле' },
+  decoyfab: { name: 'Завод макетов', cost: 140, time: 900, mil: true, desc: 'химсырьё → макеты ЗРК и подстанций вдвое дешевле' },
+  autoplant: { name: 'Автосборочный завод', cost: 420, time: 1800, desc: 'сталь и двигатели → грузовики: больше машин для вывоза продукции и снабжения ПВО' },
+  terminal: { name: 'Терминал комплектующих', cost: 260, time: 1200, desc: 'склад, через который заводы обмениваются продукцией: рейсы короче. Удар по нему сжигает треть запаса' },
+  missile: { name: 'Ракетный завод', cost: 700, time: 2400, mil: true, desc: 'сборка крылатых ракет: планеры, ТРД, БЧ, электроника, ракетное топливо (НПЗ). Ракета — около часа' },
+  uground: { name: 'Подземный цех', cost: 900, time: 2400, mil: true, desc: 'сборка дронов и ракет под землёй: удары почти не берут (урон ×0,25)' },
+  minifab: { name: 'Рассредоточенный цех', cost: 160, time: 900, mil: true, near: 'village', desc: 'маленький цех в сельских мастерских: собирает лёгкие дроны (ложные цели, разведчики, барражирующие), его трудно найти' },
+  mlaunch: { name: 'Позиция крылатых ракет', cost: 420, time: 1500, mil: true, desc: 'пусковые установки крылатых ракет наземного базирования («Фламинго», «Нептун»)' },
+  rivlaunch: { name: 'Речная пусковая', cost: 380, time: 1500, mil: true, near: 'river', desc: 'носитель «Калибров» на реке или водохранилище; на берегу' },
+  airbase: { name: 'Авиабаза', cost: 900, time: 2400, mil: true, desc: 'дежурные истребители перехватывают ракеты и дроны в радиусе 25 км (нужно авиатопливо); у Кардагора — и стратегические бомбардировщики с Х-101' },
 };
-export const BUILD_GROUPS = [['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство и производство', ['elevator', 'agro', 'mill', 'dairy', 'cement']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'refinery', 'coalmine', 'reserve', 'pontoon']], ['Военное', ['launch', 'workshop', 'decoy']]];
-const UPG = new Set(['workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery']);
+// Всё строится вдвое дольше прежнего — «строительство и производство долгие»
+for (const k of ['store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'workshop', 'decoy', 'housing', 'hospital', 'school', 'mill', 'dairy', 'solar', 'bess', 'pontoon', 'autopark', 'refinery', 'watertower', 'railterm', 'port', 'coalmine', 'cement', 'reserve']) BUILD[k].time *= 2;
+BUILD.workshop.cost = 380; BUILD.workshop.time = 1500;
+BUILD.workshop.desc = 'сборка дронов: 3 линии (уровень — +60%). Нужны комплектующие со своих заводов или по импорту, и свет';
+export const BUILD_GROUPS = [
+  ['Военное: сборка и пуски', ['workshop', 'missile', 'uground', 'minifab', 'launch', 'mlaunch', 'rivlaunch', 'airbase', 'decoy']],
+  ['Промышленность: материалы', ['steel', 'chem', 'concrete', 'asphalt', 'cement', 'refinery', 'terminal']],
+  ['Промышленность: комплектующие', ['engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery']],
+  ['Промышленность: для тыла и ПВО', ['cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant']],
+  ['Торговля и логистика', ['store', 'fuel', 'market', 'mall', 'hub', 'autopark']], ['Сельское хозяйство', ['elevator', 'agro', 'mill', 'dairy']], ['Экспорт: железная дорога и порт', ['railterm', 'port']], ['Люди и города', ['housing', 'hospital', 'school', 'watertower']], ['Энергетика, топливо, ресурсы', ['solar', 'bess', 'coalmine', 'reserve', 'pontoon']]];
+const UPG = new Set(['workshop', 'store', 'fuel', 'market', 'mall', 'hub', 'elevator', 'agro', 'launch', 'housing', 'mill', 'dairy', 'solar', 'bess', 'autopark', 'railterm', 'port', 'cement', 'refinery', 'steel', 'concrete', 'asphalt', 'chem', 'engine', 'turbine', 'explosive', 'electronics', 'composite', 'optics', 'battery', 'cable', 'trafo', 'netfab', 'ewfab', 'decoyfab', 'autoplant', 'missile', 'uground', 'minifab', 'terminal', 'mlaunch', 'airbase']);
 export const upgradeCost = (o) => Math.round((BUILD[o.kind]?.cost || 100) * 0.6 * (o.level || 1));
 export const levelK = (o, k = 0.5) => 1 + k * ((o.level || 1) - 1);
 
@@ -136,6 +170,7 @@ export class DWEconomy {
     let u = 0;
     for (const a of this.g.ad) if (a.side === side && !a.dead) u += UPKEEP[a.type] || 0;
     u += this.g.objs(side, 'launch').filter((o) => !o.build).length * LAUNCH_UPKEEP;
+    u += this.g.res?.upkeep(side) || 0; // заводы: зарплаты, сырьё на ходу
     return u;
   }
   // Налоги (оч/мин) и довольство по поселениям
@@ -315,7 +350,8 @@ export class DWEconomy {
       if (!depotOk) { const r = this.g.objs(side, 'reserve').find((o) => this.ready(o) && o.comps.some((c) => c.k === 'tank' && c.state !== 'destroyed')); if (r) { depot = r; depotOk = true; } } // госрезерв
       if (depotOk) {
         const needF = this.farms.filter((f) => f.side === side && !f.tanker && f.tank < 10).sort((a, b) => a.tank - b.tank);
-        let n = 0;
+        // на большой карте агрофирмы далеко: бензовозов в рейсе не больше, чем позволяет автопарк
+        let n = onRoad('tanker') >= 14 + 4 * this.count(side, 'autopark') ? 99 : 0;
         for (const f of needF) {
           if (n >= (3 + this.count(side, 'autopark')) * (this.g.state?.k(side, 'farmFuel') ?? 1)) break;
           const v = logi.spawn(side, 'tanker', logi.gate(depot), f.gate, { type: 'farmfuel', farm: f.id, load: 10, home: depot.id });
@@ -515,7 +551,8 @@ export class DWEconomy {
     if (S.points < cost) return `Не хватает очков: нужно ${cost}`;
     this.g.infra?.matPrice(side, cost0, true);
     S.points -= cost; S.stats.spent += cost;
-    o.build = { until: this.sim.time + 150, total: 150, up: true };
+    const ut = Math.max(300, Math.round((BUILD[o.kind]?.time || 300) * 0.5));
+    o.build = { until: this.sim.time + ut, total: ut, up: true };
     this.sim.msg(`${o.name}: реконструкция до ${(o.level || 1) + 1}-го уровня (−${cost} оч.)`, side);
     return null;
   }

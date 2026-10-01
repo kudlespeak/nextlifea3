@@ -526,7 +526,7 @@ function drawArea(ctx, a, b, ppm) {
       ctx.beginPath();
       pathPoly(ctx, a.poly);
       const paved = a.site === 'mall' || a.site === 'market' || a.site === 'fuel' || a.site === 'hub' || a.site === 'border';
-      ctx.fillStyle = a.site === 'bridge' ? 'rgba(0,0,0,0)' : paved ? '#6b6c68' : a.site === 'ammo' ? '#6d6b4d' : a.site === 'store' ? '#7d7a70' : a.site === 'tpp' || a.site === 'factory' ? '#8d8a80' : '#8f8b7c';
+      ctx.fillStyle = a.site === 'bridge' ? 'rgba(0,0,0,0)' : paved ? '#6b6c68' : a.site === 'ammo' ? '#6d6b4d' : a.site === 'store' ? '#7d7a70' : a.site === 'quarry' || a.site === 'mine' ? '#a8956f' : a.site === 'oilfield' ? '#7f7766' : a.site === 'airbase' ? '#7c845a' : a.site === 'tpp' || a.site === 'factory' || a.site === 'steel' ? '#8d8a80' : '#8f8b7c';
       ctx.fill();
       if (ppm >= 0.5) {
         ctx.save();
@@ -567,7 +567,7 @@ function drawArea(ctx, a, b, ppm) {
         ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.angle);
         for (const [u, v, w, h, k] of a.fp) {
           const round = k === 'tank' || k === 'tower' || k === 'chimney' || k === 'wt';
-          ctx.fillStyle = k === 'coal' ? '#2a2826' : k === 'tank' || k === 'tower' ? '#c9c7bf' : k === 'oru' ? 'rgba(120,120,112,0.9)' : k === 'pv' ? '#2c3b52' : '#76786f';
+          ctx.fillStyle = k === 'coal' ? '#2a2826' : k === 'tank' || k === 'tower' ? '#c9c7bf' : k === 'oru' ? 'rgba(120,120,112,0.9)' : k === 'pv' ? '#2c3b52' : k === 'pit' ? '#8f7a58' : k === 'runway' ? '#8a8882' : k === 'pumpjack' ? '#5a3a2a' : '#76786f';
           if (round) { ctx.beginPath(); ctx.arc(u, v, Math.max(w, h) / 2, 0, Math.PI * 2); ctx.fill(); }
           else ctx.fillRect(u - w / 2, v - h / 2, w, h);
         }

@@ -30,6 +30,7 @@ export const CALIBERS = {
   dw20: { name: 'БЧ ударного БПЛА 20 кг', blast: 3.6, lethal: 15, danger: 60, frags: 700, crater: 1.7, dmg: 1.3 },
   dw50: { name: 'БЧ ударного БПЛА 50 кг', blast: 6, lethal: 24, danger: 90, frags: 1300, crater: 2.8, dmg: 2.6 },
   dw105: { name: 'БЧ ударного БПЛА 105 кг', blast: 8, lethal: 32, danger: 120, frags: 2100, crater: 3.9, dmg: 3.6 },
+  dwmis: { name: 'БЧ крылатой ракеты', blast: 18, lethal: 60, danger: 260, frags: 5000, crater: 7.5, dmg: 6 },
   152: { name: '152-мм ОФС', blast: 7, lethal: 28, danger: 100, frags: 1700, crater: 3.2, speed: 560, sigma: 0.006, minR: 1500, maxR: 20000, dmg: 3 },
 };
 

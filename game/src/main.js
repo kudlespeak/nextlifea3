@@ -244,7 +244,7 @@ function startGame(c) {
       $('prep-text').innerHTML = 'Разверните ПВО: мобильные группы, РЛС, РЭБ, посты. Удары дронами — после окончания развёртывания.';
       log(`${MODES[c.mode].name}. Вы — ${FACTIONS[controlSide].country}, противник — ${FACTIONS[enemy].country}${c.aiSides.length ? ' (ИИ)' : ''}. F1 — справка.`);
       log('Защищайте ТЭС, подстанции, мосты и склады; ремонтируйте их. Проиграет тот, чья энергосистема рухнет без денег на восстановление.');
-      log('Слева — меню: Обзор, ПВО, Удары (производство и пуск дронов), Ремонт, Стройка, Наука, Страна. Вверху панели — «что сделать сейчас» с кнопками.');
+      log('Слева — меню: Обзор, ПВО, Удары (производство и пуск дронов), Ремонт, Стройка, Заводы, Страна. Вверху панели — «что сделать сейчас» с кнопками.');
       $('loading').style.opacity = 0;
       lastNow = performance.now();
       requestAnimationFrame(frame);
@@ -267,7 +267,8 @@ function resize() {
   dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(innerWidth * dpr);
   canvas.height = Math.round(innerHeight * dpr);
-  if (world) minZoom = Math.min(canvas.width / world.W, canvas.height / world.H) * 0.9;
+  // большая карта вытянута по ширине: при полном отдалении она занимает ~60% высоты экрана (вся ширина — на миникарте)
+  if (world) minZoom = Math.max(Math.min(canvas.width / world.W, canvas.height / world.H) * 0.9, canvas.height / (world.H * 1.7));
   cam.zoom = Math.max(cam.zoom, minZoom);
 }
 addEventListener('resize', resize);
@@ -275,8 +276,8 @@ resize();
 
 function clampCam() {
   cam.zoom = Math.min(MAX_ZOOM, Math.max(minZoom, cam.zoom));
-  cam.x = Math.min(world.W, Math.max(0, cam.x));
-  cam.y = Math.min(world.H, Math.max(0, cam.y));
+  cam.x = Math.min(world.W + 2000, Math.max(-2000, cam.x));
+  cam.y = Math.min(world.H + 1500, Math.max(-1500, cam.y));
 }
 const screenToWorld = (sx, sy) => [cam.x + (sx * dpr - canvas.width / 2) / cam.zoom, cam.y + (sy * dpr - canvas.height / 2) / cam.zoom];
 function zoomAt(sx, sy, factor) {
@@ -1434,6 +1435,60 @@ function drawLevel(level, requestMissing, need) {
     }
 }
 
+// «Серые зоны» у краёв карты: местность не обрывается в чёрное, а уходит в дымку — полоса 5 км
+// у края постепенно затягивается серой мглой, за краем — сплошная дымка с лёгкими разводами
+const HAZE = [128, 132, 124];
+let hazeTile = null;
+function drawEdgeHaze() {
+  const z = cam.zoom, W = canvas.width, H = canvas.height;
+  const sx = (x) => (x - cam.x) * z + W / 2, sy = (y) => (y - cam.y) * z + H / 2;
+  const x0 = sx(0), y0 = sy(0), x1 = sx(world.W), y1 = sy(world.H);
+  const B = 5000 * z; // ширина полосы, px
+  if (x0 + B < 0 && y0 + B < 0 && x1 - B > W && y1 - B > H) return;
+  const [r, g, b] = HAZE, c = (a) => `rgba(${r},${g},${b},${a})`;
+  ctx.save();
+  // за краем: сплошная дымка
+  ctx.fillStyle = c(1);
+  if (y0 > 0) ctx.fillRect(0, 0, W, y0);
+  if (y1 < H) ctx.fillRect(0, y1, W, H - y1);
+  if (x0 > 0) ctx.fillRect(0, 0, x0, H);
+  if (x1 < W) ctx.fillRect(x1, 0, W - x1, H);
+  // у края: плавный переход
+  const band = (gx0, gy0, gx1, gy1, rx, ry, rw, rh) => {
+    if (rx > W || ry > H || rx + rw < 0 || ry + rh < 0) return;
+    const gr = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+    gr.addColorStop(0, c(1)); gr.addColorStop(0.35, c(0.7)); gr.addColorStop(1, c(0));
+    ctx.fillStyle = gr; ctx.fillRect(rx, ry, rw, rh);
+  };
+  band(x0, 0, x0 + B, 0, x0, y0, B, y1 - y0);
+  band(x1, 0, x1 - B, 0, x1 - B, y0, B, y1 - y0);
+  band(0, y0, 0, y0 + B * 0.6, x0, y0, x1 - x0, B * 0.6);
+  band(0, y1, 0, y1 - B * 0.6, x0, y1 - B * 0.6, x1 - x0, B * 0.6);
+  // разводы облаков поверх дымки (плитка с шумом, едет медленно)
+  if (!hazeTile) {
+    hazeTile = document.createElement('canvas'); hazeTile.width = hazeTile.height = 256;
+    const g2 = hazeTile.getContext('2d');
+    for (let i = 0; i < 70; i++) {
+      const px = Math.random() * 256, py = Math.random() * 256, rr = 20 + Math.random() * 60;
+      const l = Math.random() < 0.5 ? 255 : 90;
+      for (const ox of [-256, 0, 256]) for (const oy of [-256, 0, 256]) { // плитка бесшовная: пятна у краёв повторены с другой стороны
+        const gg = g2.createRadialGradient(px + ox, py + oy, 0, px + ox, py + oy, rr);
+        gg.addColorStop(0, `rgba(${l},${l},${l},0.05)`); gg.addColorStop(1, `rgba(${l},${l},${l},0)`);
+        g2.fillStyle = gg; g2.fillRect(px + ox - rr, py + oy - rr, rr * 2, rr * 2);
+      }
+    }
+  }
+  const pat = ctx.createPattern(hazeTile, 'repeat');
+  const k = Math.max(0.5, Math.min(4, 2000 * z / 256));
+  pat.setTransform(new DOMMatrix([k, 0, 0, k, (x0 + performance.now() * 0.004) % (256 * k), y0 % (256 * k)]));
+  ctx.fillStyle = pat;
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  if (x1 - x0 > B && y1 - y0 > B * 0.6) ctx.rect(x0 + B * 0.5, y0 + B * 0.3, x1 - x0 - B, y1 - y0 - B * 0.6); // внутренняя часть карты — без разводов
+  ctx.fill('evenodd');
+  ctx.restore();
+}
+
 // Экранные прямоугольники видимых чанков уровня, которых ещё нет в кэше
 function missingRects(level) {
   const size = chunks.worldSize(level);
@@ -1490,9 +1545,17 @@ function drawLabels() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  for (const s of world.settlements) {
+  // подписи не налезают друг на друга: сначала города, потом сёла; село, чья подпись задела уже
+  // поставленную, пропускаем (на большой карте при отдалении сёл сотни)
+  const placed = [], vw = canvas.width / dpr, vh = canvas.height / dpr;
+  const list = world.settlements.slice().sort((a, b) => (b.type === 'city') - (a.type === 'city'));
+  for (const s of list) {
     const city = s.type === 'city';
     const x = ((s.x - cam.x) * cam.zoom + canvas.width / 2) / dpr, y = ((s.y - cam.y) * cam.zoom + canvas.height / 2) / dpr;
+    if (x < -200 || x > vw + 200 || y < -40 || y > vh + 40) continue;
+    const hw = s.name.length * (city ? 7 : 5), hh = city ? 14 : 10;
+    if (placed.some((q) => Math.abs(q[0] - x) < q[2] + hw && Math.abs(q[1] - y) < q[3] + hh)) continue;
+    placed.push([x, y, hw, hh]);
     ctx.font = city ? '700 24px "PT Sans Narrow", system-ui, sans-serif' : '700 17px "PT Sans Narrow", system-ui, sans-serif';
     ctx.lineWidth = 4;
     ctx.strokeStyle = 'rgba(0,0,0,0.75)';
@@ -1598,15 +1661,7 @@ function frameBody(now) {
     ctx.imageSmoothingQuality = 'high';
   }
   drawLevel(L, true, need);
-  {
-    const x0 = Math.round((0 - cam.x) * cam.zoom + canvas.width / 2), y0 = Math.round((0 - cam.y) * cam.zoom + canvas.height / 2);
-    const x1 = Math.round((world.W - cam.x) * cam.zoom + canvas.width / 2), y1 = Math.round((world.H - cam.y) * cam.zoom + canvas.height / 2);
-    ctx.fillStyle = '#15170f';
-    ctx.fillRect(0, 0, canvas.width, y0);
-    ctx.fillRect(0, y1, canvas.width, canvas.height - y1);
-    ctx.fillRect(0, 0, x0, canvas.height);
-    ctx.fillRect(x1, 0, canvas.width - x1, canvas.height);
-  }
+  drawEdgeHaze();
   // Миникарте нужны все обзорные чанки, даже вне экрана
   const s0 = chunks.worldSize(0);
   for (let cy = 0; cy * s0 < world.H; cy++)
